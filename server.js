@@ -1,0 +1,99 @@
+const express = require('express');
+const sqlite3 = require('sqlite3').verbose();
+const cors = require('cors');
+require('dotenv').config();
+
+// Import models and services
+const User = require('./models/User');
+const RefreshToken = require('./models/RefreshToken');
+const Pairing = require('./models/Pairing');
+const AuthService = require('./services/AuthService');
+const PairingService = require('./services/PairingService');
+
+// Import routes
+const createUserRoutes = require('./routes/users');
+const createAuthRoutes = require('./routes/auth');
+const createPairingRoutes = require('./routes/pairing');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Database setup
+const db = new sqlite3.Database('./database.sqlite', (err) => {
+  if (err) {
+    console.error('Error opening database:', err.message);
+  } else {
+    console.log('Connected to SQLite database.');
+    initializeApp();
+  }
+});
+
+// Initialize models and services
+let userModel, refreshTokenModel, pairingModel, authService, pairingService;
+
+async function initializeApp() {
+  try {
+    // Initialize models
+    userModel = new User(db);
+    refreshTokenModel = new RefreshToken(db);
+    pairingModel = new Pairing(db);
+    
+    // Initialize database tables
+    await userModel.initDatabase();
+    await refreshTokenModel.initDatabase();
+    await pairingModel.initDatabase();
+    
+    // Initialize services
+    authService = new AuthService(userModel, refreshTokenModel);
+    pairingService = new PairingService(userModel, pairingModel);
+    
+    // Setup routes
+    setupRoutes();
+    
+    console.log('Application initialized successfully.');
+  } catch (error) {
+    console.error('Error initializing application:', error);
+  }
+}
+
+function setupRoutes() {
+  // Setup user routes
+  app.use('/api/users', createUserRoutes(userModel, authService));
+  
+  // Setup auth routes
+  app.use('/api', createAuthRoutes(authService));
+  
+  // Setup pairing routes
+  app.use('/api/pairing', createPairingRoutes(pairingService));
+}
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  db.close((err) => {
+    if (err) {
+      console.error('Error closing database:', err.message);
+    } else {
+      console.log('Database connection closed.');
+    }
+    process.exit(0);
+  });
+}); 
