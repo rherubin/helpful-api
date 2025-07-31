@@ -16,14 +16,15 @@ const createAuthRoutes = require('./routes/auth');
 const createPairingRoutes = require('./routes/pairing');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 9000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
 // Database setup
-const db = new sqlite3.Database('./database.sqlite', (err) => {
+const DATABASE_PATH = process.env.DATABASE_PATH || './database.sqlite';
+const db = new sqlite3.Database(DATABASE_PATH, (err) => {
   if (err) {
     console.error('Error opening database:', err.message);
   } else {
@@ -61,6 +62,9 @@ async function initializeApp() {
 }
 
 function setupRoutes() {
+  // Make models available to routes for soft delete cascading
+  app.locals.pairingModel = pairingModel;
+  
   // Setup user routes
   app.use('/api/users', createUserRoutes(userModel, authService));
   
@@ -70,11 +74,6 @@ function setupRoutes() {
   // Setup pairing routes
   app.use('/api/pairing', createPairingRoutes(pairingService));
 }
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
 
 // Health check endpoint
 app.get('/health', (req, res) => {

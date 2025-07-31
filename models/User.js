@@ -17,6 +17,7 @@ class User {
         password_hash TEXT NOT NULL,
         pairing_code TEXT UNIQUE NOT NULL,
         max_pairings INTEGER DEFAULT 1,
+        deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
@@ -29,7 +30,14 @@ class User {
           reject(err);
         } else {
           console.log('Users table initialized successfully.');
-          resolve();
+          // Add deleted_at column if it doesn't exist (for existing databases)
+          this.db.run("ALTER TABLE users ADD COLUMN deleted_at DATETIME DEFAULT NULL", (alterErr) => {
+            // Ignore error if column already exists
+            if (alterErr && !alterErr.message.includes('duplicate column name')) {
+              console.error('Error adding deleted_at column:', alterErr.message);
+            }
+            resolve();
+          });
         }
       });
     });
@@ -75,7 +83,8 @@ class User {
 
   // Create a new user
   async createUser(userData) {
-    const { email, first_name, last_name, password, max_pairings = 1 } = userData;
+    const { email, first_name, last_name, password } = userData;
+    const max_pairings = 1; // Always set to 1 - constraint enforced
     
     // Validate password
     const passwordValidation = this.validatePassword(password);
@@ -144,10 +153,10 @@ class User {
     });
   }
 
-  // Get all users
+  // Get all users (excluding soft deleted)
   async getAllUsers() {
     return new Promise((resolve, reject) => {
-      const query = 'SELECT * FROM users ORDER BY created_at DESC';
+      const query = 'SELECT * FROM users WHERE deleted_at IS NULL ORDER BY created_at DESC';
       
       this.db.all(query, [], (err, rows) => {
         if (err) {
@@ -159,10 +168,10 @@ class User {
     });
   }
 
-  // Get user by ID
+  // Get user by ID (excluding soft deleted)
   async getUserById(id) {
     return new Promise((resolve, reject) => {
-      this.db.get('SELECT * FROM users WHERE id = ?', [id], (err, row) => {
+      this.db.get('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [id], (err, row) => {
         if (err) {
           reject(new Error('Failed to fetch user'));
         } else if (!row) {
@@ -174,10 +183,10 @@ class User {
     });
   }
 
-  // Get user by email
+  // Get user by email (excluding soft deleted)
   async getUserByEmail(email) {
     return new Promise((resolve, reject) => {
-      this.db.get('SELECT * FROM users WHERE email = ?', [email], (err, row) => {
+      this.db.get('SELECT * FROM users WHERE email = ? AND deleted_at IS NULL', [email], (err, row) => {
         if (err) {
           reject(new Error('Failed to fetch user'));
         } else if (!row) {
@@ -189,10 +198,10 @@ class User {
     });
   }
 
-  // Get user by pairing code
+  // Get user by pairing code (excluding soft deleted)
   async getUserByPairingCode(pairingCode) {
     return new Promise((resolve, reject) => {
-      this.db.get('SELECT * FROM users WHERE pairing_code = ?', [pairingCode], (err, row) => {
+      this.db.get('SELECT * FROM users WHERE pairing_code = ? AND deleted_at IS NULL', [pairingCode], (err, row) => {
         if (err) {
           reject(new Error('Failed to fetch user'));
         } else if (!row) {
@@ -260,6 +269,102 @@ class User {
           reject(new Error('Failed to verify password'));
         } else {
           resolve(isMatch);
+        }
+      });
+    });
+  }
+
+  // Soft delete a user and cascade delete their pairings
+  async softDeleteUser(id, pairingModel = null) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        // First, soft delete the user
+        const updateUserQuery = `
+          UPDATE users 
+          SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+          WHERE id = ? AND deleted_at IS NULL
+        `;
+
+        await new Promise((userResolve, userReject) => {
+          this.db.run(updateUserQuery, [id], function(err) {
+            if (err) {
+              userReject(new Error('Failed to delete user'));
+            } else if (this.changes === 0) {
+              userReject(new Error('User not found or already deleted'));
+            } else {
+              userResolve();
+            }
+          });
+        });
+
+        // Then, cascade soft delete their pairings if pairingModel is provided
+        let pairingResult = null;
+        if (pairingModel) {
+          try {
+            pairingResult = await pairingModel.softDeleteUserPairings(id);
+          } catch (pairingError) {
+            console.warn('Warning: Failed to cascade delete user pairings:', pairingError.message);
+          }
+        }
+
+        resolve({ 
+          message: 'User deleted successfully', 
+          deleted_at: new Date().toISOString(),
+          cascade_result: pairingResult
+        });
+
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  // Restore a soft deleted user
+  async restoreUser(id) {
+    return new Promise((resolve, reject) => {
+      const updateQuery = `
+        UPDATE users 
+        SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP 
+        WHERE id = ? AND deleted_at IS NOT NULL
+      `;
+
+      this.db.run(updateQuery, [id], function(err) {
+        if (err) {
+          reject(new Error('Failed to restore user'));
+        } else if (this.changes === 0) {
+          reject(new Error('User not found or not deleted'));
+        } else {
+          resolve({ message: 'User restored successfully' });
+        }
+      });
+    });
+  }
+
+  // Get user by ID including soft deleted (for admin purposes)
+  async getUserByIdIncludingDeleted(id) {
+    return new Promise((resolve, reject) => {
+      this.db.get('SELECT * FROM users WHERE id = ?', [id], (err, row) => {
+        if (err) {
+          reject(new Error('Failed to fetch user'));
+        } else if (!row) {
+          reject(new Error('User not found'));
+        } else {
+          resolve(row);
+        }
+      });
+    });
+  }
+
+  // Get all soft deleted users
+  async getDeletedUsers() {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM users WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC';
+      
+      this.db.all(query, [], (err, rows) => {
+        if (err) {
+          reject(new Error('Failed to fetch deleted users'));
+        } else {
+          resolve(rows);
         }
       });
     });

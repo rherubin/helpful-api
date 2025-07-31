@@ -104,6 +104,50 @@ function createUserRoutes(userModel, authService) {
     }
   });
 
+  // Soft delete user
+  router.delete('/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      // Get the pairing model from the userModel if available
+      const pairingModel = req.app.locals.pairingModel;
+      
+      const result = await userModel.softDeleteUser(id, pairingModel);
+      res.status(200).json(result);
+    } catch (error) {
+      if (error.message === 'User not found or already deleted') {
+        return res.status(404).json({ error: error.message });
+      } else {
+        return res.status(500).json({ error: 'Failed to delete user' });
+      }
+    }
+  });
+
+  // Restore soft deleted user
+  router.patch('/:id/restore', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const result = await userModel.restoreUser(id);
+      res.status(200).json(result);
+    } catch (error) {
+      if (error.message === 'User not found or not deleted') {
+        return res.status(404).json({ error: error.message });
+      } else {
+        return res.status(500).json({ error: 'Failed to restore user' });
+      }
+    }
+  });
+
+  // Get deleted users (admin endpoint)
+  router.get('/deleted/all', async (req, res) => {
+    try {
+      const deletedUsers = await userModel.getDeletedUsers();
+      res.json(deletedUsers);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch deleted users' });
+    }
+  });
+
   return router;
 }
 

@@ -136,6 +136,61 @@ function createPairingRoutes(pairingService) {
     }
   });
 
+  // Soft delete a pairing
+  router.delete('/:pairingId', authenticateToken, async (req, res) => {
+    try {
+      const { pairingId } = req.params;
+      const userId = req.user.id;
+
+      // First check if user is part of this pairing
+      const pairing = await pairingService.getPairingDetails(pairingId);
+      if (pairing.user1_id !== userId && pairing.user2_id !== userId) {
+        return res.status(403).json({ error: 'You are not authorized to delete this pairing' });
+      }
+
+      // Get the pairing model from the service
+      const pairingModel = pairingService.pairingModel;
+      const result = await pairingModel.softDeletePairing(pairingId);
+      res.status(200).json(result);
+    } catch (error) {
+      if (error.message === 'Pairing not found' || error.message === 'Pairing not found or already deleted') {
+        return res.status(404).json({ error: 'Pairing not found' });
+      } else {
+        return res.status(500).json({ error: 'Failed to delete pairing' });
+      }
+    }
+  });
+
+  // Restore a soft deleted pairing (admin endpoint - could be restricted further)
+  router.patch('/:pairingId/restore', authenticateToken, async (req, res) => {
+    try {
+      const { pairingId } = req.params;
+      
+      // Get the pairing model from the service
+      const pairingModel = pairingService.pairingModel;
+      const result = await pairingModel.restorePairing(pairingId);
+      res.status(200).json(result);
+    } catch (error) {
+      if (error.message === 'Pairing not found or not deleted') {
+        return res.status(404).json({ error: error.message });
+      } else {
+        return res.status(500).json({ error: 'Failed to restore pairing' });
+      }
+    }
+  });
+
+  // Get deleted pairings (admin endpoint)
+  router.get('/deleted/all', authenticateToken, async (req, res) => {
+    try {
+      // Get the pairing model from the service
+      const pairingModel = pairingService.pairingModel;
+      const deletedPairings = await pairingModel.getDeletedPairings();
+      res.json(deletedPairings);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch deleted pairings' });
+    }
+  });
+
   return router;
 }
 
