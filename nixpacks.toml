@@ -1,5 +1,4 @@
-[providers]
-node = "latest"
+providers = ["node"]
 
 [start]
 cmd = "npm start"
