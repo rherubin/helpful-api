@@ -1,0 +1,14 @@
+[providers]
+node = "latest"
+
+[start]
+cmd = "npm start"
+
+[phases.build]
+cmds = [
+  "npm ci",
+  "npm rebuild sqlite3 --build-from-source"
+]
+
+[variables]
+NODE_ENV = "production"
