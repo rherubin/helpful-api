@@ -1,7 +1,18 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
 require('dotenv').config();
+
+// Try to rebuild sqlite3 for platform compatibility, but don't fail if it doesn't work
+try {
+  const { execSync } = require('child_process');
+  console.log('Attempting to rebuild sqlite3 for platform compatibility...');
+  execSync('npm rebuild sqlite3 --build-from-source --silent', { stdio: 'pipe' });
+  console.log('SQLite3 rebuild successful');
+} catch (error) {
+  console.log('SQLite3 rebuild failed, using pre-installed version:', error.message);
+}
+
+const sqlite3 = require('sqlite3').verbose();
 
 // Import models and services
 const User = require('./models/User');
