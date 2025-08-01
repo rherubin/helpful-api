@@ -1,0 +1,15 @@
+[providers]
+node = "18"
+
+[build]
+cmd = "npm ci"
+
+[phases.setup]
+cmds = ["apt-get update", "apt-get install -y python3 make g++ sqlite3"]
+
+[phases.build]
+dependsOn = ["setup"]
+cmds = ["npm rebuild better-sqlite3 --build-from-source || npm rebuild better-sqlite3 || echo 'Using prebuilt binaries'"]
+
+[start]
+cmd = "npm start"
