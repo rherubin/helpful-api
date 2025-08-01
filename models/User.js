@@ -1,4 +1,3 @@
-const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcrypt');
 
 class User {
@@ -6,8 +5,45 @@ class User {
     this.db = db;
   }
 
+  // Helper method to promisify better-sqlite3 operations for compatibility
+  runAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+      try {
+        const stmt = this.db.prepare(query);
+        const result = stmt.run(params);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  getAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+      try {
+        const stmt = this.db.prepare(query);
+        const result = stmt.get(params);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  allAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+      try {
+        const stmt = this.db.prepare(query);
+        const result = stmt.all(params);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
   // Initialize database tables
-  initDatabase() {
+  async initDatabase() {
     const createUsersTable = `
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -23,24 +59,23 @@ class User {
       )
     `;
 
-    return new Promise((resolve, reject) => {
-      this.db.run(createUsersTable, (err) => {
-        if (err) {
-          console.error('Error creating users table:', err.message);
-          reject(err);
-        } else {
-          console.log('Users table initialized successfully.');
-          // Add deleted_at column if it doesn't exist (for existing databases)
-          this.db.run("ALTER TABLE users ADD COLUMN deleted_at DATETIME DEFAULT NULL", (alterErr) => {
-            // Ignore error if column already exists
-            if (alterErr && !alterErr.message.includes('duplicate column name')) {
-              console.error('Error adding deleted_at column:', alterErr.message);
-            }
-            resolve();
-          });
+    try {
+      await this.runAsync(createUsersTable);
+      console.log('Users table initialized successfully.');
+      
+      // Add deleted_at column if it doesn't exist (for existing databases)
+      try {
+        await this.runAsync("ALTER TABLE users ADD COLUMN deleted_at DATETIME DEFAULT NULL");
+      } catch (alterErr) {
+        // Ignore error if column already exists
+        if (!alterErr.message.includes('duplicate column name')) {
+          console.error('Error adding deleted_at column:', alterErr.message);
         }
-      });
-    });
+      }
+    } catch (err) {
+      console.error('Error creating users table:', err.message);
+      throw err;
+    }
   }
 
   // Generate pairing code (6 digit alpha string)
@@ -54,10 +89,16 @@ class User {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 
-  // Password validation function
+  // Password validation function (back to 8 chars for easier account creation)
   validatePassword(password) {
-    if (password.length !== 8) {
-      return { valid: false, error: 'Password must be exactly 8 characters long' };
+    // Minimum 8 characters for balance of security and usability
+    if (password.length < 8) {
+      return { valid: false, error: 'Password must be at least 8 characters long' };
+    }
+    
+    // Maximum length to prevent DoS attacks
+    if (password.length > 128) {
+      return { valid: false, error: 'Password must not exceed 128 characters' };
     }
     
     const hasNumber = /\d/.test(password);
@@ -69,13 +110,27 @@ class User {
       return { valid: false, error: 'Password must contain at least one number' };
     }
     if (!hasSymbol) {
-      return { valid: false, error: 'Password must contain at least one symbol' };
+      return { valid: false, error: 'Password must contain at least one symbol (!@#$%^&*()_+-=[]{};\':"|,.<>/?)' };
     }
     if (!hasCapital) {
       return { valid: false, error: 'Password must contain at least one capital letter' };
     }
     if (!hasLowercase) {
       return { valid: false, error: 'Password must contain at least one lowercase letter' };
+    }
+    
+    // Check for common weak patterns
+    const commonPatterns = [
+      /(.)\1{2,}/, // 3+ repeated characters
+      /123456|654321/, // Sequential numbers
+      /password|admin|login|user/i, // Common words
+      /qwerty|asdf|zxcv/i // Keyboard patterns
+    ];
+    
+    for (const pattern of commonPatterns) {
+      if (pattern.test(password)) {
+        return { valid: false, error: 'Password contains weak patterns. Avoid repeated characters, sequences, or common words' };
+      }
     }
     
     return { valid: true };
@@ -95,122 +150,125 @@ class User {
     const userId = this.generateUniqueId();
     const pairingCode = this.generatePairingCode();
 
-    return new Promise((resolve, reject) => {
-      // Hash the password
+    // Hash the password
+    const hash = await new Promise((resolve, reject) => {
       bcrypt.hash(password, 10, (err, hash) => {
         if (err) {
           reject(new Error('Failed to hash password'));
-          return;
+        } else {
+          resolve(hash);
         }
-
-        const insertUser = `
-          INSERT INTO users (id, email, first_name, last_name, password_hash, pairing_code, max_pairings, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        `;
-
-        const userModel = this;
-        this.db.run(insertUser, [userId, email, first_name, last_name, hash, pairingCode, max_pairings], function(err) {
-          if (err) {
-            if (err.message.includes('UNIQUE constraint failed')) {
-              if (err.message.includes('email')) {
-                reject(new Error('Email already exists'));
-              } else if (err.message.includes('pairing_code')) {
-                // Retry with a new pairing code
-                const newPairingCode = userModel.generatePairingCode();
-                userModel.db.run(insertUser, [userId, email, first_name, last_name, hash, newPairingCode, max_pairings], function(retryErr) {
-                  if (retryErr) {
-                    reject(new Error('Failed to create user'));
-                  } else {
-                    resolve({
-                      id: userId,
-                      email,
-                      first_name,
-                      last_name,
-                      pairing_code: newPairingCode,
-                      max_pairings: max_pairings,
-                      created_at: new Date().toISOString()
-                    });
-                  }
-                });
-              }
-            } else {
-              reject(new Error('Failed to create user'));
-            }
-            return;
-          }
-
-          resolve({
-            id: userId,
-            email,
-            first_name,
-            last_name,
-            pairing_code: pairingCode,
-            max_pairings: max_pairings,
-            created_at: new Date().toISOString()
-          });
-        });
       });
     });
+
+    const insertUser = `
+      INSERT INTO users (id, email, first_name, last_name, password_hash, pairing_code, max_pairings, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `;
+
+    try {
+      await this.runAsync(insertUser, [userId, email, first_name, last_name, hash, pairingCode, max_pairings]);
+      
+      return {
+        id: userId,
+        email,
+        first_name,
+        last_name,
+        pairing_code: pairingCode,
+        max_pairings: max_pairings,
+        created_at: new Date().toISOString()
+      };
+    } catch (err) {
+      if (err.message.includes('UNIQUE constraint failed')) {
+        if (err.message.includes('email')) {
+          throw new Error('Email already exists');
+        } else if (err.message.includes('pairing_code')) {
+          // Retry with a new pairing code
+          const newPairingCode = this.generatePairingCode();
+          try {
+            await this.runAsync(insertUser, [userId, email, first_name, last_name, hash, newPairingCode, max_pairings]);
+            return {
+              id: userId,
+              email,
+              first_name,
+              last_name,
+              pairing_code: newPairingCode,
+              max_pairings: max_pairings,
+              created_at: new Date().toISOString()
+            };
+          } catch (retryErr) {
+            throw new Error('Failed to create user');
+          }
+        }
+      } else {
+        throw new Error('Failed to create user');
+      }
+    }
   }
 
   // Get all users (excluding soft deleted)
   async getAllUsers() {
-    return new Promise((resolve, reject) => {
+    try {
       const query = 'SELECT * FROM users WHERE deleted_at IS NULL ORDER BY created_at DESC';
-      
-      this.db.all(query, [], (err, rows) => {
-        if (err) {
-          reject(new Error('Failed to fetch users'));
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+      const rows = await this.allAsync(query);
+      return rows;
+    } catch (err) {
+      throw new Error('Failed to fetch users');
+    }
   }
 
   // Get user by ID (excluding soft deleted)
   async getUserById(id) {
-    return new Promise((resolve, reject) => {
-      this.db.get('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [id], (err, row) => {
-        if (err) {
-          reject(new Error('Failed to fetch user'));
-        } else if (!row) {
-          reject(new Error('User not found'));
-        } else {
-          resolve(row);
-        }
-      });
-    });
+    try {
+      const row = await this.getAsync('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [id]);
+      if (!row) {
+        throw new Error('User not found');
+      }
+      return row;
+    } catch (err) {
+      // If it's already a "User not found" error, re-throw it
+      if (err.message === 'User not found') {
+        throw err;
+      }
+      // Otherwise, it's a database error
+      throw new Error('Failed to fetch user');
+    }
   }
 
   // Get user by email (excluding soft deleted)
   async getUserByEmail(email) {
-    return new Promise((resolve, reject) => {
-      this.db.get('SELECT * FROM users WHERE email = ? AND deleted_at IS NULL', [email], (err, row) => {
-        if (err) {
-          reject(new Error('Failed to fetch user'));
-        } else if (!row) {
-          reject(new Error('User not found'));
-        } else {
-          resolve(row);
-        }
-      });
-    });
+    try {
+      const row = await this.getAsync('SELECT * FROM users WHERE email = ? AND deleted_at IS NULL', [email]);
+      if (!row) {
+        throw new Error('User not found');
+      }
+      return row;
+    } catch (err) {
+      // If it's already a "User not found" error, re-throw it
+      if (err.message === 'User not found') {
+        throw err;
+      }
+      // Otherwise, it's a database error
+      throw new Error('Failed to fetch user');
+    }
   }
 
   // Get user by pairing code (excluding soft deleted)
   async getUserByPairingCode(pairingCode) {
-    return new Promise((resolve, reject) => {
-      this.db.get('SELECT * FROM users WHERE pairing_code = ? AND deleted_at IS NULL', [pairingCode], (err, row) => {
-        if (err) {
-          reject(new Error('Failed to fetch user'));
-        } else if (!row) {
-          reject(new Error('User not found'));
-        } else {
-          resolve(row);
-        }
-      });
-    });
+    try {
+      const row = await this.getAsync('SELECT * FROM users WHERE pairing_code = ? AND deleted_at IS NULL', [pairingCode]);
+      if (!row) {
+        throw new Error('User not found');
+      }
+      return row;
+    } catch (err) {
+      // If it's already a "User not found" error, re-throw it
+      if (err.message === 'User not found') {
+        throw err;
+      }
+      // Otherwise, it's a database error
+      throw new Error('Failed to fetch user');
+    }
   }
 
   // Update user
@@ -244,21 +302,20 @@ class User {
     const updateQuery = `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`;
     updateValues.push(id);
 
-    return new Promise((resolve, reject) => {
-      const userModel = this;
-      this.db.run(updateQuery, updateValues, function(err) {
-        if (err) {
-          if (err.message.includes('UNIQUE constraint failed') && err.message.includes('email')) {
-            reject(new Error('Email already exists'));
-          } else {
-            reject(new Error('Failed to update user'));
-          }
-        } else {
-          // Get updated user data
-          userModel.getUserById(id).then(resolve).catch(reject);
-        }
-      });
-    });
+    try {
+      const result = await this.runAsync(updateQuery, updateValues);
+      if (result.changes === 0) {
+        throw new Error('User not found');
+      }
+      // Get updated user data
+      return await this.getUserById(id);
+    } catch (err) {
+      if (err.message.includes('UNIQUE constraint failed') && err.message.includes('email')) {
+        throw new Error('Email already exists');
+      } else {
+        throw new Error('Failed to update user');
+      }
+    }
   }
 
   // Verify password
@@ -285,17 +342,10 @@ class User {
           WHERE id = ? AND deleted_at IS NULL
         `;
 
-        await new Promise((userResolve, userReject) => {
-          this.db.run(updateUserQuery, [id], function(err) {
-            if (err) {
-              userReject(new Error('Failed to delete user'));
-            } else if (this.changes === 0) {
-              userReject(new Error('User not found or already deleted'));
-            } else {
-              userResolve();
-            }
-          });
-        });
+        const result = await this.runAsync(updateUserQuery, [id]);
+        if (result.changes === 0) {
+          throw new Error('User not found or already deleted');
+        }
 
         // Then, cascade soft delete their pairings if pairingModel is provided
         let pairingResult = null;
@@ -321,53 +371,45 @@ class User {
 
   // Restore a soft deleted user
   async restoreUser(id) {
-    return new Promise((resolve, reject) => {
+    try {
       const updateQuery = `
         UPDATE users 
         SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP 
         WHERE id = ? AND deleted_at IS NOT NULL
       `;
 
-      this.db.run(updateQuery, [id], function(err) {
-        if (err) {
-          reject(new Error('Failed to restore user'));
-        } else if (this.changes === 0) {
-          reject(new Error('User not found or not deleted'));
-        } else {
-          resolve({ message: 'User restored successfully' });
-        }
-      });
-    });
+      const result = await this.runAsync(updateQuery, [id]);
+      if (result.changes === 0) {
+        throw new Error('User not found or not deleted');
+      }
+      return { message: 'User restored successfully' };
+    } catch (err) {
+      throw new Error('Failed to restore user');
+    }
   }
 
   // Get user by ID including soft deleted (for admin purposes)
   async getUserByIdIncludingDeleted(id) {
-    return new Promise((resolve, reject) => {
-      this.db.get('SELECT * FROM users WHERE id = ?', [id], (err, row) => {
-        if (err) {
-          reject(new Error('Failed to fetch user'));
-        } else if (!row) {
-          reject(new Error('User not found'));
-        } else {
-          resolve(row);
-        }
-      });
-    });
+    try {
+      const row = await this.getAsync('SELECT * FROM users WHERE id = ?', [id]);
+      if (!row) {
+        throw new Error('User not found');
+      }
+      return row;
+    } catch (err) {
+      throw new Error('Failed to fetch user');
+    }
   }
 
   // Get all soft deleted users
   async getDeletedUsers() {
-    return new Promise((resolve, reject) => {
+    try {
       const query = 'SELECT * FROM users WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC';
-      
-      this.db.all(query, [], (err, rows) => {
-        if (err) {
-          reject(new Error('Failed to fetch deleted users'));
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+      const rows = await this.allAsync(query);
+      return rows;
+    } catch (err) {
+      throw new Error('Failed to fetch deleted users');
+    }
   }
 }
 

@@ -2,21 +2,21 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
-// Try to require sqlite3, and if it fails, install it properly
-let sqlite3;
+// Try to require better-sqlite3, and if it fails, install it properly
+let Database;
 try {
-  sqlite3 = require('sqlite3').verbose();
-  console.log('SQLite3 loaded successfully');
+  Database = require('better-sqlite3');
+  console.log('better-sqlite3 loaded successfully');
 } catch (error) {
-  console.log('SQLite3 failed to load, attempting to install:', error.message);
+  console.log('better-sqlite3 failed to load, attempting to install:', error.message);
   try {
     const { execSync } = require('child_process');
-    console.log('Installing sqlite3 from source...');
-    execSync('npm install sqlite3 --build-from-source', { stdio: 'inherit' });
-    sqlite3 = require('sqlite3').verbose();
-    console.log('SQLite3 installed and loaded successfully');
+    console.log('Installing better-sqlite3 from source...');
+    execSync('npm install better-sqlite3 --build-from-source', { stdio: 'inherit' });
+    Database = require('better-sqlite3');
+    console.log('better-sqlite3 installed and loaded successfully');
   } catch (installError) {
-    console.error('Failed to install SQLite3:', installError.message);
+    console.error('Failed to install better-sqlite3:', installError.message);
     console.error('Application cannot start without database support');
     process.exit(1);
   }
@@ -37,20 +37,25 @@ const createPairingRoutes = require('./routes/pairing');
 const app = express();
 const PORT = process.env.PORT || 9000;
 
+// Import security middleware
+const { apiLimiter } = require('./middleware/security');
+
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(apiLimiter); // Apply rate limiting to all API endpoints
 
 // Database setup
 const DATABASE_PATH = process.env.DATABASE_PATH || './database.sqlite';
-const db = new sqlite3.Database(DATABASE_PATH, (err) => {
-  if (err) {
-    console.error('Error opening database:', err.message);
-  } else {
-    console.log('Connected to SQLite database.');
-    initializeApp();
-  }
-});
+let db;
+try {
+  db = new Database(DATABASE_PATH);
+  console.log('Connected to SQLite database.');
+  initializeApp();
+} catch (err) {
+  console.error('Error opening database:', err.message);
+  process.exit(1);
+}
 
 // Initialize models and services
 let userModel, refreshTokenModel, pairingModel, authService, pairingService;
@@ -58,14 +63,19 @@ let userModel, refreshTokenModel, pairingModel, authService, pairingService;
 async function initializeApp() {
   try {
     // Initialize models
-    userModel = new User(db);
-    refreshTokenModel = new RefreshToken(db);
-    pairingModel = new Pairing(db);
+    const userModelInstance = new User(db);
+    const refreshTokenModelInstance = new RefreshToken(db);
+    const pairingModelInstance = new Pairing(db);
     
     // Initialize database tables
-    await userModel.initDatabase();
-    await refreshTokenModel.initDatabase();
-    await pairingModel.initDatabase();
+    await userModelInstance.initDatabase();
+    await refreshTokenModelInstance.initDatabase();
+    await pairingModelInstance.initDatabase();
+    
+    // Assign to global variables after successful initialization
+    userModel = userModelInstance;
+    refreshTokenModel = refreshTokenModelInstance;
+    pairingModel = pairingModelInstance;
     
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel);
@@ -83,16 +93,24 @@ async function initializeApp() {
 
 function setupRoutes() {
   // Make models available to routes for soft delete cascading
-  app.locals.pairingModel = pairingModel;
+  if (pairingModel) {
+    app.locals.pairingModel = pairingModel;
+  }
   
   // Setup user routes
-  app.use('/api/users', createUserRoutes(userModel, authService));
+  if (userModel && authService) {
+    app.use('/api/users', createUserRoutes(userModel, authService));
+  }
   
   // Setup auth routes
-  app.use('/api', createAuthRoutes(authService));
+  if (authService) {
+    app.use('/api', createAuthRoutes(authService));
+  }
   
   // Setup pairing routes
-  app.use('/api/pairing', createPairingRoutes(pairingService));
+  if (pairingService) {
+    app.use('/api/pairing', createPairingRoutes(pairingService));
+  }
 }
 
 // Health check endpoint
@@ -108,12 +126,11 @@ app.listen(PORT, HOST, () => {
 
 // Graceful shutdown
 process.on('SIGINT', () => {
-  db.close((err) => {
-    if (err) {
-      console.error('Error closing database:', err.message);
-    } else {
-      console.log('Database connection closed.');
-    }
-    process.exit(0);
-  });
+  try {
+    db.close();
+    console.log('Database connection closed.');
+  } catch (err) {
+    console.error('Error closing database:', err.message);
+  }
+  process.exit(0);
 }); 

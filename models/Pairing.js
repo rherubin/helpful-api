@@ -3,8 +3,45 @@ class Pairing {
     this.db = db;
   }
 
+  // Helper method to promisify better-sqlite3 operations for compatibility
+  runAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+      try {
+        const stmt = this.db.prepare(query);
+        const result = stmt.run(params);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  getAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+      try {
+        const stmt = this.db.prepare(query);
+        const result = stmt.get(params);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  allAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+      try {
+        const stmt = this.db.prepare(query);
+        const result = stmt.all(params);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
   // Initialize database tables
-  initDatabase() {
+  async initDatabase() {
     const createPairingsTable = `
       CREATE TABLE IF NOT EXISTS pairings (
         id TEXT PRIMARY KEY,
@@ -20,24 +57,23 @@ class Pairing {
       )
     `;
 
-    return new Promise((resolve, reject) => {
-      this.db.run(createPairingsTable, (err) => {
-        if (err) {
-          console.error('Error creating pairings table:', err.message);
-          reject(err);
-        } else {
-          console.log('Pairings table initialized successfully.');
-          // Add deleted_at column if it doesn't exist (for existing databases)
-          this.db.run("ALTER TABLE pairings ADD COLUMN deleted_at DATETIME DEFAULT NULL", (alterErr) => {
-            // Ignore error if column already exists
-            if (alterErr && !alterErr.message.includes('duplicate column name')) {
-              console.error('Error adding deleted_at column to pairings:', alterErr.message);
-            }
-            resolve();
-          });
+    try {
+      await this.runAsync(createPairingsTable);
+      console.log('Pairings table initialized successfully.');
+      
+      // Add deleted_at column if it doesn't exist (for existing databases)
+      try {
+        await this.runAsync("ALTER TABLE pairings ADD COLUMN deleted_at DATETIME DEFAULT NULL");
+      } catch (alterErr) {
+        // Ignore error if column already exists
+        if (!alterErr.message.includes('duplicate column name')) {
+          console.error('Error adding deleted_at column to pairings:', alterErr.message);
         }
-      });
-    });
+      }
+    } catch (err) {
+      console.error('Error creating pairings table:', err.message);
+      throw err;
+    }
   }
 
   // Generate unique ID
@@ -49,77 +85,71 @@ class Pairing {
   async createPairing(user1Id, user2Id) {
     const pairingId = this.generateUniqueId();
 
-    return new Promise((resolve, reject) => {
+    try {
       const insertPairing = `
         INSERT INTO pairings (id, user1_id, user2_id, status, created_at, updated_at)
         VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `;
 
-      this.db.run(insertPairing, [pairingId, user1Id, user2Id], function(err) {
-        if (err) {
-          if (err.message.includes('UNIQUE constraint failed')) {
-            reject(new Error('Pairing already exists'));
-          } else {
-            reject(new Error('Failed to create pairing'));
-          }
-        } else {
-          resolve({
-            id: pairingId,
-            user1_id: user1Id,
-            user2_id: user2Id,
-            status: 'pending',
-            created_at: new Date().toISOString()
-          });
-        }
-      });
-    });
+      await this.runAsync(insertPairing, [pairingId, user1Id, user2Id]);
+      
+      return {
+        id: pairingId,
+        user1_id: user1Id,
+        user2_id: user2Id,
+        status: 'pending',
+        created_at: new Date().toISOString()
+      };
+    } catch (err) {
+      if (err.message.includes('UNIQUE constraint failed')) {
+        throw new Error('Pairing already exists');
+      } else {
+        throw new Error('Failed to create pairing');
+      }
+    }
   }
 
   // Accept a pairing request
   async acceptPairing(pairingId) {
-    return new Promise((resolve, reject) => {
+    try {
       const updatePairing = `
         UPDATE pairings 
         SET status = 'accepted', updated_at = CURRENT_TIMESTAMP 
         WHERE id = ? AND status = 'pending'
       `;
 
-      this.db.run(updatePairing, [pairingId], function(err) {
-        if (err) {
-          reject(new Error('Failed to accept pairing'));
-        } else if (this.changes === 0) {
-          reject(new Error('Pairing not found or already processed'));
-        } else {
-          resolve({ message: 'Pairing accepted successfully' });
-        }
-      });
-    });
+      const result = await this.runAsync(updatePairing, [pairingId]);
+      if (result.changes === 0) {
+        throw new Error('Pairing not found or already processed');
+      }
+      return { message: 'Pairing accepted successfully' };
+    } catch (err) {
+      throw new Error('Failed to accept pairing');
+    }
   }
 
   // Reject a pairing request
   async rejectPairing(pairingId) {
-    return new Promise((resolve, reject) => {
+    try {
       const updatePairing = `
         UPDATE pairings 
         SET status = 'rejected', updated_at = CURRENT_TIMESTAMP 
         WHERE id = ? AND status = 'pending'
       `;
 
-      this.db.run(updatePairing, [pairingId], function(err) {
-        if (err) {
-          reject(new Error('Failed to reject pairing'));
-        } else if (this.changes === 0) {
-          reject(new Error('Pairing not found or already processed'));
-        } else {
-          resolve({ message: 'Pairing rejected successfully' });
-        }
-      });
-    });
+      const result = await this.runAsync(updatePairing, [pairingId]);
+      if (result.changes === 0) {
+        throw new Error('Pairing not found or already processed');
+      }
+      return { message: 'Pairing rejected successfully' };
+    } catch (err) {
+      throw new Error('Failed to reject pairing');
+    }
   }
 
   // Get pairings for a user (excluding soft deleted)
   async getUserPairings(userId) {
-    return new Promise((resolve, reject) => {
+    try {
       const query = `
         SELECT p.*, 
                u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
@@ -131,19 +161,16 @@ class Pairing {
         ORDER BY p.created_at DESC
       `;
 
-      this.db.all(query, [userId, userId], (err, rows) => {
-        if (err) {
-          reject(new Error('Failed to fetch pairings'));
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+      const rows = await this.allAsync(query, [userId, userId]);
+      return rows;
+    } catch (err) {
+      throw new Error('Failed to fetch pairings');
+    }
   }
 
   // Get pending pairings for a user (excluding soft deleted)
   async getPendingPairings(userId) {
-    return new Promise((resolve, reject) => {
+    try {
       const query = `
         SELECT p.*, 
                u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
@@ -155,19 +182,16 @@ class Pairing {
         ORDER BY p.created_at DESC
       `;
 
-      this.db.all(query, [userId, userId], (err, rows) => {
-        if (err) {
-          reject(new Error('Failed to fetch pending pairings'));
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+      const rows = await this.allAsync(query, [userId, userId]);
+      return rows;
+    } catch (err) {
+      throw new Error('Failed to fetch pending pairings');
+    }
   }
 
   // Get accepted pairings for a user (excluding soft deleted)
   async getAcceptedPairings(userId) {
-    return new Promise((resolve, reject) => {
+    try {
       const query = `
         SELECT p.*, 
                u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
@@ -179,37 +203,31 @@ class Pairing {
         ORDER BY p.created_at DESC
       `;
 
-      this.db.all(query, [userId, userId], (err, rows) => {
-        if (err) {
-          reject(new Error('Failed to fetch accepted pairings'));
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+      const rows = await this.allAsync(query, [userId, userId]);
+      return rows;
+    } catch (err) {
+      throw new Error('Failed to fetch accepted pairings');
+    }
   }
 
   // Check if users are already paired (excluding soft deleted)
   async checkExistingPairing(user1Id, user2Id) {
-    return new Promise((resolve, reject) => {
+    try {
       const query = `
         SELECT * FROM pairings 
         WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?)) AND deleted_at IS NULL
       `;
 
-      this.db.get(query, [user1Id, user2Id, user2Id, user1Id], (err, row) => {
-        if (err) {
-          reject(new Error('Failed to check existing pairing'));
-        } else {
-          resolve(row);
-        }
-      });
-    });
+      const row = await this.getAsync(query, [user1Id, user2Id, user2Id, user1Id]);
+      return row;
+    } catch (err) {
+      throw new Error('Failed to check existing pairing');
+    }
   }
 
   // Get pairing by ID (excluding soft deleted)
   async getPairingById(pairingId) {
-    return new Promise((resolve, reject) => {
+    try {
       const query = `
         SELECT p.*, 
                u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
@@ -220,105 +238,93 @@ class Pairing {
         WHERE p.id = ? AND p.deleted_at IS NULL
       `;
 
-      this.db.get(query, [pairingId], (err, row) => {
-        if (err) {
-          reject(new Error('Failed to fetch pairing'));
-        } else if (!row) {
-          reject(new Error('Pairing not found'));
-        } else {
-          resolve(row);
-        }
-      });
-    });
+      const row = await this.getAsync(query, [pairingId]);
+      if (!row) {
+        throw new Error('Pairing not found');
+      }
+      return row;
+    } catch (err) {
+      throw new Error('Failed to fetch pairing');
+    }
   }
 
   // Count accepted pairings for a user (excluding soft deleted)
   async countAcceptedPairings(userId) {
-    return new Promise((resolve, reject) => {
+    try {
       const query = `
         SELECT COUNT(*) as count 
         FROM pairings 
         WHERE (user1_id = ? OR user2_id = ?) AND status = 'accepted' AND deleted_at IS NULL
       `;
 
-      this.db.get(query, [userId, userId], (err, row) => {
-        if (err) {
-          reject(new Error('Failed to count pairings'));
-        } else {
-          resolve(row.count);
-        }
-      });
-    });
+      const row = await this.getAsync(query, [userId, userId]);
+      return row.count;
+    } catch (err) {
+      throw new Error('Failed to count pairings');
+    }
   }
 
   // Soft delete a pairing
   async softDeletePairing(pairingId) {
-    return new Promise((resolve, reject) => {
+    try {
       const updateQuery = `
         UPDATE pairings 
         SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
         WHERE id = ? AND deleted_at IS NULL
       `;
 
-      this.db.run(updateQuery, [pairingId], function(err) {
-        if (err) {
-          reject(new Error('Failed to delete pairing'));
-        } else if (this.changes === 0) {
-          reject(new Error('Pairing not found or already deleted'));
-        } else {
-          resolve({ message: 'Pairing deleted successfully', deleted_at: new Date().toISOString() });
-        }
-      });
-    });
+      const result = await this.runAsync(updateQuery, [pairingId]);
+      if (result.changes === 0) {
+        throw new Error('Pairing not found or already deleted');
+      }
+      return { message: 'Pairing deleted successfully', deleted_at: new Date().toISOString() };
+    } catch (err) {
+      throw new Error('Failed to delete pairing');
+    }
   }
 
   // Soft delete all pairings for a user (cascade delete)
   async softDeleteUserPairings(userId) {
-    return new Promise((resolve, reject) => {
+    try {
       const updateQuery = `
         UPDATE pairings 
         SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
         WHERE (user1_id = ? OR user2_id = ?) AND deleted_at IS NULL
       `;
 
-      this.db.run(updateQuery, [userId, userId], function(err) {
-        if (err) {
-          reject(new Error('Failed to delete user pairings'));
-        } else {
-          resolve({ 
-            message: 'User pairings deleted successfully', 
-            deleted_count: this.changes,
-            deleted_at: new Date().toISOString() 
-          });
-        }
-      });
-    });
+      const result = await this.runAsync(updateQuery, [userId, userId]);
+      return { 
+        message: 'User pairings deleted successfully', 
+        deleted_count: result.changes,
+        deleted_at: new Date().toISOString() 
+      };
+    } catch (err) {
+      throw new Error('Failed to delete user pairings');
+    }
   }
 
   // Restore a soft deleted pairing
   async restorePairing(pairingId) {
-    return new Promise((resolve, reject) => {
+    try {
       const updateQuery = `
         UPDATE pairings 
         SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP 
         WHERE id = ? AND deleted_at IS NOT NULL
       `;
 
-      this.db.run(updateQuery, [pairingId], function(err) {
-        if (err) {
-          reject(new Error('Failed to restore pairing'));
-        } else if (this.changes === 0) {
-          reject(new Error('Pairing not found or not deleted'));
-        } else {
-          resolve({ message: 'Pairing restored successfully' });
-        }
-      });
-    });
+      const result = await this.runAsync(updateQuery, [pairingId]);
+      if (result.changes === 0) {
+        throw new Error('Pairing not found or not deleted');
+      }
+      return { message: 'Pairing restored successfully' };
+    } catch (err) {
+      throw new Error('Failed to restore pairing');
+    }
   }
 
   // Get pairing by ID including soft deleted (for admin purposes)
   async getPairingByIdIncludingDeleted(pairingId) {
-    return new Promise((resolve, reject) => {
+    try {
       const query = `
         SELECT p.*, 
                u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
@@ -329,21 +335,19 @@ class Pairing {
         WHERE p.id = ?
       `;
 
-      this.db.get(query, [pairingId], (err, row) => {
-        if (err) {
-          reject(new Error('Failed to fetch pairing'));
-        } else if (!row) {
-          reject(new Error('Pairing not found'));
-        } else {
-          resolve(row);
-        }
-      });
-    });
+      const row = await this.getAsync(query, [pairingId]);
+      if (!row) {
+        throw new Error('Pairing not found');
+      }
+      return row;
+    } catch (err) {
+      throw new Error('Failed to fetch pairing');
+    }
   }
 
   // Get all soft deleted pairings
   async getDeletedPairings() {
-    return new Promise((resolve, reject) => {
+    try {
       const query = `
         SELECT p.*, 
                u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
@@ -355,15 +359,12 @@ class Pairing {
         ORDER BY p.deleted_at DESC
       `;
       
-      this.db.all(query, [], (err, rows) => {
-        if (err) {
-          reject(new Error('Failed to fetch deleted pairings'));
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+      const rows = await this.allAsync(query);
+      return rows;
+    } catch (err) {
+      throw new Error('Failed to fetch deleted pairings');
+    }
   }
 }
 
-module.exports = Pairing; 
+module.exports = Pairing;

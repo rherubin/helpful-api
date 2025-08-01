@@ -1,11 +1,22 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
+const { 
+  loginLimiter, 
+  isAccountLocked, 
+  recordFailedAttempt, 
+  clearFailedAttempts,
+  getAccountLockInfo,
+  securityLogger 
+} = require('../middleware/security');
 
 function createAuthRoutes(authService) {
   const router = express.Router();
 
-  // Login endpoint
-  router.post('/login', async (req, res) => {
+  // Apply security logging to all auth routes
+  router.use(securityLogger);
+
+  // Login endpoint with security measures
+  router.post('/login', loginLimiter, async (req, res) => {
     try {
       const { email, password } = req.body;
 
@@ -16,12 +27,44 @@ function createAuthRoutes(authService) {
         });
       }
 
+      // Check if account is locked
+      if (isAccountLocked(email)) {
+        const lockInfo = getAccountLockInfo(email);
+        return res.status(423).json({ 
+          error: 'Account temporarily locked due to too many failed attempts',
+          lockInfo: {
+            remainingTime: Math.ceil(lockInfo.remainingTime / 1000 / 60), // minutes
+            attemptCount: lockInfo.attemptCount
+          }
+        });
+      }
+
       const result = await authService.login(email, password);
+      
+      // Clear failed attempts on successful login
+      clearFailedAttempts(email);
+      
       res.status(200).json(result);
     } catch (error) {
       if (error.message === 'User not found' || error.message === 'Invalid email or password') {
+        // Record failed attempt and check for account lockout
+        const { email } = req.body;
+        if (email) {
+          const isLocked = recordFailedAttempt(email);
+          if (isLocked) {
+            const lockInfo = getAccountLockInfo(email);
+            return res.status(423).json({ 
+              error: 'Account locked due to too many failed attempts',
+              lockInfo: {
+                remainingTime: Math.ceil(lockInfo.remainingTime / 1000 / 60), // minutes
+                attemptCount: lockInfo.attemptCount
+              }
+            });
+          }
+        }
         return res.status(401).json({ error: 'Invalid email or password' });
       } else {
+        console.error('Login error:', error);
         return res.status(500).json({ error: 'Failed to authenticate user' });
       }
     }

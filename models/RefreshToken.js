@@ -3,8 +3,33 @@ class RefreshToken {
     this.db = db;
   }
 
+  // Helper method to promisify better-sqlite3 operations for compatibility
+  runAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+      try {
+        const stmt = this.db.prepare(query);
+        const result = stmt.run(params);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  getAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+      try {
+        const stmt = this.db.prepare(query);
+        const result = stmt.get(params);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
   // Initialize database tables
-  initDatabase() {
+  async initDatabase() {
     const createRefreshTokensTable = `
       CREATE TABLE IF NOT EXISTS refresh_tokens (
         id TEXT PRIMARY KEY,
@@ -16,17 +41,13 @@ class RefreshToken {
       )
     `;
 
-    return new Promise((resolve, reject) => {
-      this.db.run(createRefreshTokensTable, (err) => {
-        if (err) {
-          console.error('Error creating refresh_tokens table:', err.message);
-          reject(err);
-        } else {
-          console.log('Refresh tokens table initialized successfully.');
-          resolve();
-        }
-      });
-    });
+    try {
+      await this.runAsync(createRefreshTokensTable);
+      console.log('Refresh tokens table initialized successfully.');
+    } catch (err) {
+      console.error('Error creating refresh_tokens table:', err.message);
+      throw err;
+    }
   }
 
   // Generate unique ID
@@ -38,61 +59,49 @@ class RefreshToken {
   async createRefreshToken(userId, token, expiresAt) {
     const tokenId = this.generateUniqueId();
 
-    return new Promise((resolve, reject) => {
+    try {
       const insertToken = `
         INSERT INTO refresh_tokens (id, user_id, token, expires_at)
         VALUES (?, ?, ?, ?)
       `;
 
-      this.db.run(insertToken, [tokenId, userId, token, expiresAt.toISOString()], (err) => {
-        if (err) {
-          reject(new Error('Failed to create refresh token'));
-        } else {
-          resolve(tokenId);
-        }
-      });
-    });
+      await this.runAsync(insertToken, [tokenId, userId, token, expiresAt.toISOString()]);
+      return tokenId;
+    } catch (err) {
+      throw new Error('Failed to create refresh token');
+    }
   }
 
   // Get refresh token by token value
   async getRefreshToken(token) {
-    return new Promise((resolve, reject) => {
-      this.db.get('SELECT * FROM refresh_tokens WHERE token = ? AND expires_at > datetime("now")', [token], (err, row) => {
-        if (err) {
-          reject(new Error('Failed to fetch refresh token'));
-        } else if (!row) {
-          reject(new Error('Refresh token not found or expired'));
-        } else {
-          resolve(row);
-        }
-      });
-    });
+    try {
+      const row = await this.getAsync('SELECT * FROM refresh_tokens WHERE token = ? AND expires_at > datetime("now")', [token]);
+      if (!row) {
+        throw new Error('Refresh token not found or expired');
+      }
+      return row;
+    } catch (err) {
+      throw new Error('Failed to fetch refresh token');
+    }
   }
 
   // Delete refresh token (logout)
   async deleteRefreshToken(token) {
-    return new Promise((resolve, reject) => {
-      this.db.run('DELETE FROM refresh_tokens WHERE token = ?', [token], function(err) {
-        if (err) {
-          reject(new Error('Failed to delete refresh token'));
-        } else {
-          resolve(this.changes > 0);
-        }
-      });
-    });
+    try {
+      const result = await this.runAsync('DELETE FROM refresh_tokens WHERE token = ?', [token]);
+      return result.changes > 0;
+    } catch (err) {
+      throw new Error('Failed to delete refresh token');
+    }
   }
 
   // Clean up expired tokens
   async cleanupExpiredTokens() {
-    return new Promise((resolve, reject) => {
-      this.db.run('DELETE FROM refresh_tokens WHERE expires_at <= datetime("now")', (err) => {
-        if (err) {
-          reject(new Error('Failed to cleanup expired tokens'));
-        } else {
-          resolve();
-        }
-      });
-    });
+    try {
+      await this.runAsync('DELETE FROM refresh_tokens WHERE expires_at <= datetime("now")');
+    } catch (err) {
+      throw new Error('Failed to cleanup expired tokens');
+    }
   }
 }
 
