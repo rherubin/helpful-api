@@ -46,7 +46,7 @@ app.use(express.json());
 app.use(apiLimiter); // Apply rate limiting to all API endpoints
 
 // Database setup
-const DATABASE_PATH = process.env.DATABASE_PATH || './database.sqlite';
+const DATABASE_PATH = process.env.DATABASE_PATH || './helpful-db.sqlite';
 let db;
 try {
   db = new Database(DATABASE_PATH);
