@@ -11,9 +11,11 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
-# Database
-helpful-db.sqlite
+# Database files (auto-generated - see README for setup)
+*.sqlite
+*.sqlite3
 *.db
+helpful-db.sqlite
 
 # Logs
 logs

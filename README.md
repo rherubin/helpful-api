@@ -28,9 +28,24 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
    JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
    JWT_EXPIRES_IN=1h
    JWT_REFRESH_EXPIRES_IN=7d
+   DATABASE_PATH=./helpful-db.sqlite
    ```
 
-3. Start the server:
+3. **Database Setup** (Automatic):
+   
+   The SQLite database (`helpful-db.sqlite`) will be created automatically when you first start the server. The application will:
+   - Create the database file if it doesn't exist
+   - Initialize all required tables (users, refresh_tokens, pairings)
+   - Set up proper indexes and constraints
+   
+   **Note**: Database files are excluded from version control. Each developer gets a clean database on first run.
+   
+   **Development Tips**:
+   - To reset your database: Stop the server, delete `helpful-db.sqlite`, then restart
+   - First user created will have ID and pairing code generated automatically
+   - All tables and schemas are created automatically - no manual SQL needed
+
+4. Start the server:
    ```bash
    npm start
    ```
