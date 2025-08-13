@@ -12,6 +12,22 @@ class AuthService {
     this.JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '7d'; // Long-lived refresh token
   }
 
+  // Generate and persist tokens for a user, returning token payload plus user data
+  async issueTokensForUser(user) {
+    const accessToken = this.generateAccessToken(user);
+    const refreshToken = this.generateRefreshToken(user.id);
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await this.refreshTokenModel.createRefreshToken(user.id, refreshToken, expiresAt);
+    const { password_hash, ...userData } = user;
+    return {
+      user: userData,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expires_in: this.JWT_EXPIRES_IN,
+      refresh_expires_in: this.JWT_REFRESH_EXPIRES_IN
+    };
+  }
+
   // Generate access token
   generateAccessToken(user) {
     return jwt.sign(

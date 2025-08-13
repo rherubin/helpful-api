@@ -48,8 +48,8 @@ class User {
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         email TEXT UNIQUE NOT NULL,
-        first_name TEXT NOT NULL,
-        last_name TEXT NOT NULL,
+        first_name TEXT,
+        last_name TEXT,
         password_hash TEXT NOT NULL,
         pairing_code TEXT UNIQUE NOT NULL,
         max_pairings INTEGER DEFAULT 1,
@@ -71,6 +71,43 @@ class User {
         if (!alterErr.message.includes('duplicate column name')) {
           console.error('Error adding deleted_at column:', alterErr.message);
         }
+      }
+
+      // Migrate first_name/last_name to be nullable if existing DB has NOT NULL constraint
+      try {
+        const columns = await this.allAsync('PRAGMA table_info(users)');
+        const firstNameCol = columns.find(c => c.name === 'first_name');
+        const lastNameCol = columns.find(c => c.name === 'last_name');
+        const needsMigration = (firstNameCol && firstNameCol.notnull === 1) || (lastNameCol && lastNameCol.notnull === 1);
+        if (needsMigration) {
+          await this.runAsync('BEGIN');
+          const createUsersTableNullable = `
+            CREATE TABLE users_new (
+              id TEXT PRIMARY KEY,
+              email TEXT UNIQUE NOT NULL,
+              first_name TEXT,
+              last_name TEXT,
+              password_hash TEXT NOT NULL,
+              pairing_code TEXT UNIQUE NOT NULL,
+              max_pairings INTEGER DEFAULT 1,
+              deleted_at DATETIME DEFAULT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+          `;
+          await this.runAsync(createUsersTableNullable);
+          await this.runAsync(`
+            INSERT INTO users_new (id, email, first_name, last_name, password_hash, pairing_code, max_pairings, deleted_at, created_at, updated_at)
+            SELECT id, email, first_name, last_name, password_hash, pairing_code, max_pairings, deleted_at, created_at, updated_at FROM users
+          `);
+          await this.runAsync('DROP TABLE users');
+          await this.runAsync('ALTER TABLE users_new RENAME TO users');
+          await this.runAsync('COMMIT');
+          console.log('Migrated users table to allow NULL first_name and last_name.');
+        }
+      } catch (migErr) {
+        try { await this.runAsync('ROLLBACK'); } catch (_) {}
+        console.warn('Migration check/operation failed (first_name/last_name nullability). Proceeding:', migErr.message);
       }
     } catch (err) {
       console.error('Error creating users table:', err.message);
@@ -138,7 +175,7 @@ class User {
 
   // Create a new user
   async createUser(userData) {
-    const { email, first_name, last_name, password } = userData;
+    const { email, first_name = null, last_name = null, password } = userData;
     const max_pairings = 1; // Always set to 1 - constraint enforced
     
     // Validate password

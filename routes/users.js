@@ -7,12 +7,12 @@ function createUserRoutes(userModel, authService) {
   // Create user
   router.post('/', async (req, res) => {
     try {
-      const { email, first_name, last_name, password } = req.body;
+      const { email, first_name = null, last_name = null, password } = req.body;
 
       // Validation
-      if (!email || !first_name || !last_name || !password) {
+      if (!email || !password) {
         return res.status(400).json({ 
-          error: 'Email, first_name, last_name, and password are required' 
+          error: 'Email and password are required' 
         });
       }
 
@@ -25,7 +25,14 @@ function createUserRoutes(userModel, authService) {
       }
 
       const user = await userModel.createUser({ email, first_name, last_name, password });
-      res.status(201).json(user);
+      // Issue tokens for the new user
+      const tokenPayload = await authService.issueTokensForUser(user);
+      // Set Authorization header for convenience
+      res.set('Authorization', `Bearer ${tokenPayload.access_token}`);
+      res.status(201).json({
+        message: 'Account created successfully',
+        ...tokenPayload
+      });
     } catch (error) {
       if (error.message === 'Email already exists') {
         return res.status(409).json({ error: error.message });
