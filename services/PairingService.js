@@ -91,6 +91,56 @@ class PairingService {
     }
   }
 
+  // Accept a pairing request by requester's pairing code
+  async acceptPairingByCode(userId, requesterPairingCode) {
+    try {
+      // Find the pending pairing where someone with the given pairing code requested to pair with this user
+      const pairing = await this.pairingModel.getPendingPairingByRequesterCode(userId, requesterPairingCode);
+      
+      if (!pairing) {
+        throw new Error('No pending pairing found for this pairing code');
+      }
+
+      // Check if the user is the target user (user2) in this pairing
+      if (pairing.user2_id !== userId) {
+        throw new Error('You are not authorized to accept this pairing');
+      }
+
+      // Check if the pairing is already processed
+      if (pairing.status !== 'pending') {
+        throw new Error('Pairing request has already been processed');
+      }
+
+      // Get the accepting user
+      const acceptingUser = await this.userModel.getUserById(userId);
+      
+      // Check if accepting user has reached their max pairings
+      const acceptingUserPairings = await this.pairingModel.countAcceptedPairings(userId);
+      if (acceptingUserPairings >= acceptingUser.max_pairings) {
+        throw new Error('You have reached your maximum number of pairings');
+      }
+
+      // Accept the pairing
+      await this.pairingModel.acceptPairing(pairing.id);
+      
+      return {
+        message: 'Pairing accepted successfully',
+        pairing: {
+          id: pairing.id,
+          requester: {
+            id: pairing.user1_id,
+            first_name: pairing.user1_first_name,
+            last_name: pairing.user1_last_name,
+            email: pairing.user1_email,
+            pairing_code: pairing.user1_pairing_code
+          }
+        }
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
   // Reject a pairing request
   async rejectPairing(userId, pairingId) {
     try {

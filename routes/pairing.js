@@ -34,15 +34,19 @@ function createPairingRoutes(pairingService) {
   });
 
   // Accept a pairing request
-  router.post('/accept/:pairingId', authenticateToken, async (req, res) => {
+  router.post('/accept', authenticateToken, async (req, res) => {
     try {
-      const { pairingId } = req.params;
+      const { pairing_code } = req.body;
       const userId = req.user.id;
 
-      const result = await pairingService.acceptPairing(userId, pairingId);
+      if (!pairing_code) {
+        return res.status(400).json({ error: 'Pairing code is required' });
+      }
+
+      const result = await pairingService.acceptPairingByCode(userId, pairing_code);
       res.status(200).json(result);
     } catch (error) {
-      if (error.message === 'Pairing not found') {
+      if (error.message === 'No pending pairing found for this pairing code') {
         return res.status(404).json({ error: error.message });
       } else if (error.message === 'You are not authorized to accept this pairing') {
         return res.status(403).json({ error: error.message });

@@ -271,13 +271,29 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
   ```
 
 #### Accept Pairing Request
-- **POST** `/api/pairing/accept/:pairingId`
+- **POST** `/api/pairing/accept`
 - **Headers:** `Authorization: Bearer {access_token}`
+- **Body:**
+  ```json
+  {
+    "pairing_code": "ABCDEF"
+  }
+  ```
+  **Note**: Provide the pairing code of the user who sent you the pairing request (the requester), not your own pairing code.
 - **Response:**
   ```json
   {
     "message": "Pairing accepted successfully",
-    "pairing_id": "pairing_id"
+    "pairing": {
+      "id": "pairing_id",
+      "requester": {
+        "id": "requester_user_id",
+        "first_name": "John",
+        "last_name": "Doe",
+        "email": "john.doe@example.com",
+        "pairing_code": "ABCDEF"
+      }
+    }
   }
   ```
 
@@ -504,7 +520,7 @@ curl -X POST http://localhost:3000/api/pairing/request \
     "pairing_code": "JANE_PAIRING_CODE"
   }'
 
-# 4. Login as Jane and accept the pairing
+# 4. Login as Jane and accept the pairing using John's pairing code
 curl -X POST http://localhost:3000/api/login \
   -H "Content-Type: application/json" \
   -d '{
@@ -512,8 +528,12 @@ curl -X POST http://localhost:3000/api/login \
     "password": "Test2!@#"
   }'
 
-curl -X POST http://localhost:3000/api/pairing/accept/{pairing_id} \
-  -H "Authorization: Bearer {jane_access_token}"
+curl -X POST http://localhost:3000/api/pairing/accept \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {jane_access_token}" \
+  -d '{
+    "pairing_code": "JOHN_PAIRING_CODE"
+  }'
 
 # 5. View accepted pairings
 curl -X GET http://localhost:3000/api/pairing/accepted \
