@@ -22,7 +22,7 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
 
 2. Create a `.env` file in the root directory (optional):
    ```
-   PORT=3000
+   PORT=9000
    NODE_ENV=development
    JWT_SECRET=your-secret-key-change-in-production
    JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
@@ -570,7 +570,7 @@ This will test all endpoints including:
 
 ```bash
 # 1. Create two users (showing both full and minimal request formats)
-curl -X POST http://localhost:3000/api/users \
+curl -X POST http://localhost:9000/api/users \
   -H "Content-Type: application/json" \
   -d '{
     "email": "john.doe@example.com",
@@ -580,7 +580,7 @@ curl -X POST http://localhost:3000/api/users \
     "max_pairings": 1
   }'
 
-curl -X POST http://localhost:3000/api/users \
+curl -X POST http://localhost:9000/api/users \
   -H "Content-Type: application/json" \
   -d '{
     "email": "jane.doe@example.com",
@@ -589,7 +589,7 @@ curl -X POST http://localhost:3000/api/users \
   }'
 
 # 2. Login as both users
-curl -X POST http://localhost:3000/api/login \
+curl -X POST http://localhost:9000/api/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "john.doe@example.com",
@@ -597,20 +597,20 @@ curl -X POST http://localhost:3000/api/login \
   }'
 
 # 3. John requests a pairing (generates partner code)
-curl -X POST http://localhost:3000/api/pairing/request \
+curl -X POST http://localhost:9000/api/pairing/request \
   -H "Authorization: Bearer {john_access_token}"
 
 # This returns a partner_code like "ABC123" that John can share
 
 # 4. Login as Jane and accept the pairing using John's partner code
-curl -X POST http://localhost:3000/api/login \
+curl -X POST http://localhost:9000/api/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "jane.doe@example.com",
     "password": "Test2!@#"
   }'
 
-curl -X POST http://localhost:3000/api/pairing/accept \
+curl -X POST http://localhost:9000/api/pairing/accept \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {jane_access_token}" \
   -d '{
@@ -618,7 +618,7 @@ curl -X POST http://localhost:3000/api/pairing/accept \
   }'
 
 # 5. View accepted pairings
-curl -X GET http://localhost:3000/api/pairing/accepted \
+curl -X GET http://localhost:9000/api/pairing/accepted \
   -H "Authorization: Bearer {john_access_token}"
 ```
 
