@@ -302,7 +302,7 @@ This makes pairing more flexible since you don't need to know the other person's
   ```
 
 #### Get User's Pairings
-- **GET** `/api/pairing/`
+- **GET** `/api/pairings`
 - **Headers:** `Authorization: Bearer {access_token}`
 - **Response:**
   ```json
@@ -324,6 +324,8 @@ This makes pairing more flexible since you don't need to know the other person's
     ]
   }
   ```
+
+**Note**: This endpoint is also available at `/api/pairing/` for backward compatibility.
 
 #### Get Pending Pairings
 - **GET** `/api/pairing/pending`

@@ -280,6 +280,14 @@ async function testAPI() {
     });
     console.log('✅ Accepted pairings retrieved:', acceptedPairingsResponse.data);
     
+    // Test new GET /api/pairings endpoint
+    const allPairingsResponse = await axios.get(`${BASE_URL}/api/pairings`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    console.log('✅ All pairings retrieved via /api/pairings:', allPairingsResponse.data);
+    
     // Get pairing statistics
     const pairingStatsResponse = await axios.get(`${BASE_URL}/api/pairing/stats`, {
       headers: {

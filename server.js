@@ -113,6 +113,17 @@ function setupRoutes() {
   }
 }
 
+// Get all user's pairings endpoint
+app.get('/api/pairings', require('./middleware/auth').authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const result = await pairingService.getUserPairings(userId);
+    res.status(200).json(result);
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to fetch pairings' });
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
