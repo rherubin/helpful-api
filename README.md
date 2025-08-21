@@ -358,6 +358,93 @@ This makes pairing more flexible since you don't need to know the other person's
 - **Headers:** `Authorization: Bearer {access_token}`
 - **Response:** Detailed pairing information
 
+### Programs
+
+Programs are linked to pairings, allowing paired users to access each other's programs. When creating a program, you must provide a `pairing_id` from an accepted pairing. Both users in the pairing can view the program, but only the creator can delete it.
+
+**Privacy Note**: The `user_input` and `pairing_id` fields are returned in the POST creation response and the individual `GET /api/programs/:id` response. The list endpoint `GET /api/programs` excludes these fields for privacy protection.
+
+#### Create Program
+- **POST** `/api/programs`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Body:**
+  ```json
+  {
+    "user_name": "Steve",
+    "partner_name": "Becca",
+    "children": 3,
+    "user_input": "I feel less and less connected with my wife. I want a plan that will help us have what we used to. We would laugh and joke all the time and now things feel disconnected and distant",
+    "pairing_id": "pairing_id"
+  }
+  ```
+- **Response:**
+  ```json
+  {
+    "message": "Program created successfully",
+    "program": {
+      "id": "unique_id",
+      "user_id": "user_id",
+      "user_name": "Steve",
+      "partner_name": "Becca",
+      "children": 3,
+      "user_input": "I feel less and less connected with my wife...",
+      "pairing_id": "pairing_id",
+      "created_at": "2024-01-01T00:00:00.000Z"
+    }
+  }
+  ```
+
+#### Get User's Programs
+- **GET** `/api/programs`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:**
+  ```json
+  {
+    "message": "Programs retrieved successfully",
+    "programs": [
+      {
+        "id": "unique_id",
+        "user_id": "user_id",
+        "user_name": "Steve",
+        "partner_name": "Becca",
+        "children": 3,
+        "created_at": "2024-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+  ```
+
+#### Get Program by ID
+- **GET** `/api/programs/:id`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:**
+  ```json
+  {
+    "message": "Program retrieved successfully",
+    "program": {
+      "id": "unique_id",
+      "user_id": "user_id",
+      "user_name": "Steve",
+      "partner_name": "Becca",
+      "children": 3,
+      "user_input": "I feel less and less connected with my wife...",
+      "pairing_id": "pairing_id",
+      "created_at": "2024-01-01T00:00:00.000Z"
+    }
+  }
+  ```
+
+#### Delete Program
+- **DELETE** `/api/programs/:id`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:**
+  ```json
+  {
+    "message": "Program deleted successfully",
+    "deleted_at": "2024-01-01T00:00:00.000Z"
+  }
+  ```
+
 ### Health Check
 - **GET** `/health`
 - **Response:**

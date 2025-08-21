@@ -26,13 +26,16 @@ try {
 const User = require('./models/User');
 const RefreshToken = require('./models/RefreshToken');
 const Pairing = require('./models/Pairing');
+const Program = require('./models/Program');
 const AuthService = require('./services/AuthService');
 const PairingService = require('./services/PairingService');
+const ChatGPTService = require('./services/ChatGPTService');
 
 // Import routes
 const createUserRoutes = require('./routes/users');
 const createAuthRoutes = require('./routes/auth');
 const createPairingRoutes = require('./routes/pairing');
+const createProgramRoutes = require('./routes/programs');
 
 const app = express();
 const PORT = process.env.PORT || 9000;
@@ -58,7 +61,7 @@ try {
 }
 
 // Initialize models and services
-let userModel, refreshTokenModel, pairingModel, authService, pairingService;
+let userModel, refreshTokenModel, pairingModel, programModel, authService, pairingService, chatGPTService;
 
 async function initializeApp() {
   try {
@@ -66,20 +69,24 @@ async function initializeApp() {
     const userModelInstance = new User(db);
     const refreshTokenModelInstance = new RefreshToken(db);
     const pairingModelInstance = new Pairing(db);
+    const programModelInstance = new Program(db);
     
     // Initialize database tables
     await userModelInstance.initDatabase();
     await refreshTokenModelInstance.initDatabase();
     await pairingModelInstance.initDatabase();
+    await programModelInstance.initDatabase();
     
     // Assign to global variables after successful initialization
     userModel = userModelInstance;
     refreshTokenModel = refreshTokenModelInstance;
     pairingModel = pairingModelInstance;
+    programModel = programModelInstance;
     
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel);
     pairingService = new PairingService(userModel, pairingModel);
+    chatGPTService = new ChatGPTService();
     
     // Setup routes
     setupRoutes();
@@ -110,6 +117,11 @@ function setupRoutes() {
   // Setup pairing routes
   if (pairingService) {
     app.use('/api/pairing', createPairingRoutes(pairingService));
+  }
+
+  // Setup program routes
+  if (programModel && chatGPTService) {
+    app.use('/api/programs', createProgramRoutes(programModel, chatGPTService));
   }
 }
 

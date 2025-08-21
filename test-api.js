@@ -271,6 +271,7 @@ async function testAPI() {
       }
     });
     console.log('✅ Pairing accepted:', acceptPairingResponse.data);
+    const pairingId = acceptPairingResponse.data.pairing.id;
     
     // Get accepted pairings
     const acceptedPairingsResponse = await axios.get(`${BASE_URL}/api/pairing/accepted`, {
@@ -287,6 +288,78 @@ async function testAPI() {
       }
     });
     console.log('✅ All pairings retrieved via /api/pairings:', allPairingsResponse.data);
+
+    // Test Program endpoints
+    console.log('\nTesting Program endpoints...');
+
+    // Create a program using the pairing
+    const createProgramResponse = await axios.post(`${BASE_URL}/api/programs`, {
+      user_name: "Steve",
+      partner_name: "Becca",
+      children: 3,
+      user_input: "I feel less and less connected with my wife. I want a plan that will help us have what we used to.",
+      pairing_id: pairingId
+    }, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    console.log('✅ Program created:', createProgramResponse.data);
+    const programId = createProgramResponse.data.program.id;
+    
+    // Note: therapy_response will be null initially since ChatGPT runs asynchronously
+    console.log('ℹ️ Program created successfully. ChatGPT therapy response will be generated in the background.');
+
+    // Optional: Wait a moment and check if therapy response has been generated
+    setTimeout(async () => {
+      try {
+        const updatedProgramResponse = await axios.get(`${BASE_URL}/api/programs/${programId}`, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
+        });
+        
+        if (updatedProgramResponse.data.program.therapy_response) {
+          console.log('✅ ChatGPT therapy response has been generated and saved');
+        } else {
+          console.log('⏳ ChatGPT therapy response still being generated...');
+        }
+      } catch (error) {
+        console.log('Error checking therapy response status');
+      }
+    }, 3000); // Check after 3 seconds
+
+    // Get all programs
+    const allProgramsResponse = await axios.get(`${BASE_URL}/api/programs`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    console.log('✅ All programs retrieved:', allProgramsResponse.data);
+
+    // Get program by ID (as creator)
+    const programResponse = await axios.get(`${BASE_URL}/api/programs/${programId}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    console.log('✅ Program retrieved by creator:', programResponse.data);
+
+    // Get program by ID (as paired user)
+    const pairedProgramResponse = await axios.get(`${BASE_URL}/api/programs/${programId}`, {
+      headers: {
+        'Authorization': `Bearer ${secondUserToken}`
+      }
+    });
+    console.log('✅ Program retrieved by paired user:', pairedProgramResponse.data);
+
+    // Delete program
+    const deleteProgramResponse = await axios.delete(`${BASE_URL}/api/programs/${programId}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    console.log('✅ Program deleted:', deleteProgramResponse.data);
     
     // Get pairing statistics
     const pairingStatsResponse = await axios.get(`${BASE_URL}/api/pairing/stats`, {
