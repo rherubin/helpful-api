@@ -136,9 +136,14 @@ app.get('/api/pairings', require('./middleware/auth').authenticateToken, async (
   }
 });
 
-// Health check endpoint
+// Health check endpoints
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Alternative health check for Railway
+app.get('/', (req, res) => {
+  res.json({ status: 'OK', message: 'Helpful API is running', timestamp: new Date().toISOString() });
 });
 
 // Start server
