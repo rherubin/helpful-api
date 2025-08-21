@@ -4,29 +4,18 @@ const { authenticateToken } = require('../middleware/auth');
 function createPairingRoutes(pairingService) {
   const router = express.Router();
 
-  // Request a pairing with another user
+  // Request a pairing (generates partner code)
   router.post('/request', authenticateToken, async (req, res) => {
     try {
-      const { pairing_code } = req.body;
       const requestingUserId = req.user.id;
 
-      if (!pairing_code) {
-        return res.status(400).json({ error: 'Pairing code is required' });
-      }
-
-      const result = await pairingService.requestPairing(requestingUserId, pairing_code);
+      const result = await pairingService.requestPairing(requestingUserId);
       res.status(201).json(result);
     } catch (error) {
-      if (error.message === 'User not found') {
-        return res.status(404).json({ error: 'User with this pairing code not found' });
-      } else if (error.message === 'Cannot pair with yourself') {
+      if (error.message.includes('reached your maximum number of pairings')) {
         return res.status(400).json({ error: error.message });
-      } else if (error.message === 'Pairing already exists') {
+      } else if (error.message.includes('already have a pending pairing request')) {
         return res.status(409).json({ error: error.message });
-      } else if (error.message.includes('reached your maximum number of pairings')) {
-        return res.status(400).json({ error: error.message });
-      } else if (error.message.includes('Target user has reached their maximum number of pairings')) {
-        return res.status(400).json({ error: error.message });
       } else {
         return res.status(500).json({ error: 'Failed to request pairing' });
       }
@@ -36,22 +25,22 @@ function createPairingRoutes(pairingService) {
   // Accept a pairing request
   router.post('/accept', authenticateToken, async (req, res) => {
     try {
-      const { pairing_code } = req.body;
+      const { partner_code } = req.body;
       const userId = req.user.id;
 
-      if (!pairing_code) {
-        return res.status(400).json({ error: 'Pairing code is required' });
+      if (!partner_code) {
+        return res.status(400).json({ error: 'Partner code is required' });
       }
 
-      const result = await pairingService.acceptPairingByCode(userId, pairing_code);
+      const result = await pairingService.acceptPairingByCode(userId, partner_code);
       res.status(200).json(result);
     } catch (error) {
-      if (error.message === 'No pending pairing found for this pairing code') {
+      if (error.message === 'No pending pairing found for this partner code') {
         return res.status(404).json({ error: error.message });
-      } else if (error.message === 'You are not authorized to accept this pairing') {
-        return res.status(403).json({ error: error.message });
-      } else if (error.message === 'Pairing request has already been processed') {
+      } else if (error.message === 'You cannot accept your own pairing request') {
         return res.status(400).json({ error: error.message });
+      } else if (error.message === 'You are already paired with this user') {
+        return res.status(409).json({ error: error.message });
       } else if (error.message.includes('reached your maximum number of pairings')) {
         return res.status(400).json({ error: error.message });
       } else {

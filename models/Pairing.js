@@ -46,14 +46,14 @@ class Pairing {
       CREATE TABLE IF NOT EXISTS pairings (
         id TEXT PRIMARY KEY,
         user1_id TEXT NOT NULL,
-        user2_id TEXT NOT NULL,
+        user2_id TEXT,
+        partner_code TEXT,
         status TEXT DEFAULT 'pending',
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
-        FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE,
-        UNIQUE(user1_id, user2_id)
+        FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE
       )
     `;
 
@@ -61,14 +61,66 @@ class Pairing {
       await this.runAsync(createPairingsTable);
       console.log('Pairings table initialized successfully.');
       
-      // Add deleted_at column if it doesn't exist (for existing databases)
+      // Add columns if they don't exist (for existing databases)
       try {
         await this.runAsync("ALTER TABLE pairings ADD COLUMN deleted_at DATETIME DEFAULT NULL");
       } catch (alterErr) {
-        // Ignore error if column already exists
         if (!alterErr.message.includes('duplicate column name')) {
           console.error('Error adding deleted_at column to pairings:', alterErr.message);
         }
+      }
+
+      try {
+        await this.runAsync("ALTER TABLE pairings ADD COLUMN partner_code TEXT");
+      } catch (alterErr) {
+        if (!alterErr.message.includes('duplicate column name')) {
+          console.error('Error adding partner_code column to pairings:', alterErr.message);
+        }
+      }
+
+      // Drop the old unique constraint and modify user2_id to be nullable
+      try {
+        // Check if we need to migrate the table structure
+        const checkQuery = "PRAGMA table_info(pairings)";
+        const columns = await this.allAsync(checkQuery);
+        const user2Column = columns.find(col => col.name === 'user2_id');
+        
+        if (user2Column && user2Column.notnull === 1) {
+          // Need to migrate - recreate table with nullable user2_id
+          await this.runAsync('BEGIN');
+          
+          const createNewTable = `
+            CREATE TABLE pairings_new (
+              id TEXT PRIMARY KEY,
+              user1_id TEXT NOT NULL,
+              user2_id TEXT,
+              partner_code TEXT,
+              status TEXT DEFAULT 'pending',
+              deleted_at DATETIME DEFAULT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
+              FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+          `;
+          
+          await this.runAsync(createNewTable);
+          
+          // Copy existing data
+          await this.runAsync(`
+            INSERT INTO pairings_new (id, user1_id, user2_id, status, deleted_at, created_at, updated_at)
+            SELECT id, user1_id, user2_id, status, deleted_at, created_at, updated_at FROM pairings
+          `);
+          
+          await this.runAsync('DROP TABLE pairings');
+          await this.runAsync('ALTER TABLE pairings_new RENAME TO pairings');
+          await this.runAsync('COMMIT');
+          
+          console.log('Migrated pairings table to support partner codes.');
+        }
+      } catch (migErr) {
+        try { await this.runAsync('ROLLBACK'); } catch (_) {}
+        console.warn('Migration check/operation failed. Proceeding:', migErr.message);
       }
     } catch (err) {
       console.error('Error creating pairings table:', err.message);
@@ -81,7 +133,17 @@ class Pairing {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 
-  // Create a pairing request
+  // Generate unique partner code (6 characters, alphanumeric)
+  generatePartnerCode() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 6; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
+  // Create a pairing request (legacy method for existing pairings)
   async createPairing(user1Id, user2Id) {
     const pairingId = this.generateUniqueId();
 
@@ -106,6 +168,58 @@ class Pairing {
       } else {
         throw new Error('Failed to create pairing');
       }
+    }
+  }
+
+  // Create a pairing request with partner code (new flow)
+  async createPairingWithPartnerCode(userId) {
+    const pairingId = this.generateUniqueId();
+    let partnerCode;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    // Generate a unique partner code
+    while (attempts < maxAttempts) {
+      partnerCode = this.generatePartnerCode();
+      
+      // Check if this partner code already exists and is active
+      try {
+        const existingPairing = await this.getAsync(
+          "SELECT id FROM pairings WHERE partner_code = ? AND status = 'pending' AND deleted_at IS NULL",
+          [partnerCode]
+        );
+        
+        if (!existingPairing) {
+          break; // Unique code found
+        }
+        attempts++;
+      } catch (err) {
+        attempts++;
+      }
+    }
+
+    if (attempts >= maxAttempts) {
+      throw new Error('Failed to generate unique partner code');
+    }
+
+    try {
+      const insertPairing = `
+        INSERT INTO pairings (id, user1_id, user2_id, partner_code, status, created_at, updated_at)
+        VALUES (?, ?, NULL, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `;
+
+      await this.runAsync(insertPairing, [pairingId, userId, partnerCode]);
+      
+      return {
+        id: pairingId,
+        user1_id: userId,
+        user2_id: null,
+        partner_code: partnerCode,
+        status: 'pending',
+        created_at: new Date().toISOString()
+      };
+    } catch (err) {
+      throw new Error('Failed to create pairing request');
     }
   }
 
@@ -265,6 +379,43 @@ class Pairing {
       return row; // Returns null if not found, which is fine
     } catch (err) {
       throw new Error('Failed to fetch pairing by requester code');
+    }
+  }
+
+  // Get pending pairing by partner code (new flow)
+  async getPendingPairingByPartnerCode(partnerCode) {
+    try {
+      const query = `
+        SELECT p.*, 
+               u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email, u1.pairing_code as user1_pairing_code
+        FROM pairings p
+        JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
+        WHERE p.partner_code = ? AND p.status = 'pending' AND p.deleted_at IS NULL AND p.user2_id IS NULL
+      `;
+
+      const row = await this.getAsync(query, [partnerCode]);
+      return row; // Returns null if not found, which is fine
+    } catch (err) {
+      throw new Error('Failed to fetch pairing by partner code');
+    }
+  }
+
+  // Accept a pairing by partner code (new flow)
+  async acceptPairingByPartnerCode(partnerCode, acceptingUserId) {
+    try {
+      const updatePairing = `
+        UPDATE pairings 
+        SET user2_id = ?, status = 'accepted', updated_at = CURRENT_TIMESTAMP 
+        WHERE partner_code = ? AND status = 'pending' AND user2_id IS NULL AND deleted_at IS NULL
+      `;
+
+      const result = await this.runAsync(updatePairing, [acceptingUserId, partnerCode]);
+      if (result.changes === 0) {
+        throw new Error('Pairing not found or already processed');
+      }
+      return { message: 'Pairing accepted successfully' };
+    } catch (err) {
+      throw new Error('Failed to accept pairing');
     }
   }
 

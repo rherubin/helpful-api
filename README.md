@@ -241,34 +241,26 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
 
 ### Pairing System
 
+**New Pairing Flow**: The pairing system now uses a two-step process:
+1. **Request**: A user creates a temporary partner code without specifying who they want to pair with
+2. **Accept**: Another user uses that partner code to pair with the original user
+
+This makes pairing more flexible since you don't need to know the other person's pairing code in advance.
+
 #### Request Pairing
 - **POST** `/api/pairing/request`
 - **Headers:** `Authorization: Bearer {access_token}`
-- **Body:**
-  ```json
-  {
-    "pairing_code": "ABCDEF"
-  }
-  ```
+- **Body:** No body required
 - **Response:**
   ```json
   {
-    "message": "Pairing request sent successfully",
-    "pairing": {
-      "id": "pairing_id",
-      "user1_id": "requesting_user_id",
-      "user2_id": "target_user_id",
-      "status": "pending",
-      "created_at": "2024-01-01T00:00:00.000Z"
-    },
-    "target_user": {
-      "id": "target_user_id",
-      "first_name": "Jane",
-      "last_name": "Doe",
-      "email": "jane.doe@example.com"
-    }
+    "message": "Partner code generated successfully. Share this code with someone to pair with you.",
+    "partner_code": "ABC123",
+    "pairing_id": "pairing_id",
+    "expires_note": "This partner code is valid until someone uses it or you cancel the request."
   }
   ```
+  **Note**: This generates a temporary partner code that others can use to pair with you. You don't need to specify who you want to pair with.
 
 #### Accept Pairing Request
 - **POST** `/api/pairing/accept`
@@ -276,16 +268,17 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
 - **Body:**
   ```json
   {
-    "pairing_code": "ABCDEF"
+    "partner_code": "ABC123"
   }
   ```
-  **Note**: Provide the pairing code of the user who sent you the pairing request (the requester), not your own pairing code.
+  **Note**: Use the partner code that someone shared with you to pair with them.
 - **Response:**
   ```json
   {
     "message": "Pairing accepted successfully",
     "pairing": {
       "id": "pairing_id",
+      "partner_code": "ABC123",
       "requester": {
         "id": "requester_user_id",
         "first_name": "John",
@@ -410,13 +403,14 @@ CREATE TABLE refresh_tokens (
 CREATE TABLE pairings (
   id TEXT PRIMARY KEY,
   user1_id TEXT NOT NULL,
-  user2_id TEXT NOT NULL,
+  user2_id TEXT,
+  partner_code TEXT,
   status TEXT DEFAULT 'pending',
+  deleted_at DATETIME DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
-  FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE,
-  UNIQUE(user1_id, user2_id)
+  FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE
 );
 ```
 
@@ -512,15 +506,13 @@ curl -X POST http://localhost:3000/api/login \
     "password": "Test1!@#"
   }'
 
-# 3. Request pairing (using Jane's pairing code)
+# 3. John requests a pairing (generates partner code)
 curl -X POST http://localhost:3000/api/pairing/request \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {john_access_token}" \
-  -d '{
-    "pairing_code": "JANE_PAIRING_CODE"
-  }'
+  -H "Authorization: Bearer {john_access_token}"
 
-# 4. Login as Jane and accept the pairing using John's pairing code
+# This returns a partner_code like "ABC123" that John can share
+
+# 4. Login as Jane and accept the pairing using John's partner code
 curl -X POST http://localhost:3000/api/login \
   -H "Content-Type: application/json" \
   -d '{
@@ -532,7 +524,7 @@ curl -X POST http://localhost:3000/api/pairing/accept \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {jane_access_token}" \
   -d '{
-    "pairing_code": "JOHN_PAIRING_CODE"
+    "partner_code": "ABC123"
   }'
 
 # 5. View accepted pairings

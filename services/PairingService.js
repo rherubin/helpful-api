@@ -4,50 +4,36 @@ class PairingService {
     this.pairingModel = pairingModel;
   }
 
-  // Request a pairing with another user
-  async requestPairing(requestingUserId, targetPairingCode) {
+  // Request a pairing (new flow - creates partner code)
+  async requestPairing(requestingUserId) {
     try {
       // Get the requesting user
       const requestingUser = await this.userModel.getUserById(requestingUserId);
       
-      // Get the target user by pairing code
-      const targetUser = await this.userModel.getUserByPairingCode(targetPairingCode);
-      
-      // Check if users are trying to pair with themselves
-      if (requestingUserId === targetUser.id) {
-        throw new Error('Cannot pair with yourself');
-      }
-
-      // Check if pairing already exists
-      const existingPairing = await this.pairingModel.checkExistingPairing(requestingUserId, targetUser.id);
-      if (existingPairing) {
-        throw new Error('Pairing already exists');
-      }
-
       // Check if requesting user has reached their max pairings
       const requestingUserPairings = await this.pairingModel.countAcceptedPairings(requestingUserId);
       if (requestingUserPairings >= requestingUser.max_pairings) {
         throw new Error('You have reached your maximum number of pairings');
       }
 
-      // Check if target user has reached their max pairings
-      const targetUserPairings = await this.pairingModel.countAcceptedPairings(targetUser.id);
-      if (targetUserPairings >= targetUser.max_pairings) {
-        throw new Error('Target user has reached their maximum number of pairings');
+      // Check if user already has a pending partner code request
+      const existingPendingRequest = await this.pairingModel.getUserPairings(requestingUserId);
+      const hasPendingPartnerCode = existingPendingRequest.some(p => 
+        p.status === 'pending' && p.partner_code && !p.user2_id
+      );
+      
+      if (hasPendingPartnerCode) {
+        throw new Error('You already have a pending pairing request. Cancel it first or wait for someone to accept it.');
       }
 
-      // Create the pairing request
-      const pairing = await this.pairingModel.createPairing(requestingUserId, targetUser.id);
+      // Create the pairing request with partner code
+      const pairing = await this.pairingModel.createPairingWithPartnerCode(requestingUserId);
       
       return {
-        message: 'Pairing request sent successfully',
-        pairing: pairing,
-        target_user: {
-          id: targetUser.id,
-          first_name: targetUser.first_name,
-          last_name: targetUser.last_name,
-          email: targetUser.email
-        }
+        message: 'Partner code generated successfully. Share this code with someone to pair with you.',
+        partner_code: pairing.partner_code,
+        pairing_id: pairing.id,
+        expires_note: 'This partner code is valid until someone uses it or you cancel the request.'
       };
     } catch (error) {
       throw error;
@@ -91,24 +77,19 @@ class PairingService {
     }
   }
 
-  // Accept a pairing request by requester's pairing code
-  async acceptPairingByCode(userId, requesterPairingCode) {
+  // Accept a pairing request by partner code
+  async acceptPairingByCode(userId, partnerCode) {
     try {
-      // Find the pending pairing where someone with the given pairing code requested to pair with this user
-      const pairing = await this.pairingModel.getPendingPairingByRequesterCode(userId, requesterPairingCode);
+      // Find the pending pairing with the given partner code
+      const pairing = await this.pairingModel.getPendingPairingByPartnerCode(partnerCode);
       
       if (!pairing) {
-        throw new Error('No pending pairing found for this pairing code');
+        throw new Error('No pending pairing found for this partner code');
       }
 
-      // Check if the user is the target user (user2) in this pairing
-      if (pairing.user2_id !== userId) {
-        throw new Error('You are not authorized to accept this pairing');
-      }
-
-      // Check if the pairing is already processed
-      if (pairing.status !== 'pending') {
-        throw new Error('Pairing request has already been processed');
+      // Check if user is trying to accept their own pairing request
+      if (pairing.user1_id === userId) {
+        throw new Error('You cannot accept your own pairing request');
       }
 
       // Get the accepting user
@@ -120,13 +101,20 @@ class PairingService {
         throw new Error('You have reached your maximum number of pairings');
       }
 
-      // Accept the pairing
-      await this.pairingModel.acceptPairing(pairing.id);
+      // Check if they're already paired
+      const existingPairing = await this.pairingModel.checkExistingPairing(pairing.user1_id, userId);
+      if (existingPairing && existingPairing.id !== pairing.id) {
+        throw new Error('You are already paired with this user');
+      }
+
+      // Accept the pairing by partner code
+      await this.pairingModel.acceptPairingByPartnerCode(partnerCode, userId);
       
       return {
         message: 'Pairing accepted successfully',
         pairing: {
           id: pairing.id,
+          partner_code: partnerCode,
           requester: {
             id: pairing.user1_id,
             first_name: pairing.user1_first_name,
