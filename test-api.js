@@ -253,27 +253,19 @@ async function testAPI() {
     });
     const secondUserToken = secondUserLoginResponse.data.access_token;
     
-    // Request pairing with second user
-    const pairingResponse = await axios.post(`${BASE_URL}/api/pairing/request`, {
-      pairing_code: secondUserResponse.data.pairing_code
-    }, {
+    // Request pairing (generates partner code)
+    const pairingResponse = await axios.post(`${BASE_URL}/api/pairing/request`, {}, {
       headers: {
         'Authorization': `Bearer ${accessToken}`
       }
     });
-    console.log('✅ Pairing request sent:', pairingResponse.data);
+    console.log('✅ Partner code generated:', pairingResponse.data);
+    const partnerCode = pairingResponse.data.partner_code;
     
-    // Get pending pairings for second user
-    const pendingPairingsResponse = await axios.get(`${BASE_URL}/api/pairing/pending`, {
-      headers: {
-        'Authorization': `Bearer ${secondUserToken}`
-      }
-    });
-    console.log('✅ Pending pairings retrieved:', pendingPairingsResponse.data);
-    
-    // Accept pairing request
-    const pairingId = pendingPairingsResponse.data.pairings[0].id;
-    const acceptPairingResponse = await axios.post(`${BASE_URL}/api/pairing/accept/${pairingId}`, {}, {
+    // Accept pairing request using partner code
+    const acceptPairingResponse = await axios.post(`${BASE_URL}/api/pairing/accept`, {
+      partner_code: partnerCode
+    }, {
       headers: {
         'Authorization': `Bearer ${secondUserToken}`
       }

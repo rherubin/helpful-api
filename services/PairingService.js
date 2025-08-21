@@ -119,8 +119,7 @@ class PairingService {
             id: pairing.user1_id,
             first_name: pairing.user1_first_name,
             last_name: pairing.user1_last_name,
-            email: pairing.user1_email,
-            pairing_code: pairing.user1_pairing_code
+            email: pairing.user1_email
           }
         }
       };

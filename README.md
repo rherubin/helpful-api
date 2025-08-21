@@ -79,7 +79,7 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
       "email": "user@example.com",
       "first_name": "John",
       "last_name": "Doe",
-      "pairing_code": "ABCDEF",
+
       "max_pairings": 1,
       "created_at": "2024-01-01T00:00:00.000Z"
     },
@@ -154,7 +154,7 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
       "email": "user@example.com",
       "first_name": "John",
       "last_name": "Doe",
-      "pairing_code": "ABCDEF",
+
       "max_pairings": 1,
       "created_at": "2024-01-01T00:00:00.000Z"
     },
@@ -174,7 +174,7 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
       "email": "user@example.com",
       "first_name": null,
       "last_name": null,
-      "pairing_code": "ABCDEF",
+
       "max_pairings": 1,
       "created_at": "2024-01-01T00:00:00.000Z"
     },
@@ -213,7 +213,7 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
       "email": "johnny.smith@example.com",
       "first_name": "Johnny",
       "last_name": "Smith",
-      "pairing_code": "ABCDEF",
+
       "max_pairings": 2,
       "updated_at": "2024-01-01T00:00:00.000Z"
     }
@@ -232,7 +232,7 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
       "email": "user@example.com",
       "first_name": "John",
       "last_name": "Doe",
-      "pairing_code": "ABCDEF",
+
       "max_pairings": 1,
       "created_at": "2024-01-01T00:00:00.000Z"
     }
@@ -284,7 +284,7 @@ This makes pairing more flexible since you don't need to know the other person's
         "first_name": "John",
         "last_name": "Doe",
         "email": "john.doe@example.com",
-        "pairing_code": "ABCDEF"
+
       }
     }
   }
@@ -378,7 +378,7 @@ CREATE TABLE users (
   first_name TEXT,
   last_name TEXT,
   password_hash TEXT NOT NULL,
-  pairing_code TEXT UNIQUE NOT NULL,
+
   max_pairings INTEGER DEFAULT 1,
   deleted_at DATETIME DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -423,12 +423,13 @@ Passwords must meet the following criteria:
 - At least one capital letter (A-Z)
 - At least one lowercase letter (a-z)
 
-## Pairing Code Format
+## Partner Code Format
 
-Pairing codes are automatically generated as 6-character uppercase alphabetic strings:
-- Format: `XXXXXX` (e.g., "ABCDEF", "XYZABC")
-- Uses only uppercase letters A-Z
-- Guaranteed to be unique across all users
+Partner codes are temporarily generated when users request pairings:
+- Format: `XXXXXX` (e.g., "ABC123", "XYZ789")
+- Uses uppercase letters A-Z and numbers 0-9
+- Generated only when requesting a pairing
+- Valid until someone uses them or the request is cancelled
 - No hyphens or special characters
 
 ## Authentication

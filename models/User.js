@@ -51,7 +51,6 @@ class User {
         first_name TEXT,
         last_name TEXT,
         password_hash TEXT NOT NULL,
-        pairing_code TEXT UNIQUE NOT NULL,
         max_pairings INTEGER DEFAULT 1,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -88,7 +87,6 @@ class User {
               first_name TEXT,
               last_name TEXT,
               password_hash TEXT NOT NULL,
-              pairing_code TEXT UNIQUE NOT NULL,
               max_pairings INTEGER DEFAULT 1,
               deleted_at DATETIME DEFAULT NULL,
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -97,8 +95,8 @@ class User {
           `;
           await this.runAsync(createUsersTableNullable);
           await this.runAsync(`
-            INSERT INTO users_new (id, email, first_name, last_name, password_hash, pairing_code, max_pairings, deleted_at, created_at, updated_at)
-            SELECT id, email, first_name, last_name, password_hash, pairing_code, max_pairings, deleted_at, created_at, updated_at FROM users
+            INSERT INTO users_new (id, email, first_name, last_name, password_hash, max_pairings, deleted_at, created_at, updated_at)
+            SELECT id, email, first_name, last_name, password_hash, max_pairings, deleted_at, created_at, updated_at FROM users
           `);
           await this.runAsync('DROP TABLE users');
           await this.runAsync('ALTER TABLE users_new RENAME TO users');
@@ -109,17 +107,56 @@ class User {
         try { await this.runAsync('ROLLBACK'); } catch (_) {}
         console.warn('Migration check/operation failed (first_name/last_name nullability). Proceeding:', migErr.message);
       }
+
+      // Remove pairing_code column if it exists (migration)
+      try {
+        const checkQuery = "PRAGMA table_info(users)";
+        const columns = await this.allAsync(checkQuery);
+        const pairingCodeColumn = columns.find(col => col.name === 'pairing_code');
+        
+        if (pairingCodeColumn) {
+          // Need to migrate - recreate table without pairing_code
+          await this.runAsync('BEGIN');
+          
+          const createNewTable = `
+            CREATE TABLE users_new (
+              id TEXT PRIMARY KEY,
+              email TEXT UNIQUE NOT NULL,
+              first_name TEXT,
+              last_name TEXT,
+              password_hash TEXT NOT NULL,
+              max_pairings INTEGER DEFAULT 1,
+              deleted_at DATETIME DEFAULT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+          `;
+          
+          await this.runAsync(createNewTable);
+          
+          // Copy existing data (excluding pairing_code)
+          await this.runAsync(`
+            INSERT INTO users_new (id, email, first_name, last_name, password_hash, max_pairings, deleted_at, created_at, updated_at)
+            SELECT id, email, first_name, last_name, password_hash, max_pairings, deleted_at, created_at, updated_at FROM users
+          `);
+          
+          await this.runAsync('DROP TABLE users');
+          await this.runAsync('ALTER TABLE users_new RENAME TO users');
+          await this.runAsync('COMMIT');
+          
+          console.log('Migrated users table to remove pairing_code column.');
+        }
+      } catch (migErr) {
+        try { await this.runAsync('ROLLBACK'); } catch (_) {}
+        console.warn('Migration check/operation failed (pairing_code removal). Proceeding:', migErr.message);
+      }
     } catch (err) {
       console.error('Error creating users table:', err.message);
       throw err;
     }
   }
 
-  // Generate pairing code (6 digit alpha string)
-  generatePairingCode() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    return Array.from({length: 6}, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
-  }
+
 
   // Generate unique ID
   generateUniqueId() {
@@ -185,7 +222,6 @@ class User {
     }
 
     const userId = this.generateUniqueId();
-    const pairingCode = this.generatePairingCode();
 
     // Hash the password
     const hash = await new Promise((resolve, reject) => {
@@ -199,19 +235,18 @@ class User {
     });
 
     const insertUser = `
-      INSERT INTO users (id, email, first_name, last_name, password_hash, pairing_code, max_pairings, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      INSERT INTO users (id, email, first_name, last_name, password_hash, max_pairings, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `;
 
     try {
-      await this.runAsync(insertUser, [userId, email, first_name, last_name, hash, pairingCode, max_pairings]);
+      await this.runAsync(insertUser, [userId, email, first_name, last_name, hash, max_pairings]);
       
       return {
         id: userId,
         email,
         first_name,
         last_name,
-        pairing_code: pairingCode,
         max_pairings: max_pairings,
         created_at: new Date().toISOString()
       };
@@ -219,23 +254,8 @@ class User {
       if (err.message.includes('UNIQUE constraint failed')) {
         if (err.message.includes('email')) {
           throw new Error('Email already exists');
-        } else if (err.message.includes('pairing_code')) {
-          // Retry with a new pairing code
-          const newPairingCode = this.generatePairingCode();
-          try {
-            await this.runAsync(insertUser, [userId, email, first_name, last_name, hash, newPairingCode, max_pairings]);
-            return {
-              id: userId,
-              email,
-              first_name,
-              last_name,
-              pairing_code: newPairingCode,
-              max_pairings: max_pairings,
-              created_at: new Date().toISOString()
-            };
-          } catch (retryErr) {
-            throw new Error('Failed to create user');
-          }
+        } else {
+          throw new Error('Failed to create user');
         }
       } else {
         throw new Error('Failed to create user');
@@ -290,23 +310,7 @@ class User {
     }
   }
 
-  // Get user by pairing code (excluding soft deleted)
-  async getUserByPairingCode(pairingCode) {
-    try {
-      const row = await this.getAsync('SELECT * FROM users WHERE pairing_code = ? AND deleted_at IS NULL', [pairingCode]);
-      if (!row) {
-        throw new Error('User not found');
-      }
-      return row;
-    } catch (err) {
-      // If it's already a "User not found" error, re-throw it
-      if (err.message === 'User not found') {
-        throw err;
-      }
-      // Otherwise, it's a database error
-      throw new Error('Failed to fetch user');
-    }
-  }
+
 
   // Update user
   async updateUser(id, updateData) {
