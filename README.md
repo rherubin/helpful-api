@@ -57,6 +57,8 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
 
 ## API Endpoints
 
+**Note**: `first_name` and `last_name` fields are optional throughout the API. When not provided during user creation, they will be stored as `null` and returned as `null` in responses.
+
 ### Authentication
 
 #### Login
@@ -134,16 +136,52 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
     "max_pairings": 1
   }
   ```
+  **Note**: Only `email` and `password` are required. `first_name` and `last_name` are optional and will be set to `null` if not provided.
+
+- **Minimal Request Body:**
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "Test1!@#"
+  }
+  ```
 - **Response:**
   ```json
   {
-    "id": "unique_id",
-    "email": "user@example.com",
-    "first_name": "John",
-    "last_name": "Doe",
-    "pairing_code": "ABCDEF",
-    "max_pairings": 1,
-    "created_at": "2024-01-01T00:00:00.000Z"
+    "message": "Account created successfully",
+    "user": {
+      "id": "unique_id",
+      "email": "user@example.com",
+      "first_name": "John",
+      "last_name": "Doe",
+      "pairing_code": "ABCDEF",
+      "max_pairings": 1,
+      "created_at": "2024-01-01T00:00:00.000Z"
+    },
+    "access_token": "jwt_token",
+    "refresh_token": "refresh_jwt_token",
+    "expires_in": "1h",
+    "refresh_expires_in": "7d"
+  }
+  ```
+
+- **Response (when first_name and last_name are not provided):**
+  ```json
+  {
+    "message": "Account created successfully",
+    "user": {
+      "id": "unique_id",
+      "email": "user@example.com",
+      "first_name": null,
+      "last_name": null,
+      "pairing_code": "ABCDEF",
+      "max_pairings": 1,
+      "created_at": "2024-01-01T00:00:00.000Z"
+    },
+    "access_token": "jwt_token",
+    "refresh_token": "refresh_jwt_token",
+    "expires_in": "1h",
+    "refresh_expires_in": "7d"
   }
   ```
 
@@ -328,11 +366,12 @@ The SQLite database automatically creates the following tables:
 CREATE TABLE users (
   id TEXT PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
-  first_name TEXT NOT NULL,
-  last_name TEXT NOT NULL,
+  first_name TEXT,
+  last_name TEXT,
   password_hash TEXT NOT NULL,
   pairing_code TEXT UNIQUE NOT NULL,
   max_pairings INTEGER DEFAULT 1,
+  deleted_at DATETIME DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -430,7 +469,7 @@ This will test all endpoints including:
 ### Complete Pairing Workflow
 
 ```bash
-# 1. Create two users
+# 1. Create two users (showing both full and minimal request formats)
 curl -X POST http://localhost:3000/api/users \
   -H "Content-Type: application/json" \
   -d '{
@@ -445,8 +484,6 @@ curl -X POST http://localhost:3000/api/users \
   -H "Content-Type: application/json" \
   -d '{
     "email": "jane.doe@example.com",
-    "first_name": "Jane",
-    "last_name": "Doe",
     "password": "Test2!@#",
     "max_pairings": 1
   }'
