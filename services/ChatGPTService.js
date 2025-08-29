@@ -5,9 +5,14 @@ class ChatGPTService {
     // Validate API key format and security
     this.validateApiKey();
     
-    this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
+    // Only initialize OpenAI if API key is configured
+    if (process.env.OPENAI_API_KEY) {
+      this.openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY
+      });
+    } else {
+      this.openai = null;
+    }
   }
 
   // Validate API key without logging the actual key
@@ -38,6 +43,10 @@ class ChatGPTService {
 
   // Generate couples therapy program using ChatGPT
   async generateCouplesProgram(userName, partnerName, userInput) {
+    if (!this.openai) {
+      throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
+    }
+    
     try {
       const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
 

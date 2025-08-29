@@ -1,7 +1,7 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 
-function createUserRoutes(userModel, authService) {
+function createUserRoutes(userModel, authService, pairingService) {
   const router = express.Router();
 
   // Create user
@@ -25,14 +25,40 @@ function createUserRoutes(userModel, authService) {
       }
 
       const user = await userModel.createUser({ email, first_name, last_name, password });
+      
+      // Automatically create a pairing request for the new user
+      let pairingCode = null;
+      try {
+        const pairingResult = await pairingService.requestPairing(user.id);
+        pairingCode = pairingResult.partner_code;
+      } catch (pairingError) {
+        // Log the pairing error but don't fail user creation
+        console.warn('Failed to create automatic pairing request for new user:', pairingError.message);
+      }
+      
       // Issue tokens for the new user
       const tokenPayload = await authService.issueTokensForUser(user);
       // Set Authorization header for convenience
       res.set('Authorization', `Bearer ${tokenPayload.access_token}`);
-      res.status(201).json({
+      
+      // Extract user data and exclude max_pairings and created_at
+      const { max_pairings, created_at, ...filteredUser } = tokenPayload.user;
+      
+      const response = {
         message: 'Account created successfully',
-        ...tokenPayload
-      });
+        user: filteredUser,
+        access_token: tokenPayload.access_token,
+        refresh_token: tokenPayload.refresh_token,
+        expires_in: tokenPayload.expires_in,
+        refresh_expires_in: tokenPayload.refresh_expires_in
+      };
+      
+      // Include pairing code in response if it was successfully created
+      if (pairingCode) {
+        response.pairing_code = pairingCode;
+      }
+      
+      res.status(201).json(response);
     } catch (error) {
       if (error.message === 'Email already exists') {
         return res.status(409).json({ error: error.message });

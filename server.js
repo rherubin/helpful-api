@@ -105,8 +105,8 @@ function setupRoutes() {
   }
   
   // Setup user routes
-  if (userModel && authService) {
-    app.use('/api/users', createUserRoutes(userModel, authService));
+  if (userModel && authService && pairingService) {
+    app.use('/api/users', createUserRoutes(userModel, authService, pairingService));
   }
   
   // Setup auth routes
