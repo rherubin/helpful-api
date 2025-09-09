@@ -1,7 +1,7 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 
-function createProgramRoutes(programModel, chatGPTService) {
+function createProgramRoutes(programModel, chatGPTService, conversationModel = null) {
   const router = express.Router();
 
   // Create a program
@@ -11,9 +11,9 @@ function createProgramRoutes(programModel, chatGPTService) {
       const userId = req.user.id;
 
       // Validation
-      if (!user_name || !partner_name || children === undefined || !user_input || !pairing_id) {
+      if (!user_name || !partner_name || children === undefined || !user_input) {
         return res.status(400).json({ 
-          error: 'All fields (user_name, partner_name, children, user_input, pairing_id) are required' 
+          error: 'Fields user_name, partner_name, children, and user_input are required. pairing_id is optional.' 
         });
       }
 
@@ -52,8 +52,14 @@ function createProgramRoutes(programModel, chatGPTService) {
               ? JSON.stringify(therapyResponse) 
               : therapyResponse;
             
-            // Update the program with the therapy response
+            // Update the program with the therapy response (for backward compatibility)
             await programModel.updateTherapyResponse(program.id, therapyResponseString);
+            
+            // Also save to conversations table if available (create day conversations)
+            if (conversationModel) {
+              await conversationModel.createDayConversations(program.id, therapyResponseString);
+              console.log('Day conversations created for program:', program.id);
+            }
             
             console.log('ChatGPT response generated and saved for program:', program.id);
           } catch (chatGPTError) {

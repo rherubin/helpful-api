@@ -1,12 +1,16 @@
-# User API
+# Helpful API
 
-A comprehensive Node.js REST API with SQLite backend for managing users with authentication, pairing system, and secure token-based authorization.
+A comprehensive Node.js REST API with SQLite backend for managing users with authentication, pairing system, therapy programs with AI-generated content, and day-based conversation tracking.
 
 ## Features
 
 - **User Management**: Create, update, and retrieve users with secure password authentication
 - **Authentication System**: JWT-based login with access and refresh tokens
 - **Pairing System**: Users can request, accept, and reject pairings with other users
+- **Therapy Programs**: AI-generated couples therapy programs with structured daily exercises
+- **Day-Based Conversations**: Each program day has its own conversation thread for user discussions
+- **OpenAI Integration**: Automatic generation of personalized therapy content using GPT
+- **Conversation Tracking**: Users can add messages to specific program days and track progress
 - **Password Security**: Bcrypt hashing with strict password requirements
 - **Token Management**: Short-lived access tokens with long-lived refresh tokens
 - **Pairing Limits**: Configurable maximum pairings per user
@@ -29,14 +33,16 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
    JWT_EXPIRES_IN=1h
    JWT_REFRESH_EXPIRES_IN=7d
    DATABASE_PATH=./helpful-db.sqlite
+   OPENAI_API_KEY=your-openai-api-key-for-therapy-content
    ```
 
 3. **Database Setup** (Automatic):
    
    The SQLite database (`helpful-db.sqlite`) will be created automatically when you first start the server. The application will:
    - Create the database file if it doesn't exist
-   - Initialize all required tables (users, refresh_tokens, pairings)
+   - Initialize all required tables (users, refresh_tokens, pairings, programs, conversations)
    - Set up proper indexes and constraints
+   - Automatically migrate existing databases to support new features
    
    **Note**: Database files are excluded from version control. Each developer gets a clean database on first run.
    
@@ -184,10 +190,6 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
     "refresh_expires_in": "7d"
   }
   ```
-
-#### Get All Users
-- **GET** `/api/users`
-- **Response:** Array of all users
 
 #### Get User by ID
 - **GET** `/api/users/:id`
@@ -360,7 +362,13 @@ This makes pairing more flexible since you don't need to know the other person's
 
 ### Programs
 
-Programs are linked to pairings, allowing paired users to access each other's programs. When creating a program, you must provide a `pairing_id` from an accepted pairing. Both users in the pairing can view the program, but only the creator can delete it.
+Programs are AI-generated couples therapy programs that can be created with or without pairings. Each program contains structured daily exercises designed to help couples improve their relationship. When a program is created, OpenAI automatically generates personalized content based on the user's input.
+
+**Key Features:**
+- **AI-Generated Content**: Each program contains 14 days of structured exercises
+- **Flexible Pairing**: Programs can be created independently or linked to pairings
+- **Automatic Conversation Creation**: Each program day gets its own conversation thread
+- **Privacy Protection**: Sensitive fields are excluded from list endpoints
 
 **Privacy Note**: The `user_input` and `pairing_id` fields are returned in the POST creation response and the individual `GET /api/programs/:id` response. The list endpoint `GET /api/programs` excludes these fields for privacy protection.
 
@@ -377,6 +385,7 @@ Programs are linked to pairings, allowing paired users to access each other's pr
     "pairing_id": "pairing_id"
   }
   ```
+  **Note**: `pairing_id` is optional. Programs can be created independently without a pairing.
 - **Response:**
   ```json
   {
@@ -445,6 +454,195 @@ Programs are linked to pairings, allowing paired users to access each other's pr
   }
   ```
 
+### Conversations
+
+The conversation system allows users to engage with each day of their therapy program. When a program is created, each day automatically gets its own conversation thread containing the AI-generated exercise content. Users can then add their own messages to discuss their progress, experiences, and reflections for each specific day.
+
+**Key Features:**
+- **Day-Based Organization**: Each program day (1-14) has its own conversation thread
+- **AI Content Integration**: Each day's theme, conversation starter, and science explanation are stored as conversations
+- **Separate Message Storage**: Each message is stored as a separate database record for better organization
+- **User Participation**: Both users in a pairing can contribute messages to any day's conversation
+- **Message Management**: Users can add, edit, and view their own messages
+- **Progress Tracking**: Messages can include metadata to track exercise completion and engagement
+- **Access Control**: Only program owners and paired users can access conversations
+
+**Database Structure:**
+- **Conversations Table**: Stores day-level metadata (theme, conversation starter, science explanation)
+- **Messages Table**: Stores individual messages within conversations with full user tracking
+
+#### Get All Program Conversations (Organized by Days)
+- **GET** `/api/programs/:programId/conversations`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:**
+  ```json
+  {
+    "message": "Conversations retrieved successfully",
+    "total_days": 14,
+    "days": {
+      "1": {
+        "day": 1,
+        "theme": "Reflecting on Happy Memories",
+        "conversation_id": "conversation_id",
+        "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
+        "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
+        "created_at": "2024-01-01T00:00:00.000Z",
+        "messages": [
+          {
+            "id": "message_id",
+            "message_type": "user_message",
+            "content": "Becca and I talked about our honeymoon last night! It brought back so many good memories.",
+            "metadata": {
+              "day": 1,
+              "completed_exercise": true,
+              "partner_participated": true
+            },
+            "created_at": "2024-01-01T01:00:00.000Z",
+            "sender": {
+              "id": "user_id",
+              "first_name": "Steve",
+              "last_name": null,
+              "email": "steve@example.com"
+            }
+          }
+        ]
+      },
+      "2": {
+        "day": 2,
+        "theme": "Appreciating Each Other",
+        "messages": [...]
+      }
+    }
+  }
+  ```
+
+#### Get Specific Conversation
+- **GET** `/api/conversations/:id`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:**
+  ```json
+  {
+    "message": "Conversation retrieved successfully",
+    "conversation": {
+      "id": "conversation_id",
+      "program_id": "program_id",
+      "day": 1,
+      "theme": "Reflecting on Happy Memories",
+      "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
+      "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
+      "created_at": "2024-01-01T00:00:00.000Z",
+      "updated_at": "2024-01-01T00:00:00.000Z"
+    }
+  }
+  ```
+
+#### Get All Messages in a Conversation
+- **GET** `/api/conversations/:id/messages`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:**
+  ```json
+  {
+    "message": "Messages retrieved successfully",
+    "conversation_id": "conversation_id",
+    "messages": [
+      {
+        "id": "message_id",
+        "conversation_id": "conversation_id",
+        "message_type": "user_message",
+        "sender_id": "user_id",
+        "content": "Becca and I completed day 1 together! We talked about our first vacation and remembered why we fell in love.",
+        "metadata": {
+          "day": 1,
+          "completed_exercise": true,
+          "partner_participated": true,
+          "duration_minutes": 30
+        },
+        "created_at": "2024-01-01T01:00:00.000Z",
+        "updated_at": "2024-01-01T01:00:00.000Z",
+        "sender": {
+          "id": "user_id",
+          "first_name": "Steve",
+          "last_name": null,
+          "email": "steve@example.com"
+        }
+      }
+    ]
+  }
+  ```
+
+#### Add Message to Conversation
+- **POST** `/api/conversations/:id/messages`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Body:**
+  ```json
+  {
+    "content": "This exercise really helped us reconnect! We spent over an hour talking about our favorite memories together.",
+    "metadata": {
+      "completed_exercise": true,
+      "partner_participated": true,
+      "duration_minutes": 75,
+      "satisfaction_rating": 5
+    }
+  }
+  ```
+- **Response:**
+  ```json
+  {
+    "message": "Message added successfully",
+    "data": {
+      "id": "message_id",
+      "conversation_id": "conversation_id",
+      "message_type": "user_message",
+      "sender_id": "user_id",
+      "content": "This exercise really helped us reconnect! We spent over an hour talking about our favorite memories together.",
+      "metadata": {
+        "completed_exercise": true,
+        "partner_participated": true,
+        "duration_minutes": 75,
+        "satisfaction_rating": 5,
+        "day": 1,
+        "type": "user_message"
+      },
+      "created_at": "2024-01-01T02:00:00.000Z"
+    }
+  }
+  ```
+
+#### Update Message in Conversation
+- **PUT** `/api/conversations/:conversationId/messages/:messageId`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Body:**
+  ```json
+  {
+    "content": "Updated message content with more details about our experience.",
+    "metadata": {
+      "completed_exercise": true,
+      "partner_participated": true,
+      "duration_minutes": 75,
+      "satisfaction_rating": 5,
+      "edited": true,
+      "edit_reason": "Added more details"
+    }
+  }
+  ```
+- **Response:**
+  ```json
+  {
+    "message": "Message updated successfully"
+  }
+  ```
+- **Note**: Only the message sender can edit their own messages. OpenAI responses cannot be edited.
+
+#### Get Conversations for Specific Day (Legacy)
+- **GET** `/api/programs/:programId/conversations/day/:day`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Note**: This endpoint is maintained for backward compatibility. For new implementations, use the root-level conversation endpoints above.
+
+#### Add Message to Specific Day (Legacy)
+- **POST** `/api/programs/:programId/conversations/day/:day`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Note**: This endpoint is maintained for backward compatibility. For new implementations, use `POST /api/conversations/:id/messages`.
+
 ### Health Check
 - **GET** `/health`
 - **Response:**
@@ -500,6 +698,56 @@ CREATE TABLE pairings (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
   FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE
+);
+```
+
+### Programs Table
+```sql
+CREATE TABLE programs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  user_name TEXT NOT NULL,
+  partner_name TEXT NOT NULL,
+  children INTEGER NOT NULL,
+  user_input TEXT NOT NULL,
+  pairing_id TEXT,
+  therapy_response TEXT,
+  deleted_at DATETIME DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+  FOREIGN KEY (pairing_id) REFERENCES pairings (id) ON DELETE CASCADE
+);
+```
+
+### Conversations Table
+```sql
+CREATE TABLE conversations (
+  id TEXT PRIMARY KEY,
+  program_id TEXT NOT NULL,
+  day INTEGER NOT NULL,
+  theme TEXT NOT NULL,
+  conversation_starter TEXT,
+  science_behind_it TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (program_id) REFERENCES programs (id) ON DELETE CASCADE
+);
+```
+
+### Messages Table
+```sql
+CREATE TABLE messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  message_type TEXT NOT NULL CHECK (message_type IN ('openai_response', 'user_message')),
+  sender_id TEXT,
+  content TEXT NOT NULL,
+  metadata TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE,
+  FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE SET NULL
 );
 ```
 
@@ -622,23 +870,104 @@ curl -X GET http://localhost:9000/api/pairing/accepted \
   -H "Authorization: Bearer {john_access_token}"
 ```
 
+### Complete Program and Conversation Workflow
+
+```bash
+# 1. Create a therapy program (after pairing is established)
+curl -X POST http://localhost:9000/api/programs \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {access_token}" \
+  -d '{
+    "user_name": "Steve",
+    "partner_name": "Becca",
+    "children": 2,
+    "user_input": "We want to improve our communication and spend more quality time together.",
+    "pairing_id": "pairing_id"
+  }'
+
+# This automatically generates 14 days of therapy content and creates conversation threads
+
+# 2. View all program conversations organized by days
+curl -X GET http://localhost:9000/api/programs/{program_id}/conversations \
+  -H "Authorization: Bearer {access_token}"
+
+# 3. View specific day conversation (e.g., day 1)
+curl -X GET http://localhost:9000/api/programs/{program_id}/conversations/day/1 \
+  -H "Authorization: Bearer {access_token}"
+
+# 4. Add a message to day 1 conversation
+curl -X POST http://localhost:9000/api/programs/{program_id}/conversations/day/1 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {access_token}" \
+  -d '{
+    "content": "Becca and I completed day 1 together! We talked about our first vacation and remembered why we fell in love. This exercise really helped us reconnect.",
+    "metadata": {
+      "completed_exercise": true,
+      "partner_participated": true,
+      "duration_minutes": 30,
+      "rating": 5
+    }
+  }'
+
+# 5. Using the new root-level conversation endpoints
+# Get the conversation directly
+curl -X GET http://localhost:9000/api/conversations/{conversation_id} \
+  -H "Authorization: Bearer {access_token}"
+
+# Add a message using the conversation ID
+curl -X POST http://localhost:9000/api/conversations/{conversation_id}/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {access_token}" \
+  -d '{
+    "content": "This is our follow-up reflection on day 1. We continue to feel more connected!",
+    "metadata": {
+      "follow_up": true,
+      "satisfaction_rating": 5
+    }
+  }'
+
+# Get all messages for the conversation
+curl -X GET http://localhost:9000/api/conversations/{conversation_id}/messages \
+  -H "Authorization: Bearer {access_token}"
+
+# Update a message
+curl -X PUT http://localhost:9000/api/conversations/{conversation_id}/messages/{message_id} \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {access_token}" \
+  -d '{
+    "content": "Updated: This is our follow-up reflection on day 1. We continue to feel more connected and are excited for day 2!",
+    "metadata": {
+      "follow_up": true,
+      "satisfaction_rating": 5,
+      "edited": true
+    }
+  }'
+```
+
 ## Project Structure
 
 ```
-user-api/
+helpful-api/
 ├── models/
 │   ├── User.js              # User data model
 │   ├── RefreshToken.js      # Refresh token model
-│   └── Pairing.js           # Pairing model
+│   ├── Pairing.js           # Pairing model
+│   ├── Program.js           # Program model
+│   ├── Conversation.js      # Conversation model (day-level containers)
+│   └── Message.js           # Message model (individual messages)
 ├── services/
 │   ├── AuthService.js       # Authentication service
-│   └── PairingService.js    # Pairing business logic
+│   ├── PairingService.js    # Pairing business logic
+│   └── ChatGPTService.js    # OpenAI integration service
 ├── routes/
 │   ├── users.js             # User endpoints
 │   ├── auth.js              # Authentication endpoints
-│   └── pairing.js           # Pairing endpoints
+│   ├── pairing.js           # Pairing endpoints
+│   ├── programs.js          # Program endpoints
+│   └── conversations.js     # Conversation and message endpoints
 ├── middleware/
-│   └── auth.js              # JWT authentication middleware
+│   ├── auth.js              # JWT authentication middleware
+│   └── security.js          # Rate limiting and security
 ├── server.js                # Main application
 ├── test-api.js              # Test suite
 └── package.json

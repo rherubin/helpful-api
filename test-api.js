@@ -11,34 +11,56 @@ async function testAPI() {
     const healthResponse = await axios.get(`${BASE_URL}/health`);
     console.log('✅ Health check passed:', healthResponse.data);
 
-    // Test creating a user
+        // Test creating a user
     console.log('\n2. Testing user creation...');
+    const timestamp = Date.now();
     const userData = {
-      email: 'john.doe@example.com',
+      email: `john.doe.${timestamp}@example.com`,
       first_name: 'John',
       last_name: 'Doe',
       password: 'Test1!@#'
     };
-    
-    const createResponse = await axios.post(`${BASE_URL}/api/users`, userData);
-    console.log('✅ User created successfully:', createResponse.data);
-    
-    const userId = createResponse.data.id;
 
-    // Test getting all users
-    console.log('\n3. Testing get all users...');
-    const allUsersResponse = await axios.get(`${BASE_URL}/api/users`);
-    console.log('✅ Retrieved all users:', allUsersResponse.data);
+            const createResponse = await axios.post(`${BASE_URL}/api/users`, userData);
+    console.log('✅ User created successfully:', createResponse.data);
+
+    const userId = createResponse.data.user.id;
+
+    // Small delay to ensure user is fully created in database
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Test login with correct credentials (needed for authenticated endpoints)
+    console.log('\n3. Testing login with correct credentials...');
+    const loginResponse = await axios.post(`${BASE_URL}/api/login`, {
+      email: userData.email,
+      password: 'Test1!@#'
+    });
+    console.log('✅ Login successful:', loginResponse.data);
+
+    // Store tokens for authenticated requests
+    const accessToken = loginResponse.data.access_token;
+    const refreshToken = loginResponse.data.refresh_token;
 
     // Test getting specific user
     console.log('\n4. Testing get user by ID...');
-    const userResponse = await axios.get(`${BASE_URL}/api/users/${userId}`);
+    console.log('Using userId:', userId);
+    console.log('Using token:', accessToken.substring(0, 50) + '...');
+    const userResponse = await axios.get(`${BASE_URL}/api/users/${userId}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
     console.log('✅ Retrieved user by ID:', userResponse.data);
 
     // Test duplicate email error
     console.log('\n5. Testing duplicate email validation...');
     try {
-      await axios.post(`${BASE_URL}/api/users`, userData);
+      await axios.post(`${BASE_URL}/api/users`, {
+        email: userData.email,
+        password: 'Test1!@#',
+        first_name: 'Test',
+        last_name: 'User'
+      });
     } catch (error) {
       if (error.response && error.response.status === 409) {
         console.log('✅ Duplicate email validation working:', error.response.data);
@@ -64,23 +86,11 @@ async function testAPI() {
       }
     }
 
-    // Test login with correct credentials
-    console.log('\n7. Testing login with correct credentials...');
-    const loginResponse = await axios.post(`${BASE_URL}/api/login`, {
-      email: 'john.doe@example.com',
-      password: 'Test1!@#'
-    });
-    console.log('✅ Login successful:', loginResponse.data);
-    
-    // Store tokens for authenticated requests
-    const accessToken = loginResponse.data.access_token;
-    const refreshToken = loginResponse.data.refresh_token;
-
     // Test login with incorrect password
-    console.log('\n8. Testing login with incorrect password...');
+    console.log('\n7. Testing login with incorrect password...');
     try {
       await axios.post(`${BASE_URL}/api/login`, {
-        email: 'john.doe@example.com',
+        email: userData.email,
         password: 'Wrong1!@#'
       });
     } catch (error) {
@@ -92,7 +102,7 @@ async function testAPI() {
     }
 
     // Test login with non-existent email
-    console.log('\n9. Testing login with non-existent email...');
+    console.log('\n8. Testing login with non-existent email...');
     try {
       await axios.post(`${BASE_URL}/api/login`, {
         email: 'nonexistent@example.com',
@@ -107,7 +117,7 @@ async function testAPI() {
     }
 
     // Test password validation
-    console.log('\n10. Testing password validation...');
+    console.log('\n9. Testing password validation...');
     try {
       await axios.post(`${BASE_URL}/api/users`, {
         email: 'test@example.com',
@@ -124,25 +134,37 @@ async function testAPI() {
     }
 
     // Test update user
-    console.log('\n11. Testing user update...');
+    console.log('\n10. Testing user update...');
     const updateResponse = await axios.put(`${BASE_URL}/api/users/${userId}`, {
       first_name: 'Johnny',
       last_name: 'Smith'
+    }, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
     });
     console.log('✅ User updated successfully:', updateResponse.data);
 
     // Test update user with email
-    console.log('\n12. Testing user update with email...');
+    console.log('\n11. Testing user update with email...');
     const updateEmailResponse = await axios.put(`${BASE_URL}/api/users/${userId}`, {
       email: 'johnny.smith@example.com'
+    }, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
     });
     console.log('✅ User email updated successfully:', updateEmailResponse.data);
 
     // Test update non-existent user
-    console.log('\n13. Testing update non-existent user...');
+    console.log('\n12. Testing update non-existent user...');
     try {
       await axios.put(`${BASE_URL}/api/users/nonexistent`, {
         first_name: 'Test'
+      }, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        }
       });
     } catch (error) {
       if (error.response && error.response.status === 404) {
@@ -153,7 +175,7 @@ async function testAPI() {
     }
 
     // Test authenticated profile endpoint
-    console.log('\n14. Testing authenticated profile endpoint...');
+    console.log('\n13. Testing authenticated profile endpoint...');
     const profileResponse = await axios.get(`${BASE_URL}/api/profile`, {
       headers: {
         'Authorization': `Bearer ${accessToken}`
@@ -162,7 +184,7 @@ async function testAPI() {
     console.log('✅ Profile retrieved successfully:', profileResponse.data);
 
     // Test profile endpoint without token
-    console.log('\n15. Testing profile endpoint without token...');
+    console.log('\n14. Testing profile endpoint without token...');
     try {
       await axios.get(`${BASE_URL}/api/profile`);
     } catch (error) {
@@ -174,7 +196,7 @@ async function testAPI() {
     }
 
     // Test profile endpoint with invalid token
-    console.log('\n16. Testing profile endpoint with invalid token...');
+    console.log('\n15. Testing profile endpoint with invalid token...');
     try {
       await axios.get(`${BASE_URL}/api/profile`, {
         headers: {
@@ -190,14 +212,14 @@ async function testAPI() {
     }
 
     // Test refresh token endpoint
-    console.log('\n17. Testing refresh token endpoint...');
+    console.log('\n16. Testing refresh token endpoint...');
     const refreshResponse = await axios.post(`${BASE_URL}/api/refresh`, {
       refresh_token: refreshToken
     });
     console.log('✅ Token refreshed successfully:', refreshResponse.data);
 
     // Test refresh token with invalid token
-    console.log('\n18. Testing refresh token with invalid token...');
+    console.log('\n17. Testing refresh token with invalid token...');
     try {
       await axios.post(`${BASE_URL}/api/refresh`, {
         refresh_token: 'invalid-refresh-token'
@@ -211,14 +233,14 @@ async function testAPI() {
     }
 
     // Test logout endpoint
-    console.log('\n19. Testing logout endpoint...');
+    console.log('\n18. Testing logout endpoint...');
     const logoutResponse = await axios.post(`${BASE_URL}/api/logout`, {
       refresh_token: refreshToken
     });
     console.log('✅ Logout successful:', logoutResponse.data);
 
     // Test refresh token after logout
-    console.log('\n20. Testing refresh token after logout...');
+    console.log('\n19. Testing refresh token after logout...');
     try {
       await axios.post(`${BASE_URL}/api/refresh`, {
         refresh_token: refreshToken
@@ -232,7 +254,7 @@ async function testAPI() {
     }
 
     // Test pairing functionality
-    console.log('\n21. Testing pairing functionality...');
+    console.log('\n20. Testing pairing functionality...');
     
     // Create a second user for pairing tests
     const secondUserData = {

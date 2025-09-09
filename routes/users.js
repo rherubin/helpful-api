@@ -70,18 +70,8 @@ function createUserRoutes(userModel, authService, pairingService) {
     }
   });
 
-  // Get all users
-  router.get('/', async (req, res) => {
-    try {
-      const users = await userModel.getAllUsers();
-      res.json(users);
-    } catch (error) {
-      res.status(500).json({ error: 'Failed to fetch users' });
-    }
-  });
-
-  // Get user by ID (public endpoint)
-  router.get('/:id', async (req, res) => {
+  // Get user by ID
+  router.get('/:id', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
       const user = await userModel.getUserById(id);
@@ -96,7 +86,7 @@ function createUserRoutes(userModel, authService, pairingService) {
   });
 
   // Update user
-  router.put('/:id', async (req, res) => {
+  router.put('/:id', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
       const { first_name, last_name, email } = req.body;
@@ -138,7 +128,7 @@ function createUserRoutes(userModel, authService, pairingService) {
   });
 
   // Soft delete user
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -157,7 +147,7 @@ function createUserRoutes(userModel, authService, pairingService) {
   });
 
   // Restore soft deleted user
-  router.patch('/:id/restore', async (req, res) => {
+  router.patch('/:id/restore', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
       const result = await userModel.restoreUser(id);
@@ -172,7 +162,7 @@ function createUserRoutes(userModel, authService, pairingService) {
   });
 
   // Get deleted users (admin endpoint)
-  router.get('/deleted/all', async (req, res) => {
+  router.get('/deleted/all', authenticateToken, async (req, res) => {
     try {
       const deletedUsers = await userModel.getDeletedUsers();
       res.json(deletedUsers);

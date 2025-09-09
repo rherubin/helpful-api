@@ -50,7 +50,7 @@ class Program {
         partner_name TEXT NOT NULL,
         children INTEGER NOT NULL,
         user_input TEXT NOT NULL,
-        pairing_id TEXT NOT NULL,
+        pairing_id TEXT,
         therapy_response TEXT,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -71,6 +71,53 @@ class Program {
         if (!alterErr.message.includes('duplicate column name')) {
           console.error('Error adding deleted_at column to programs:', alterErr.message);
         }
+      }
+      
+      // Make pairing_id nullable for existing databases
+      try {
+        // SQLite doesn't support ALTER COLUMN directly, so we need to check if we need to recreate the table
+        const tableInfo = await this.allAsync("PRAGMA table_info(programs)");
+        const pairingIdColumn = tableInfo.find(col => col.name === 'pairing_id');
+        
+        if (pairingIdColumn && pairingIdColumn.notnull === 1) {
+          console.log('Migrating programs table to make pairing_id nullable...');
+          
+          // Create new table with nullable pairing_id
+          const createNewTable = `
+            CREATE TABLE programs_new (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              user_name TEXT NOT NULL,
+              partner_name TEXT NOT NULL,
+              children INTEGER NOT NULL,
+              user_input TEXT NOT NULL,
+              pairing_id TEXT,
+              therapy_response TEXT,
+              deleted_at DATETIME DEFAULT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+              FOREIGN KEY (pairing_id) REFERENCES pairings (id) ON DELETE CASCADE
+            )
+          `;
+          
+          await this.runAsync(createNewTable);
+          
+          // Copy data from old table to new table
+          await this.runAsync(`
+            INSERT INTO programs_new 
+            SELECT * FROM programs
+          `);
+          
+          // Drop old table and rename new table
+          await this.runAsync("DROP TABLE programs");
+          await this.runAsync("ALTER TABLE programs_new RENAME TO programs");
+          
+          console.log('Programs table migration completed successfully.');
+        }
+      } catch (migrationErr) {
+        console.error('Error migrating programs table:', migrationErr.message);
+        // Don't throw here as the table might already be correct
       }
     } catch (err) {
       console.error('Error creating programs table:', err.message);
@@ -132,10 +179,12 @@ class Program {
                p.therapy_response, p.created_at, p.updated_at,
                pair.user1_id, pair.user2_id 
         FROM programs p
-        JOIN pairings pair ON p.pairing_id = pair.id
-        WHERE (p.user_id = ? OR (pair.user1_id = ? OR pair.user2_id = ?))
-          AND p.deleted_at IS NULL
-          AND pair.status = 'accepted'
+        LEFT JOIN pairings pair ON p.pairing_id = pair.id
+        WHERE (
+          p.user_id = ? 
+          OR (p.pairing_id IS NOT NULL AND (pair.user1_id = ? OR pair.user2_id = ?) AND pair.status = 'accepted')
+        )
+        AND p.deleted_at IS NULL
         ORDER BY p.created_at DESC
       `;
 
@@ -157,14 +206,12 @@ class Program {
       const query = `
         SELECT COUNT(*) as count
         FROM programs p
-        JOIN pairings pair ON p.pairing_id = pair.id
+        LEFT JOIN pairings pair ON p.pairing_id = pair.id
         WHERE p.id = ?
           AND p.deleted_at IS NULL
-          AND pair.status = 'accepted'
           AND (
             p.user_id = ?
-            OR (pair.user1_id = ? AND pair.user2_id = p.user_id)
-            OR (pair.user2_id = ? AND pair.user1_id = p.user_id)
+            OR (p.pairing_id IS NOT NULL AND pair.status = 'accepted' AND (pair.user1_id = ? OR pair.user2_id = ?))
           )
       `;
 

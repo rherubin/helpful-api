@@ -93,7 +93,7 @@ Please format your response as a JSON object with the following structure:
 }`;
 
       const completion = await this.openai.chat.completions.create({
-        model: "gpt-4",
+        model: "gpt-3.5-turbo",
         messages: [
           {
             role: "user",
@@ -101,8 +101,7 @@ Please format your response as a JSON object with the following structure:
           }
         ],
         max_tokens: 4000,
-        temperature: 0.7,
-        response_format: { type: "json_object" }
+        temperature: 0.7
       });
 
       const response = completion.choices[0].message.content;

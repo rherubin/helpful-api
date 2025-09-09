@@ -263,17 +263,6 @@ class User {
     }
   }
 
-  // Get all users (excluding soft deleted)
-  async getAllUsers() {
-    try {
-      const query = 'SELECT * FROM users WHERE deleted_at IS NULL ORDER BY created_at DESC';
-      const rows = await this.allAsync(query);
-      return rows;
-    } catch (err) {
-      throw new Error('Failed to fetch users');
-    }
-  }
-
   // Get user by ID (excluding soft deleted)
   async getUserById(id) {
     try {
