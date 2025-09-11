@@ -141,6 +141,49 @@ function createProgramRoutes(programModel, chatGPTService, conversationModel = n
     }
   });
 
+  // Get OpenAI service metrics (for monitoring)
+  router.get('/metrics', authenticateToken, async (req, res) => {
+    try {
+      if (!chatGPTService) {
+        return res.status(503).json({ 
+          error: 'ChatGPT service not available',
+          metrics: null
+        });
+      }
+
+      if (!chatGPTService.isConfigured()) {
+        return res.status(200).json({
+          message: 'ChatGPT service not configured (OPENAI_API_KEY missing)',
+          metrics: {
+            configured: false,
+            totalRequests: 0,
+            successfulRequests: 0,
+            failedRequests: 0,
+            rateLimitErrors: 0,
+            averageResponseTime: 0,
+            queueLength: 0,
+            activeRequests: 0,
+            successRate: '0%'
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const metrics = chatGPTService.getMetrics();
+      res.status(200).json({
+        message: 'OpenAI service metrics retrieved successfully',
+        metrics: {
+          ...metrics,
+          configured: true
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error retrieving OpenAI metrics:', error.message);
+      return res.status(500).json({ error: 'Failed to retrieve OpenAI metrics' });
+    }
+  });
+
   return router;
 }
 

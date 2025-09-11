@@ -13,6 +13,21 @@ class ChatGPTService {
     } else {
       this.openai = null;
     }
+
+    // Request queue management for production scalability
+    this.requestQueue = [];
+    this.processing = false;
+    this.lastRequestTime = 0;
+    this.MIN_REQUEST_INTERVAL = 200; // 200ms between requests (5 req/sec max)
+    this.MAX_CONCURRENT = 3; // Max 3 concurrent requests
+    this.activeRequests = 0;
+    this.metrics = {
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      rateLimitErrors: 0,
+      averageResponseTime: 0
+    };
   }
 
   // Validate API key without logging the actual key
@@ -99,11 +114,103 @@ class ChatGPTService {
     return true;
   }
 
-  // Generate couples therapy program using ChatGPT
+  // Queue OpenAI request for rate limiting and concurrency control
+  async queueOpenAIRequest(requestData) {
+    return new Promise((resolve, reject) => {
+      this.requestQueue.push({ requestData, resolve, reject, timestamp: Date.now() });
+      this.processQueue();
+    });
+  }
+
+  // Process the request queue with rate limiting
+  async processQueue() {
+    if (this.processing || this.requestQueue.length === 0) return;
+    if (this.activeRequests >= this.MAX_CONCURRENT) return;
+
+    this.processing = true;
+    
+    while (this.requestQueue.length > 0 && this.activeRequests < this.MAX_CONCURRENT) {
+      const { requestData, resolve, reject, timestamp } = this.requestQueue.shift();
+      
+      // Check if request has been waiting too long (30 seconds timeout)
+      if (Date.now() - timestamp > 30000) {
+        reject(new Error('Request timeout - OpenAI queue processing took too long'));
+        continue;
+      }
+      
+      // Rate limiting - ensure minimum interval between requests
+      const now = Date.now();
+      const timeSinceLastRequest = now - this.lastRequestTime;
+      
+      if (timeSinceLastRequest < this.MIN_REQUEST_INTERVAL) {
+        const waitTime = this.MIN_REQUEST_INTERVAL - timeSinceLastRequest;
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+      
+      this.activeRequests++;
+      this.lastRequestTime = Date.now();
+      
+      // Process request with metrics tracking
+      const requestStart = Date.now();
+      this.generateCouplesProgramInternal(requestData)
+        .then(result => {
+          const duration = Date.now() - requestStart;
+          this.recordMetrics(duration, true, null);
+          resolve(result);
+        })
+        .catch(error => {
+          const duration = Date.now() - requestStart;
+          this.recordMetrics(duration, false, error);
+          reject(error);
+        })
+        .finally(() => {
+          this.activeRequests--;
+          // Continue processing queue
+          setTimeout(() => this.processQueue(), 0);
+        });
+    }
+    
+    this.processing = false;
+  }
+
+  // Record performance metrics
+  recordMetrics(duration, success, error) {
+    this.metrics.totalRequests++;
+    if (success) this.metrics.successfulRequests++;
+    if (!success) this.metrics.failedRequests++;
+    if (error?.status === 429) this.metrics.rateLimitErrors++;
+    
+    // Update average response time
+    this.metrics.averageResponseTime = 
+      (this.metrics.averageResponseTime * (this.metrics.totalRequests - 1) + duration) 
+      / this.metrics.totalRequests;
+  }
+
+  // Get current metrics for monitoring
+  getMetrics() {
+    return {
+      ...this.metrics,
+      queueLength: this.requestQueue.length,
+      activeRequests: this.activeRequests,
+      successRate: this.metrics.totalRequests > 0 
+        ? (this.metrics.successfulRequests / this.metrics.totalRequests * 100).toFixed(2) + '%'
+        : '0%'
+    };
+  }
+
+  // Public interface - queue the request
   async generateCouplesProgram(userName, partnerName, userInput) {
     if (!this.openai) {
       throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
     }
+
+    return this.queueOpenAIRequest({ userName, partnerName, userInput });
+  }
+
+  // Internal method that does the actual OpenAI call
+  async generateCouplesProgramInternal({ userName, partnerName, userInput }, retryCount = 0) {
+    const MAX_RETRIES = 2;
+    const BASE_DELAY = 1000; // 1 second
     
     try {
       // Sanitize all inputs
@@ -212,6 +319,15 @@ Please format your response as a JSON object with the following structure:
         return response;
       }
     } catch (error) {
+      // Implement exponential backoff for rate limiting
+      if (error.status === 429 && retryCount < MAX_RETRIES) {
+        const delay = BASE_DELAY * Math.pow(2, retryCount);
+        console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.generateCouplesProgramInternal({ userName, partnerName, userInput }, retryCount + 1);
+      }
+
       // Enhanced error logging for security monitoring
       if (error.message.includes('unsafe content') || error.message.includes('validation')) {
         console.error('SECURITY ERROR in ChatGPT service:', error.message);
@@ -220,7 +336,7 @@ Please format your response as a JSON object with the following structure:
         if (error.status === 401) {
           console.error('ChatGPT API Error: Invalid API key - check your OPENAI_API_KEY configuration');
         } else if (error.status === 429) {
-          console.error('ChatGPT API Error: Rate limit exceeded or quota reached');
+          console.error(`ChatGPT API Error: Rate limit exceeded (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
         } else if (error.status === 403) {
           console.error('ChatGPT API Error: Access forbidden - check API key permissions');
         } else {
