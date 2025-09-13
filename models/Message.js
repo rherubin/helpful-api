@@ -46,7 +46,7 @@ class Message {
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
-        message_type TEXT NOT NULL CHECK (message_type IN ('openai_response', 'user_message')),
+        message_type TEXT NOT NULL CHECK (message_type IN ('openai_response', 'user_message', 'system')),
         sender_id TEXT,
         content TEXT NOT NULL,
         metadata TEXT,

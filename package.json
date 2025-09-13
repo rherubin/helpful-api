@@ -11,6 +11,7 @@
     "test:api": "node tests/api-test.js",
     "test:load": "node tests/load-test.js",
     "test:openai": "node tests/openai-test.js",
+    "test:therapy": "node tests/run-therapy-tests.js",
     "test:ci": "node tests/run-all-tests.js --skip-server-check",
     "test:quick": "node tests/run-all-tests.js --no-load"
   },

@@ -11,6 +11,8 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
 - **Day-Based Conversations**: Each program day has its own conversation thread for user discussions
 - **OpenAI Integration**: Automatic generation of personalized therapy content using GPT
 - **Conversation Tracking**: Users can add messages to specific program days and track progress
+- **Background Therapy Responses**: Automatic AI-powered therapy responses when both users engage
+- **Real-time Therapeutic Guidance**: System messages provide contextual therapy insights
 - **Password Security**: Bcrypt hashing with strict password requirements
 - **Token Management**: Short-lived access tokens with long-lived refresh tokens
 - **Pairing Limits**: Configurable maximum pairings per user
@@ -461,6 +463,7 @@ The conversation system allows users to engage with each day of their therapy pr
 **Key Features:**
 - **Day-Based Organization**: Each program day (1-14) has its own conversation thread
 - **AI Content Integration**: Each day's theme, conversation starter, and science explanation are stored as conversations
+- **Background Therapy Responses**: Automatic AI-powered therapeutic guidance when both users engage
 - **Separate Message Storage**: Each message is stored as a separate database record for better organization
 - **User Participation**: Both users in a pairing can contribute messages to any day's conversation
 - **Message Management**: Users can add, edit, and view their own messages
@@ -470,6 +473,107 @@ The conversation system allows users to engage with each day of their therapy pr
 **Database Structure:**
 - **Conversations Table**: Stores day-level metadata (theme, conversation starter, science explanation)
 - **Messages Table**: Stores individual messages within conversations with full user tracking
+
+## Background Therapy Response System
+
+The API includes an intelligent background therapy response system that automatically provides therapeutic guidance when both users in a pairing engage in conversation. This feature uses advanced AI to deliver contextual, personalized therapy insights based on Emotionally Focused Therapy (EFT) and Gottman Method principles.
+
+### How It Works
+
+1. **Trigger Condition**: When both users in a pairing have posted at least one message to a conversation
+2. **Timing**: Activates 2 seconds after the second user posts their first message
+3. **Non-Blocking**: Runs in the background without affecting API response times
+4. **AI Processing**: Uses OpenAI GPT to generate therapeutic responses based on both users' messages
+5. **System Messages**: Responses are stored as system messages (up to 3 per trigger)
+
+### Therapeutic Approach
+
+The AI responses are designed using evidence-based couples therapy methods:
+
+- **Emotionally Focused Therapy (EFT)**: Primary therapeutic framework focusing on emotional connection
+- **Gottman Method**: Complementary techniques for relationship strengthening
+- **Personalized Guidance**: Responses reference specific user names and message content
+- **Progressive Support**: Each response builds on the conversation context
+
+### Example Therapy Response Flow
+
+```json
+{
+  "conversation_messages": [
+    {
+      "id": "msg1",
+      "message_type": "user_message",
+      "sender": "Steve",
+      "content": "I feel like we've grown apart over the years. I miss the closeness we used to have."
+    },
+    {
+      "id": "msg2", 
+      "message_type": "user_message",
+      "sender": "Becca",
+      "content": "I feel the same way. I want us to find our way back to each other."
+    },
+    {
+      "id": "sys1",
+      "message_type": "system",
+      "sender_id": null,
+      "content": "Thank you both for sharing your feelings with me. I can hear the longing in both of your voices for deeper connection.",
+      "metadata": {
+        "type": "therapy_response",
+        "sequence": 1,
+        "total_messages": 3
+      }
+    },
+    {
+      "id": "sys2",
+      "message_type": "system", 
+      "sender_id": null,
+      "content": "Steve, when you shared that you miss the closeness you used to have, what emotions were you experiencing in that moment?",
+      "metadata": {
+        "type": "therapy_response",
+        "sequence": 2,
+        "total_messages": 3
+      }
+    },
+    {
+      "id": "sys3",
+      "message_type": "system",
+      "sender_id": null, 
+      "content": "Becca, your response shows such openness to rebuilding that bond together. Can you help us understand what finding your way back means to you?",
+      "metadata": {
+        "type": "therapy_response",
+        "sequence": 3,
+        "total_messages": 3
+      }
+    }
+  ]
+}
+```
+
+### System Message Characteristics
+
+- **Message Type**: `system` (distinct from `user_message` and `openai_response`)
+- **No Sender**: `sender_id` is always `null` for system messages
+- **Metadata**: Includes sequence information and therapy response type
+- **Content**: Therapeutic guidance, questions, and insights
+- **Timing**: Appears 2 seconds after trigger condition is met
+
+### Technical Implementation
+
+- **Non-Blocking Architecture**: API responses return immediately while therapy processing happens in background
+- **Error Resilience**: Therapy response failures don't affect main conversation functionality  
+- **Rate Limiting**: Built-in OpenAI request queuing and rate limiting
+- **Security**: Input sanitization and validation for all user content sent to AI
+- **Pairing Requirement**: Only works for programs with accepted pairings
+
+### Configuration
+
+The therapy response system requires:
+
+```env
+OPENAI_API_KEY=your-openai-api-key-for-therapy-responses
+```
+
+Without this configuration, the system will log warnings but continue normal operation without therapy responses.
 
 #### Get All Program Conversations (Organized by Days)
 - **GET** `/api/programs/:programId/conversations`
@@ -740,7 +844,7 @@ CREATE TABLE conversations (
 CREATE TABLE messages (
   id TEXT PRIMARY KEY,
   conversation_id TEXT NOT NULL,
-  message_type TEXT NOT NULL CHECK (message_type IN ('openai_response', 'user_message')),
+  message_type TEXT NOT NULL CHECK (message_type IN ('openai_response', 'user_message', 'system')),
   sender_id TEXT,
   content TEXT NOT NULL,
   metadata TEXT,
@@ -750,6 +854,11 @@ CREATE TABLE messages (
   FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE SET NULL
 );
 ```
+
+**Message Types:**
+- `user_message`: Messages posted by users in the pairing
+- `openai_response`: AI-generated program content (legacy)
+- `system`: Background therapy responses triggered by user interactions
 
 ## Password Requirements
 
@@ -800,17 +909,57 @@ The server will automatically restart when you make changes to the code.
 
 ## Testing
 
-Run the comprehensive test suite:
+The API includes a comprehensive test suite with multiple test categories:
 
+### Run All Tests
 ```bash
-node test-api.js
+npm test
 ```
 
-This will test all endpoints including:
-- User creation and management
-- Authentication and token refresh
-- Pairing system functionality
-- Error handling and validation
+### Individual Test Suites
+
+#### API Functionality Tests
+```bash
+npm run test:api
+```
+Tests all endpoints including user creation, authentication, pairing system, and error handling.
+
+#### Security Tests  
+```bash
+npm run test:security
+```
+Tests security measures including rate limiting, input validation, and prompt injection protection.
+
+#### Load Tests
+```bash
+npm run test:load
+```
+Tests API performance under concurrent load conditions.
+
+#### OpenAI Integration Tests
+```bash
+npm run test:openai
+```
+Tests OpenAI service integration and content generation.
+
+#### Therapy Response Tests
+```bash
+npm run test:therapy
+```
+Tests the background therapy response system including:
+- Trigger logic for both users posting messages
+- Non-blocking API behavior
+- System message storage and metadata
+- Error handling and recovery
+- Mock OpenAI responses for testing without API calls
+
+### Test Categories
+
+- **Unit Tests**: Test individual components and business logic
+- **Integration Tests**: Test full API workflows with real HTTP requests
+- **Security Tests**: Validate security measures and input sanitization
+- **Performance Tests**: Ensure API can handle concurrent load
+- **Therapy System Tests**: Validate background AI therapy response functionality
 
 ## Example Usage
 
@@ -944,6 +1093,76 @@ curl -X PUT http://localhost:9000/api/conversations/{conversation_id}/messages/{
   }'
 ```
 
+### Background Therapy Response Example
+
+```bash
+# 1. User 1 (Steve) posts first message to a conversation
+curl -X POST http://localhost:9000/api/conversations/{conversation_id}/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {steve_access_token}" \
+  -d '{
+    "content": "I feel like we have grown apart over the years. I miss the closeness we used to have."
+  }'
+
+# API responds immediately (non-blocking)
+# Response: {"message": "Message added successfully", "data": {...}}
+
+# 2. User 2 (Becca) posts first message to the same conversation  
+curl -X POST http://localhost:9000/api/conversations/{conversation_id}/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {becca_access_token}" \
+  -d '{
+    "content": "I feel the same way. I want us to find our way back to each other."
+  }'
+
+# API responds immediately (non-blocking)
+# Response: {"message": "Message added successfully", "data": {...}}
+
+# 3. After 2 seconds, system automatically adds therapy response messages
+# Check messages to see the system responses:
+curl -X GET http://localhost:9000/api/conversations/{conversation_id}/messages \
+  -H "Authorization: Bearer {access_token}"
+
+# Response will now include system messages like:
+# {
+#   "messages": [
+#     {
+#       "id": "user_msg_1",
+#       "message_type": "user_message", 
+#       "sender": {"first_name": "Steve", ...},
+#       "content": "I feel like we have grown apart over the years..."
+#     },
+#     {
+#       "id": "user_msg_2", 
+#       "message_type": "user_message",
+#       "sender": {"first_name": "Becca", ...}, 
+#       "content": "I feel the same way. I want us to find our way back..."
+#     },
+#     {
+#       "id": "sys_msg_1",
+#       "message_type": "system",
+#       "sender_id": null,
+#       "content": "Thank you both for sharing your feelings with me. I can hear the longing in both of your voices for deeper connection.",
+#       "metadata": {"type": "therapy_response", "sequence": 1, "total_messages": 3}
+#     },
+#     {
+#       "id": "sys_msg_2", 
+#       "message_type": "system",
+#       "sender_id": null,
+#       "content": "Steve, when you shared that you miss the closeness you used to have, what emotions were you experiencing in that moment?",
+#       "metadata": {"type": "therapy_response", "sequence": 2, "total_messages": 3}
+#     },
+#     {
+#       "id": "sys_msg_3",
+#       "message_type": "system", 
+#       "sender_id": null,
+#       "content": "Becca, your response shows such openness to rebuilding that bond together. Can you help us understand what finding your way back means to you?",
+#       "metadata": {"type": "therapy_response", "sequence": 3, "total_messages": 3}
+#     }
+#   ]
+# }
+```
+
 ## Project Structure
 
 ```
@@ -968,7 +1187,15 @@ helpful-api/
 ├── middleware/
 │   ├── auth.js              # JWT authentication middleware
 │   └── security.js          # Rate limiting and security
+├── tests/
+│   ├── api-test.js          # API functionality tests
+│   ├── security-test.js     # Security and validation tests
+│   ├── load-test.js         # Performance and load tests
+│   ├── openai-test.js       # OpenAI integration tests
+│   ├── therapy-response-test.js           # Therapy response unit tests
+│   ├── therapy-response-integration-test.js # Therapy response integration tests
+│   ├── run-therapy-tests.js # Therapy test runner
+│   └── run-all-tests.js     # Comprehensive test suite runner
 ├── server.js                # Main application
-├── test-api.js              # Test suite
 └── package.json
 ``` 

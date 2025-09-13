@@ -1,8 +1,99 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 
-function createConversationRoutes(conversationModel, messageModel, programModel) {
+function createConversationRoutes(conversationModel, messageModel, programModel, pairingModel, userModel, chatGPTService) {
   const router = express.Router();
+
+  // Helper function to check if we should trigger background therapy response
+  async function checkAndTriggerTherapyResponse(conversationId, currentUserId) {
+    try {
+      // Get the conversation to find the program
+      const conversation = await conversationModel.getConversationById(conversationId);
+      const program = await programModel.getProgramById(conversation.program_id);
+      
+      // Only trigger if program has a pairing
+      if (!program.pairing_id) {
+        return;
+      }
+
+      // Get the pairing to find both users
+      const pairing = await pairingModel.getPairingById(program.pairing_id);
+      if (pairing.status !== 'accepted') {
+        return;
+      }
+
+      const user1Id = pairing.user1_id;
+      const user2Id = pairing.user2_id;
+      const otherUserId = currentUserId === user1Id ? user2Id : user1Id;
+
+      // Get all messages in this conversation
+      const messages = await messageModel.getConversationMessages(conversationId);
+      
+      // Filter user messages only
+      const userMessages = messages.filter(msg => msg.message_type === 'user_message');
+      
+      // Check if both users have posted messages
+      const user1Messages = userMessages.filter(msg => msg.sender_id === user1Id);
+      const user2Messages = userMessages.filter(msg => msg.sender_id === user2Id);
+      
+      // Only trigger if both users have posted at least one message
+      // and this is the second user's first message (either user1 or user2 could be second)
+      const shouldTrigger = 
+        (user1Messages.length === 1 && user2Messages.length > 0 && currentUserId === user1Id) ||
+        (user2Messages.length === 1 && user1Messages.length > 0 && currentUserId === user2Id);
+        
+      if (shouldTrigger) {
+        // Get user names
+        const user1 = await userModel.getUserById(user1Id);
+        const user2 = await userModel.getUserById(user2Id);
+        
+        const user1Name = user1.first_name || 'User 1';
+        const user2Name = user2.first_name || 'User 2';
+        
+        // Get user1's messages content and user2's first message
+        const user1MessagesContent = user1Messages.map(msg => msg.content);
+        const user2FirstMessage = user2Messages[0].content;
+        
+        // Trigger background request with 2-second delay
+        setTimeout(async () => {
+          try {
+            console.log(`Triggering background therapy response for conversation ${conversationId}`);
+            
+            const therapyMessages = await chatGPTService.generateCouplesTherapyResponse(
+              user1Name,
+              user2Name,
+              user1MessagesContent,
+              user2FirstMessage
+            );
+            
+            // Add each therapy message as a system message
+            for (let i = 0; i < therapyMessages.length; i++) {
+              const message = therapyMessages[i];
+              if (message && message.trim().length > 0) {
+                await messageModel.addMessage(
+                  conversationId,
+                  'system',
+                  null, // No sender for system messages
+                  message.trim(),
+                  {
+                    type: 'therapy_response',
+                    sequence: i + 1,
+                    total_messages: therapyMessages.length
+                  }
+                );
+              }
+            }
+            
+            console.log(`Added ${therapyMessages.length} therapy response messages to conversation ${conversationId}`);
+          } catch (error) {
+            console.error('Error generating background therapy response:', error.message);
+          }
+        }, 2000); // 2-second delay
+      }
+    } catch (error) {
+      console.error('Error checking therapy response trigger:', error.message);
+    }
+  }
 
   // Get all conversations for a program (organized by days)
   router.get('/programs/:programId/conversations', authenticateToken, async (req, res) => {
@@ -146,6 +237,11 @@ function createConversationRoutes(conversationModel, messageModel, programModel)
         messageMetadata
       );
       
+      // Check if we should trigger background therapy response (non-blocking)
+      checkAndTriggerTherapyResponse(id, userId).catch(error => {
+        console.error('Background therapy response trigger failed:', error.message);
+      });
+      
       res.status(201).json({
         message: 'Message added successfully',
         data: message
@@ -287,6 +383,11 @@ function createConversationRoutes(conversationModel, messageModel, programModel)
         content.trim(), 
         messageMetadata
       );
+      
+      // Check if we should trigger background therapy response (non-blocking)
+      checkAndTriggerTherapyResponse(conversation.id, userId).catch(error => {
+        console.error('Background therapy response trigger failed:', error.message);
+      });
       
       res.status(201).json({
         message: `Message added to day ${dayNumber} successfully`,

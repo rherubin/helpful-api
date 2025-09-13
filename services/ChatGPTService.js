@@ -152,7 +152,7 @@ class ChatGPTService {
       
       // Process request with metrics tracking
       const requestStart = Date.now();
-      this.generateCouplesProgramInternal(requestData)
+      this.processOpenAIRequest(requestData)
         .then(result => {
           const duration = Date.now() - requestStart;
           this.recordMetrics(duration, true, null);
@@ -198,16 +198,40 @@ class ChatGPTService {
     };
   }
 
+  // Generate couples therapy response for ongoing conversations
+  async generateCouplesTherapyResponse(user1Name, user2Name, user1Messages, user2FirstMessage) {
+    if (!this.openai) {
+      throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
+    }
+
+    return this.queueOpenAIRequest({ 
+      type: 'therapy_response',
+      user1Name, 
+      user2Name, 
+      user1Messages, 
+      user2FirstMessage 
+    });
+  }
+
   // Public interface - queue the request
   async generateCouplesProgram(userName, partnerName, userInput) {
     if (!this.openai) {
       throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
     }
 
-    return this.queueOpenAIRequest({ userName, partnerName, userInput });
+    return this.queueOpenAIRequest({ type: 'program', userName, partnerName, userInput });
   }
 
-  // Internal method that does the actual OpenAI call
+  // Process OpenAI request based on type
+  async processOpenAIRequest(requestData, retryCount = 0) {
+    if (requestData.type === 'therapy_response') {
+      return this.generateCouplesTherapyResponseInternal(requestData, retryCount);
+    } else {
+      return this.generateCouplesProgramInternal(requestData, retryCount);
+    }
+  }
+
+  // Internal method that does the actual OpenAI call for programs
   async generateCouplesProgramInternal({ userName, partnerName, userInput }, retryCount = 0) {
     const MAX_RETRIES = 2;
     const BASE_DELAY = 1000; // 1 second
@@ -442,6 +466,158 @@ Please format your response as a JSON object with the following structure:
       console.error('Error validating program structure:', error.message);
       return false;
     }
+  }
+
+  // Internal method for generating couples therapy responses
+  async generateCouplesTherapyResponseInternal({ user1Name, user2Name, user1Messages, user2FirstMessage }, retryCount = 0) {
+    const MAX_RETRIES = 2;
+    const BASE_DELAY = 1000; // 1 second
+    
+    try {
+      // Sanitize all inputs
+      const sanitizedUser1Name = this.sanitizePromptInput(user1Name);
+      const sanitizedUser2Name = this.sanitizePromptInput(user2Name);
+      const sanitizedUser1Messages = Array.isArray(user1Messages) 
+        ? user1Messages.map(msg => this.sanitizePromptInput(msg)).join('\n\n')
+        : this.sanitizePromptInput(user1Messages);
+      const sanitizedUser2FirstMessage = this.sanitizePromptInput(user2FirstMessage);
+
+      // Validate input safety
+      if (!this.validateInputSafety(sanitizedUser1Name) || 
+          !this.validateInputSafety(sanitizedUser2Name) ||
+          !this.validateInputSafety(sanitizedUser1Messages) ||
+          !this.validateInputSafety(sanitizedUser2FirstMessage)) {
+        throw new Error('Input contains potentially unsafe content');
+      }
+
+      // Additional validation
+      if (sanitizedUser1Name.length < 1 || sanitizedUser1Name.length > 50) {
+        throw new Error('User 1 name must be between 1 and 50 characters');
+      }
+      if (sanitizedUser2Name.length < 1 || sanitizedUser2Name.length > 50) {
+        throw new Error('User 2 name must be between 1 and 50 characters');
+      }
+      if (sanitizedUser1Messages.length < 10 || sanitizedUser1Messages.length > 3000) {
+        throw new Error('User 1 messages must be between 10 and 3000 characters');
+      }
+      if (sanitizedUser2FirstMessage.length < 10 || sanitizedUser2FirstMessage.length > 2000) {
+        throw new Error('User 2 first message must be between 10 and 2000 characters');
+      }
+
+      const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
+
+Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
+
+A couple comes into your therapy room.
+
+Your first question to them is: "Hey Steve, do you remember the time we went on that spontaneous road trip to the coast? What was your favorite part of that trip?"
+
+${sanitizedUser1Name} says:
+
+"${sanitizedUser1Messages}"
+
+Then, ${sanitizedUser2Name} says in response:
+
+"${sanitizedUser2FirstMessage}"`;
+
+      const completion = await this.openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content: "You are a professional couples therapist. Provide thoughtful, therapeutic responses that help the couple connect emotionally. You may provide up to 3 separate messages if needed to fully address their situation."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        max_tokens: 2000,
+        temperature: 0.7
+      });
+
+      const response = completion.choices[0].message.content;
+      
+      // Validate and sanitize the AI response
+      if (!this.validateAIResponse(response)) {
+        console.warn('SECURITY: AI response failed validation checks');
+        throw new Error('AI response contains potentially unsafe content');
+      }
+      
+      // Split response into up to 3 messages (split by double newlines or numbered sections)
+      const messages = this.splitTherapyResponse(response);
+      
+      return messages;
+    } catch (error) {
+      // Implement exponential backoff for rate limiting
+      if (error.status === 429 && retryCount < MAX_RETRIES) {
+        const delay = BASE_DELAY * Math.pow(2, retryCount);
+        console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.generateCouplesTherapyResponseInternal({ user1Name, user2Name, user1Messages, user2FirstMessage }, retryCount + 1);
+      }
+
+      // Enhanced error logging for security monitoring
+      if (error.message.includes('unsafe content') || error.message.includes('validation')) {
+        console.error('SECURITY ERROR in ChatGPT therapy service:', error.message);
+      } else {
+        // Log error without exposing sensitive information
+        if (error.status === 401) {
+          console.error('ChatGPT API Error: Invalid API key - check your OPENAI_API_KEY configuration');
+        } else if (error.status === 429) {
+          console.error(`ChatGPT API Error: Rate limit exceeded (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+        } else if (error.status === 403) {
+          console.error('ChatGPT API Error: Access forbidden - check API key permissions');
+        } else {
+          console.error('ChatGPT API Error:', error.message || 'Unknown error');
+        }
+      }
+      
+      throw new Error('Failed to generate couples therapy response');
+    }
+  }
+
+  // Split therapy response into individual messages (up to 3)
+  splitTherapyResponse(response) {
+    if (!response || typeof response !== 'string') {
+      return [response || ''];
+    }
+
+    // Try to split by numbered sections first (1., 2., 3.)
+    const numberedSections = response.split(/(?=\d+\.\s)/);
+    if (numberedSections.length > 1 && numberedSections.length <= 3) {
+      return numberedSections
+        .map(section => section.replace(/^\d+\.\s*/, '').trim())
+        .filter(section => section.length > 0)
+        .slice(0, 3);
+    }
+
+    // Try to split by double newlines
+    const paragraphs = response.split(/\n\s*\n/);
+    if (paragraphs.length > 1 && paragraphs.length <= 3) {
+      return paragraphs
+        .map(p => p.trim())
+        .filter(p => p.length > 0)
+        .slice(0, 3);
+    }
+
+    // If response is too long, split into sentences and group into up to 3 messages
+    const sentences = response.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    if (sentences.length > 3) {
+      const messagesPerGroup = Math.ceil(sentences.length / 3);
+      const groups = [];
+      for (let i = 0; i < sentences.length; i += messagesPerGroup) {
+        const group = sentences.slice(i, i + messagesPerGroup).join('. ').trim();
+        if (group.length > 0) {
+          groups.push(group + (group.endsWith('.') ? '' : '.'));
+        }
+      }
+      return groups.slice(0, 3);
+    }
+
+    // If no clear splits, return as single message
+    return [response.trim()];
   }
 }
 

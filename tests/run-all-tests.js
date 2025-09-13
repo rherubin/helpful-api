@@ -2,6 +2,7 @@ const SecurityTestRunner = require('./security-test');
 const LoadTestRunner = require('./load-test');
 const APITestRunner = require('./api-test');
 const OpenAITestRunner = require('./openai-test');
+const TherapyTestRunner = require('./run-therapy-tests');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -16,6 +17,7 @@ class TestSuiteRunner {
       runAPI: options.runAPI !== false, // Default true
       runLoad: options.runLoad !== false, // Default true
       runOpenAI: options.runOpenAI !== false, // Default true
+      runTherapy: options.runTherapy !== false, // Default true
       baseURL: options.baseURL || 'http://localhost:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
@@ -26,6 +28,7 @@ class TestSuiteRunner {
       api: null,
       load: null,
       openai: null,
+      therapy: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -190,6 +193,34 @@ class TestSuiteRunner {
     }
   }
 
+  // Run therapy response tests
+  async runTherapyTests() {
+    this.log('🧠 Running Therapy Response Tests', 'section');
+    
+    try {
+      const therapyRunner = new TherapyTestRunner();
+      const success = await therapyRunner.runAllTests();
+      
+      this.results.therapy = { 
+        success, 
+        skipped: false,
+        details: 'Therapy response trigger and system message tests'
+      };
+      
+      if (success) {
+        this.log('Therapy response tests completed successfully', 'success');
+      } else {
+        this.log('Therapy response tests failed', 'error');
+      }
+      
+      return this.results.therapy;
+    } catch (error) {
+      this.log(`Therapy response tests failed: ${error.message}`, 'error');
+      this.results.therapy = { success: false, error: error.message };
+      return this.results.therapy;
+    }
+  }
+
   // Run all test suites
   async runAllTests() {
     this.log('🎯 Starting Comprehensive Test Suite', 'section');
@@ -200,6 +231,7 @@ class TestSuiteRunner {
     this.log(`  API Tests: ${this.options.runAPI ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Load Tests: ${this.options.runLoad ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  OpenAI Tests: ${this.options.runOpenAI ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Therapy Response Tests: ${this.options.runTherapy ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
     // Check server health
@@ -243,6 +275,15 @@ class TestSuiteRunner {
     if (this.options.runOpenAI) {
       await this.runOpenAITests();
       if (this.results.openai && !this.results.openai.success && !this.results.openai.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run therapy response tests
+    if (this.options.runTherapy) {
+      await this.runTherapyTests();
+      if (this.results.therapy && !this.results.therapy.success && !this.results.therapy.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -304,6 +345,17 @@ class TestSuiteRunner {
         this.log(`🤖 OpenAI Tests: PASSED (${testResults?.passed || 0}/${testResults?.total || 0})`, 'success');
       } else {
         this.log('🤖 OpenAI Tests: FAILED', 'error');
+      }
+    }
+
+    // Therapy response test results
+    if (this.results.therapy) {
+      if (this.results.therapy.skipped) {
+        this.log('🧠 Therapy Response Tests: SKIPPED', 'warn');
+      } else if (this.results.therapy.success) {
+        this.log('🧠 Therapy Response Tests: PASSED', 'success');
+      } else {
+        this.log('🧠 Therapy Response Tests: FAILED', 'error');
       }
     }
 

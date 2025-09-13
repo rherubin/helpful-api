@@ -134,8 +134,8 @@ function setupRoutes() {
   }
 
   // Setup conversation routes
-  if (conversationModel && messageModel && programModel) {
-    app.use('/api', createConversationRoutes(conversationModel, messageModel, programModel));
+  if (conversationModel && messageModel && programModel && pairingModel && userModel && chatGPTService) {
+    app.use('/api', createConversationRoutes(conversationModel, messageModel, programModel, pairingModel, userModel, chatGPTService));
   }
 }
 
