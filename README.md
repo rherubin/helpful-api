@@ -720,45 +720,32 @@ Without this configuration, the system will log warnings but continue normal ope
 #### Get All Program Steps (Organized by Days)
 - **GET** `/api/programs/:programId/programSteps`
 - **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Returns all program steps for a program without messages. Use `GET /programSteps/:id/messages` to get messages for a specific step.
 - **Response:**
   ```json
   {
     "message": "Program steps retrieved successfully",
-    "total_days": 14,
-    "days": {
-      "1": {
+    "total_steps": 14,
+    "program_steps": [
+      {
+        "id": "step_id",
         "day": 1,
         "theme": "Reflecting on Happy Memories",
-        "step_id": "step_id",
         "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
         "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
         "created_at": "2024-01-01T00:00:00.000Z",
-        "messages": [
-          {
-            "id": "message_id",
-            "message_type": "user_message",
-            "content": "Becca and I talked about our honeymoon last night! It brought back so many good memories.",
-            "metadata": {
-              "day": 1,
-              "completed_exercise": true,
-              "partner_participated": true
-            },
-            "created_at": "2024-01-01T01:00:00.000Z",
-            "sender": {
-              "id": "user_id",
-              "first_name": "Steve",
-              "last_name": null,
-              "email": "steve@example.com"
-            }
-          }
-        ]
+        "updated_at": "2024-01-01T00:00:00.000Z"
       },
-      "2": {
+      {
+        "id": "step_id_2",
         "day": 2,
         "theme": "Appreciating Each Other",
-        "messages": [...]
+        "conversation_starter": "Share three things you appreciate about your partner today...",
+        "science_behind_it": "Expressing appreciation strengthens positive emotions...",
+        "created_at": "2024-01-01T00:00:00.000Z",
+        "updated_at": "2024-01-01T00:00:00.000Z"
       }
-    }
+    ]
   }
   ```
 

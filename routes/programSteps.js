@@ -104,30 +104,24 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         return res.status(403).json({ error: 'Not authorized to access this program\'s steps' });
       }
 
-      // Get all days and their program steps
-      const days = await programStepModel.getProgramDays(programId);
-      const stepsByDay = {};
-
-      for (const dayInfo of days) {
-        // Get the program step details and messages
-        const step = await programStepModel.getDayStep(programId, dayInfo.day);
-        const messages = await messageModel.getStepMessages(step.id);
-        
-        stepsByDay[dayInfo.day] = {
-          day: dayInfo.day,
-          theme: dayInfo.theme,
-          step_id: step.id,
-          conversation_starter: step.conversation_starter,
-          science_behind_it: step.science_behind_it,
-          created_at: dayInfo.created_at,
-          messages: messages
-        };
-      }
+      // Get all program steps for this program
+      const programSteps = await programStepModel.getProgramSteps(programId);
+      
+      // Format program steps without messages
+      const formattedSteps = programSteps.map(step => ({
+        id: step.id,
+        day: step.day,
+        theme: step.theme,
+        conversation_starter: step.conversation_starter,
+        science_behind_it: step.science_behind_it,
+        created_at: step.created_at,
+        updated_at: step.updated_at
+      }));
       
       res.status(200).json({
         message: 'Program steps retrieved successfully',
-        days: stepsByDay,
-        total_days: days.length
+        program_steps: formattedSteps,
+        total_steps: formattedSteps.length
       });
     } catch (error) {
       console.error('Error fetching program steps:', error.message);
