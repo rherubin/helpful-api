@@ -1,6 +1,6 @@
 # Helpful API
 
-A comprehensive Node.js REST API with SQLite backend featuring user management, JWT authentication, a flexible pairing system, AI-generated therapy programs, and efficient combined endpoints for optimal client performance.
+A comprehensive Node.js REST API with SQLite backend featuring user management, JWT authentication, a flexible pairing system, AI-generated therapy programs with structured program steps, and efficient combined endpoints for optimal client performance.
 
 ## Features
 
@@ -73,13 +73,25 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 - **`POST /api/pairing/request`** - Create partner code for pairing
 - **`POST /api/pairing/accept`** - Accept pairing with partner code
 - **`GET /api/pairings`** - Get all pairings (accepted + pending)
+- **`GET /api/programs/:id/programSteps`** - Get all program steps for a program
+- **`POST /api/programSteps/:id/messages`** - Add message to a program step
+- **`GET /api/programSteps/:id/messages`** - Get messages for a program step
 
 ### Key Features
 - ✅ **Combined Profile Endpoint**: Single call for complete user state
 - ✅ **Unified Pairings**: Both accepted and pending pairings in one array
+- ✅ **Program Steps**: Clean, efficient day-based therapy program structure
+- ✅ **Simplified Messages**: Clean message responses without metadata bloat
 - ✅ **Rate Limited**: 1000 requests per 15 minutes for general API
 - ✅ **Comprehensive Tests**: 95+ tests with 100% success rates
 - ✅ **JWT Authentication**: Secure access and refresh tokens
+
+### API Design Philosophy
+- **Clean Responses**: Minimal, essential data only - no unnecessary nesting or metadata
+- **Efficient Structure**: Array-based responses instead of complex nested objects
+- **Separation of Concerns**: Messages fetched separately when needed, not bundled with program steps
+- **RESTful Design**: Intuitive endpoints that follow REST conventions
+- **Performance First**: Optimized for speed and minimal bandwidth usage
 
 ## API Endpoints
 
@@ -749,15 +761,15 @@ Without this configuration, the system will log warnings but continue normal ope
   }
   ```
 
-#### Get Specific Conversation
-- **GET** `/api/conversations/:id`
+#### Get Specific Program Step
+- **GET** `/api/programSteps/:id`
 - **Headers:** `Authorization: Bearer {access_token}`
 - **Response:**
   ```json
   {
-    "message": "Conversation retrieved successfully",
-    "conversation": {
-      "id": "conversation_id",
+    "message": "Program step retrieved successfully",
+    "step": {
+      "id": "step_id",
       "program_id": "program_id",
       "day": 1,
       "theme": "Reflecting on Happy Memories",
@@ -791,19 +803,13 @@ Without this configuration, the system will log warnings but continue normal ope
   }
   ```
 
-#### Add Message to Conversation
-- **POST** `/api/conversations/:id/messages`
+#### Add Message to Program Step
+- **POST** `/api/programSteps/:id/messages`
 - **Headers:** `Authorization: Bearer {access_token}`
 - **Body:**
   ```json
   {
-    "content": "This exercise really helped us reconnect! We spent over an hour talking about our favorite memories together.",
-    "metadata": {
-      "completed_exercise": true,
-      "partner_participated": true,
-      "duration_minutes": 75,
-      "satisfaction_rating": 5
-    }
+    "content": "This exercise really helped us reconnect! We spent over an hour talking about our favorite memories together."
   }
   ```
 - **Response:**
@@ -812,25 +818,17 @@ Without this configuration, the system will log warnings but continue normal ope
     "message": "Message added successfully",
     "data": {
       "id": "message_id",
-      "conversation_id": "conversation_id",
+      "step_id": "step_id",
       "message_type": "user_message",
       "sender_id": "user_id",
       "content": "This exercise really helped us reconnect! We spent over an hour talking about our favorite memories together.",
-      "metadata": {
-        "completed_exercise": true,
-        "partner_participated": true,
-        "duration_minutes": 75,
-        "satisfaction_rating": 5,
-        "day": 1,
-        "type": "user_message"
-      },
       "created_at": "2024-01-01T02:00:00.000Z"
     }
   }
   ```
 
-#### Update Message in Conversation
-- **PUT** `/api/conversations/:conversationId/messages/:messageId`
+#### Update Message in Program Step
+- **PUT** `/api/programSteps/:stepId/messages/:messageId`
 - **Headers:** `Authorization: Bearer {access_token}`
 - **Body:**
   ```json
