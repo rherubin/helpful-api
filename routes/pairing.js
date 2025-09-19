@@ -32,8 +32,8 @@ function createPairingRoutes(pairingService) {
         return res.status(400).json({ error: 'Partner code is required' });
       }
 
-      const result = await pairingService.acceptPairingByCode(userId, partner_code);
-      res.status(200).json(result);
+      await pairingService.acceptPairingByCode(userId, partner_code);
+      res.status(200).end();
     } catch (error) {
       if (error.message === 'No pending pairing found for this partner code') {
         return res.status(404).json({ error: error.message });

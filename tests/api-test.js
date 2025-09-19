@@ -582,13 +582,7 @@ class APITestRunner {
         `Status: ${acceptPairingResponse.status}`
       );
       
-      this.assert(
-        !!acceptPairingResponse.data.pairing.id,
-        'Accept pairing returns pairing ID',
-        `ID: ${acceptPairingResponse.data.pairing.id}`
-      );
-      
-      this.testData.pairingId = acceptPairingResponse.data.pairing.id;
+      // Accept pairing now returns empty response, pairing ID will be retrieved from accepted pairings endpoint
       
     } catch (error) {
       this.assert(false, 'Accept pairing', `Error: ${error.response?.data?.error || error.message}`);
@@ -613,6 +607,11 @@ class APITestRunner {
         'Accepted pairings returns array',
         `Type: ${typeof acceptedPairingsResponse.data.pairings}`
       );
+      
+      // Extract pairing ID from accepted pairings for later use
+      if (acceptedPairingsResponse.data.pairings.length > 0) {
+        this.testData.pairingId = acceptedPairingsResponse.data.pairings[0].id;
+      }
       
     } catch (error) {
       this.assert(false, 'Get accepted pairings', `Error: ${error.response?.data?.error || error.message}`);
