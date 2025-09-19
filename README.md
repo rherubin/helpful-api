@@ -769,35 +769,23 @@ Without this configuration, the system will log warnings but continue normal ope
   }
   ```
 
-#### Get All Messages in a Conversation
-- **GET** `/api/conversations/:id/messages`
+#### Get All Messages in a Program Step
+- **GET** `/api/programSteps/:id/messages`
 - **Headers:** `Authorization: Bearer {access_token}`
 - **Response:**
   ```json
   {
     "message": "Messages retrieved successfully",
-    "conversation_id": "conversation_id",
+    "step_id": "step_id",
     "messages": [
       {
         "id": "message_id",
-        "conversation_id": "conversation_id",
+        "step_id": "step_id",
         "message_type": "user_message",
         "sender_id": "user_id",
         "content": "Becca and I completed day 1 together! We talked about our first vacation and remembered why we fell in love.",
-        "metadata": {
-          "day": 1,
-          "completed_exercise": true,
-          "partner_participated": true,
-          "duration_minutes": 30
-        },
         "created_at": "2024-01-01T01:00:00.000Z",
-        "updated_at": "2024-01-01T01:00:00.000Z",
-        "sender": {
-          "id": "user_id",
-          "first_name": "Steve",
-          "last_name": null,
-          "email": "steve@example.com"
-        }
+        "updated_at": "2024-01-01T01:00:00.000Z"
       }
     ]
   }

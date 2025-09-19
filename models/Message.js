@@ -148,26 +148,22 @@ class Message {
     try {
       const query = `
         SELECT m.id, m.conversation_id, m.message_type, m.sender_id, m.content, 
-               m.metadata, m.created_at, m.updated_at,
-               u.first_name, u.last_name, u.email
+               m.created_at, m.updated_at
         FROM messages m
-        LEFT JOIN users u ON m.sender_id = u.id
         WHERE m.conversation_id = ?
         ORDER BY m.created_at ASC
       `;
 
       const messages = await this.allAsync(query, [conversationId]);
       
-      // Parse metadata for each message
-      return messages.map(msg => ({
-        ...msg,
-        metadata: this.parseMetadata(msg.metadata),
-        sender: msg.sender_id ? {
-          id: msg.sender_id,
-          first_name: msg.first_name,
-          last_name: msg.last_name,
-          email: msg.email
-        } : null
+      return messages.map(message => ({
+        id: message.id,
+        conversation_id: message.conversation_id,
+        message_type: message.message_type,
+        sender_id: message.sender_id,
+        content: message.content,
+        created_at: message.created_at,
+        updated_at: message.updated_at
       }));
     } catch (err) {
       console.error('Error fetching conversation messages:', err.message);
@@ -370,10 +366,8 @@ class Message {
     try {
       const query = `
         SELECT m.id, m.step_id, m.message_type, m.sender_id, m.content, 
-               m.metadata, m.created_at, m.updated_at,
-               u.first_name, u.last_name, u.email
+               m.created_at, m.updated_at
         FROM messages m
-        LEFT JOIN users u ON m.sender_id = u.id
         WHERE m.step_id = ?
         ORDER BY m.created_at ASC
       `;
@@ -381,14 +375,13 @@ class Message {
       const messages = await this.allAsync(query, [stepId]);
       
       return messages.map(message => ({
-        ...message,
-        metadata: this.parseMetadata(message.metadata),
-        sender: message.sender_id ? {
-          id: message.sender_id,
-          first_name: message.first_name,
-          last_name: message.last_name,
-          email: message.email
-        } : null
+        id: message.id,
+        step_id: message.step_id,
+        message_type: message.message_type,
+        sender_id: message.sender_id,
+        content: message.content,
+        created_at: message.created_at,
+        updated_at: message.updated_at
       }));
     } catch (err) {
       console.error('Error fetching step messages:', err.message);
