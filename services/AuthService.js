@@ -77,6 +77,50 @@ class AuthService {
     });
   }
 
+  // Register user (convenience method)
+  async register(email, password, first_name = null, last_name = null) {
+    try {
+      // Check if user already exists
+      try {
+        await this.userModel.getUserByEmail(email);
+        // If we get here, user exists
+        throw new Error('User with this email already exists');
+      } catch (error) {
+        // If error is "User not found", that's what we want - proceed with registration
+        if (error.message !== 'User not found') {
+          // If it's any other error, re-throw it
+          throw error;
+        }
+      }
+
+      // Create user
+      const user = await this.userModel.createUser({ 
+        email, 
+        first_name, 
+        last_name, 
+        password 
+      });
+
+      // Issue tokens for the new user
+      const tokens = await this.issueTokensForUser(user);
+
+      return {
+        message: 'User registered successfully',
+        data: {
+          user: {
+            id: user.id,
+            email: user.email,
+            first_name: user.first_name,
+            last_name: user.last_name
+          },
+          ...tokens
+        }
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
   // Login user
   async login(email, password) {
     try {
@@ -93,6 +137,14 @@ class AuthService {
       const accessToken = this.generateAccessToken(user);
       const refreshToken = this.generateRefreshToken(user.id);
 
+      // Delete any existing refresh tokens for this user to avoid duplicates
+      try {
+        await this.refreshTokenModel.deleteRefreshTokensByUserId(user.id);
+      } catch (error) {
+        // Ignore if no tokens exist to delete
+        console.log('No existing refresh tokens to delete for user:', user.id);
+      }
+
       // Store refresh token in database
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
       await this.refreshTokenModel.createRefreshToken(user.id, refreshToken, expiresAt);
@@ -101,11 +153,13 @@ class AuthService {
       const { password_hash, ...userData } = user;
       return {
         message: 'Login successful',
-        user: userData,
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        expires_in: this.JWT_EXPIRES_IN,
-        refresh_expires_in: this.JWT_REFRESH_EXPIRES_IN
+        data: {
+          user: userData,
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          expires_in: this.JWT_EXPIRES_IN,
+          refresh_expires_in: this.JWT_REFRESH_EXPIRES_IN
+        }
       };
     } catch (error) {
       throw error;
@@ -133,6 +187,7 @@ class AuthService {
         expires_in: this.JWT_EXPIRES_IN
       };
     } catch (error) {
+      console.error('Refresh token error:', error.message);
       throw error;
     }
   }
@@ -159,7 +214,9 @@ class AuthService {
       const { password_hash, ...userData } = user;
       return {
         message: 'Profile retrieved successfully',
-        user: userData
+        data: {
+          user: userData
+        }
       };
     } catch (error) {
       throw error;

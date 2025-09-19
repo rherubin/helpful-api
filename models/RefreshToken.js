@@ -75,12 +75,17 @@ class RefreshToken {
   // Get refresh token by token value
   async getRefreshToken(token) {
     try {
-      const row = await this.getAsync('SELECT * FROM refresh_tokens WHERE token = ? AND expires_at > datetime("now")', [token]);
+      const row = await this.getAsync("SELECT * FROM refresh_tokens WHERE token = ? AND expires_at > datetime('now')", [token]);
       if (!row) {
         throw new Error('Refresh token not found or expired');
       }
       return row;
     } catch (err) {
+      // If it's our specific error message, preserve it
+      if (err.message === 'Refresh token not found or expired') {
+        throw err;
+      }
+      // Otherwise, it's a database error
       throw new Error('Failed to fetch refresh token');
     }
   }
@@ -92,6 +97,16 @@ class RefreshToken {
       return result.changes > 0;
     } catch (err) {
       throw new Error('Failed to delete refresh token');
+    }
+  }
+
+  // Delete all refresh tokens for a user
+  async deleteRefreshTokensByUserId(userId) {
+    try {
+      const result = await this.runAsync('DELETE FROM refresh_tokens WHERE user_id = ?', [userId]);
+      return result.changes > 0;
+    } catch (err) {
+      throw new Error('Failed to delete refresh tokens for user');
     }
   }
 

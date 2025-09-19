@@ -12,6 +12,7 @@
     "test:load": "node tests/load-test.js",
     "test:openai": "node tests/openai-test.js",
     "test:therapy": "node tests/run-therapy-tests.js",
+    "test:auth": "node tests/auth-test.js",
     "test:ci": "node tests/run-all-tests.js --skip-server-check",
     "test:quick": "node tests/run-all-tests.js --no-load"
   },
@@ -39,7 +40,8 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "supertest": "^7.1.4"
   },
   "engines": {
     "node": ">=16.0.0"

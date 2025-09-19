@@ -19,6 +19,20 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
 - **SQLite Database**: Persistent data storage with automatic schema creation
 - **RESTful API**: Clean, consistent API design with comprehensive error handling
 
+## Recent Improvements
+
+### Authentication System Enhancements
+- **Fixed refresh token SQL query issue**: Corrected SQLite syntax for token expiration checks
+- **Enhanced AuthService**: Added dedicated `register` method for consistent user registration
+- **Improved response consistency**: Standardized API response structure across all auth endpoints
+- **Duplicate token prevention**: Automatic cleanup of existing refresh tokens during login
+
+### Testing Infrastructure
+- **New authentication test suite**: Comprehensive test coverage for all auth functionality (8 test scenarios)
+- **Enhanced error handling**: Better error messages and status codes for auth failures
+- **In-memory testing**: Isolated test environment with proper database initialization
+- **Test integration**: Auth tests fully integrated into main test runner
+
 ## Setup
 
 1. Install dependencies:
@@ -953,6 +967,19 @@ Tests the background therapy response system including:
 - Error handling and recovery
 - Mock OpenAI responses for testing without API calls
 
+#### Authentication Tests
+```bash
+npm run test:auth
+```
+Comprehensive authentication system tests including:
+- User registration with password validation
+- Login and logout functionality
+- Token refresh mechanisms
+- Invalid credential handling
+- Profile endpoint access control
+- JWT token structure validation
+- Error scenarios and edge cases
+
 ### Test Categories
 
 - **Unit Tests**: Test individual components and business logic
@@ -1192,6 +1219,7 @@ helpful-api/
 │   ├── security-test.js     # Security and validation tests
 │   ├── load-test.js         # Performance and load tests
 │   ├── openai-test.js       # OpenAI integration tests
+│   ├── auth-test.js         # Authentication system tests
 │   ├── therapy-response-test.js           # Therapy response unit tests
 │   ├── therapy-response-integration-test.js # Therapy response integration tests
 │   ├── run-therapy-tests.js # Therapy test runner
