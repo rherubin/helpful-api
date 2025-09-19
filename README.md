@@ -29,8 +29,9 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
 
 ### API Response Optimizations
 - **Simplified pairing accept response**: `/api/pairing/accept` now returns only 200 status on success (no response body)
-- **Reduced bandwidth usage**: Eliminated unnecessary response data for simple success operations
-- **Improved client-side handling**: Cleaner success/failure detection based solely on HTTP status codes
+- **Partner-focused pairing responses**: All pairing endpoints (`/api/pairings`, `/api/pairing/pending`, `/api/pairing/accepted`) now return only partner information, not current user data
+- **Reduced bandwidth usage**: Eliminated unnecessary response data for simple success operations and duplicate user information
+- **Improved client-side handling**: Cleaner success/failure detection based solely on HTTP status codes and simplified partner data structure
 
 ### Testing Infrastructure
 - **New authentication test suite**: Comprehensive test coverage for all auth functionality (8 test scenarios)
@@ -320,31 +321,72 @@ This makes pairing more flexible since you don't need to know the other person's
     "pairings": [
       {
         "id": "pairing_id",
-        "user1_id": "user1_id",
-        "user2_id": "user2_id",
         "status": "accepted",
-        "user1_first_name": "John",
-        "user1_last_name": "Doe",
-        "user1_email": "john.doe@example.com",
-        "user2_first_name": "Jane",
-        "user2_last_name": "Doe",
-        "user2_email": "jane.doe@example.com"
+        "partner_code": "ABC123",
+        "created_at": "2025-01-20T10:30:00.000Z",
+        "updated_at": "2025-01-20T10:35:00.000Z",
+        "partner": {
+          "id": "partner_user_id",
+          "first_name": "Jane",
+          "last_name": "Doe",
+          "email": "jane.doe@example.com"
+        }
       }
     ]
   }
   ```
 
-**Note**: This endpoint is also available at `/api/pairing/` for backward compatibility.
+**Note**: Only partner information is returned (not your own user data). Each pairing shows details about the person you're paired with. This endpoint is also available at `/api/pairing/` for backward compatibility.
 
 #### Get Pending Pairings
 - **GET** `/api/pairing/pending`
 - **Headers:** `Authorization: Bearer {access_token}`
-- **Response:** Array of pending pairing requests
+- **Response:**
+  ```json
+  {
+    "message": "Pending pairings retrieved successfully",
+    "pairings": [
+      {
+        "id": "pairing_id",
+        "status": "pending",
+        "partner_code": "XYZ789",
+        "created_at": "2025-01-20T10:30:00.000Z",
+        "updated_at": "2025-01-20T10:30:00.000Z",
+        "partner": {
+          "id": "partner_user_id",
+          "first_name": "Pending",
+          "last_name": "User",
+          "email": "pending@example.com"
+        }
+      }
+    ]
+  }
+  ```
 
 #### Get Accepted Pairings
 - **GET** `/api/pairing/accepted`
 - **Headers:** `Authorization: Bearer {access_token}`
-- **Response:** Array of accepted pairings
+- **Response:**
+  ```json
+  {
+    "message": "Accepted pairings retrieved successfully",
+    "pairings": [
+      {
+        "id": "pairing_id",
+        "status": "accepted",
+        "partner_code": "ABC123",
+        "created_at": "2025-01-20T10:30:00.000Z",
+        "updated_at": "2025-01-20T10:35:00.000Z",
+        "partner": {
+          "id": "partner_user_id",
+          "first_name": "Jane",
+          "last_name": "Doe",
+          "email": "jane.doe@example.com"
+        }
+      }
+    ]
+  }
+  ```
 
 #### Get Pairing Statistics
 - **GET** `/api/pairing/stats`

@@ -159,7 +159,32 @@ class PairingService {
   // Get user's pairings
   async getUserPairings(userId) {
     try {
-      const pairings = await this.pairingModel.getUserPairings(userId);
+      const rawPairings = await this.pairingModel.getUserPairings(userId);
+      
+      // Transform pairings to only include partner information (not current user)
+      const pairings = rawPairings.map(pairing => {
+        // Determine which user is the partner (not the current user)
+        const isUser1 = pairing.user1_id === userId;
+        const partnerId = isUser1 ? pairing.user2_id : pairing.user1_id;
+        const partnerFirstName = isUser1 ? pairing.user2_first_name : pairing.user1_first_name;
+        const partnerLastName = isUser1 ? pairing.user2_last_name : pairing.user1_last_name;
+        const partnerEmail = isUser1 ? pairing.user2_email : pairing.user1_email;
+        
+        // Return pairing with only partner information
+        return {
+          id: pairing.id,
+          status: pairing.status,
+          partner_code: pairing.partner_code,
+          created_at: pairing.created_at,
+          updated_at: pairing.updated_at,
+          partner: {
+            id: partnerId,
+            first_name: partnerFirstName,
+            last_name: partnerLastName,
+            email: partnerEmail
+          }
+        };
+      });
       
       return {
         message: 'User pairings retrieved successfully',
@@ -173,7 +198,32 @@ class PairingService {
   // Get user's pending pairings
   async getPendingPairings(userId) {
     try {
-      const pairings = await this.pairingModel.getPendingPairings(userId);
+      const rawPairings = await this.pairingModel.getPendingPairings(userId);
+      
+      // Transform pairings to only include partner information (not current user)
+      const pairings = rawPairings.map(pairing => {
+        // Determine which user is the partner (not the current user)
+        const isUser1 = pairing.user1_id === userId;
+        const partnerId = isUser1 ? pairing.user2_id : pairing.user1_id;
+        const partnerFirstName = isUser1 ? pairing.user2_first_name : pairing.user1_first_name;
+        const partnerLastName = isUser1 ? pairing.user2_last_name : pairing.user1_last_name;
+        const partnerEmail = isUser1 ? pairing.user2_email : pairing.user1_email;
+        
+        // Return pairing with only partner information
+        return {
+          id: pairing.id,
+          status: pairing.status,
+          partner_code: pairing.partner_code,
+          created_at: pairing.created_at,
+          updated_at: pairing.updated_at,
+          partner: {
+            id: partnerId,
+            first_name: partnerFirstName,
+            last_name: partnerLastName,
+            email: partnerEmail
+          }
+        };
+      });
       
       return {
         message: 'Pending pairings retrieved successfully',
@@ -187,7 +237,32 @@ class PairingService {
   // Get user's accepted pairings
   async getAcceptedPairings(userId) {
     try {
-      const pairings = await this.pairingModel.getAcceptedPairings(userId);
+      const rawPairings = await this.pairingModel.getAcceptedPairings(userId);
+      
+      // Transform pairings to only include partner information (not current user)
+      const pairings = rawPairings.map(pairing => {
+        // Determine which user is the partner (not the current user)
+        const isUser1 = pairing.user1_id === userId;
+        const partnerId = isUser1 ? pairing.user2_id : pairing.user1_id;
+        const partnerFirstName = isUser1 ? pairing.user2_first_name : pairing.user1_first_name;
+        const partnerLastName = isUser1 ? pairing.user2_last_name : pairing.user1_last_name;
+        const partnerEmail = isUser1 ? pairing.user2_email : pairing.user1_email;
+        
+        // Return pairing with only partner information
+        return {
+          id: pairing.id,
+          status: pairing.status,
+          partner_code: pairing.partner_code,
+          created_at: pairing.created_at,
+          updated_at: pairing.updated_at,
+          partner: {
+            id: partnerId,
+            first_name: partnerFirstName,
+            last_name: partnerLastName,
+            email: partnerEmail
+          }
+        };
+      });
       
       return {
         message: 'Accepted pairings retrieved successfully',
