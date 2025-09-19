@@ -211,10 +211,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       }
 
       // Add the user message
-      const message = await messageModel.addUserMessage(id, userId, content.trim(), {
-        step_day: step.day,
-        step_theme: step.theme
-      });
+      const message = await messageModel.addUserMessage(id, userId, content.trim());
 
       // Check if we should trigger a background therapy response
       setTimeout(() => {
@@ -331,10 +328,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       const step = await programStepModel.getDayStep(programId, parseInt(day));
       
       // Add the user message
-      const message = await messageModel.addUserMessage(step.id, userId, content.trim(), {
-        step_day: step.day,
-        step_theme: step.theme
-      });
+      const message = await messageModel.addUserMessage(step.id, userId, content.trim());
 
       // Check if we should trigger a background therapy response
       setTimeout(() => {

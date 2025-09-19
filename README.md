@@ -1302,8 +1302,8 @@ curl -X PUT http://localhost:9000/api/conversations/{conversation_id}/messages/{
 ### Background Therapy Response Example
 
 ```bash
-# 1. User 1 (Steve) posts first message to a conversation
-curl -X POST http://localhost:9000/api/conversations/{conversation_id}/messages \
+# 1. User 1 (Steve) posts first message to a program step
+curl -X POST http://localhost:9000/api/programSteps/{step_id}/messages \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {steve_access_token}" \
   -d '{
@@ -1313,8 +1313,8 @@ curl -X POST http://localhost:9000/api/conversations/{conversation_id}/messages 
 # API responds immediately (non-blocking)
 # Response: {"message": "Message added successfully", "data": {...}}
 
-# 2. User 2 (Becca) posts first message to the same conversation  
-curl -X POST http://localhost:9000/api/conversations/{conversation_id}/messages \
+# 2. User 2 (Becca) posts first message to the same program step  
+curl -X POST http://localhost:9000/api/programSteps/{step_id}/messages \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {becca_access_token}" \
   -d '{
@@ -1326,7 +1326,7 @@ curl -X POST http://localhost:9000/api/conversations/{conversation_id}/messages 
 
 # 3. After 2 seconds, system automatically adds therapy response messages
 # Check messages to see the system responses:
-curl -X GET http://localhost:9000/api/conversations/{conversation_id}/messages \
+curl -X GET http://localhost:9000/api/programSteps/{step_id}/messages \
   -H "Authorization: Bearer {access_token}"
 
 # Response will now include system messages like:
