@@ -291,7 +291,7 @@ class Pairing {
                u2.first_name as user2_first_name, u2.last_name as user2_last_name, u2.email as user2_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
-        JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
+        LEFT JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
         WHERE (p.user1_id = ? OR p.user2_id = ?) AND p.status = 'pending' AND p.deleted_at IS NULL
         ORDER BY p.created_at DESC
       `;

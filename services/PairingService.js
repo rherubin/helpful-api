@@ -162,13 +162,20 @@ class PairingService {
     }
   }
 
-  // Get user's pairings
+  // Get user's pairings (both accepted and pending)
   async getUserPairings(userId) {
     try {
-      const rawPairings = await this.pairingModel.getUserPairings(userId);
+      // Get accepted pairings
+      const rawAcceptedPairings = await this.pairingModel.getUserPairings(userId);
+      
+      // Get pending pairings
+      const rawPendingPairings = await this.pairingModel.getPendingPairings(userId);
+      
+      // Combine both arrays
+      const allRawPairings = [...rawAcceptedPairings, ...rawPendingPairings];
       
       // Transform pairings to only include partner information (not current user)
-      const pairings = rawPairings.map(pairing => {
+      const pairings = allRawPairings.map(pairing => {
         // Determine which user is the partner (not the current user)
         const isUser1 = pairing.user1_id === userId;
         const partnerId = isUser1 ? pairing.user2_id : pairing.user1_id;
@@ -176,21 +183,27 @@ class PairingService {
         const partnerLastName = isUser1 ? pairing.user2_last_name : pairing.user1_last_name;
         const partnerEmail = isUser1 ? pairing.user2_email : pairing.user1_email;
         
-        // Return pairing with only partner information
+        // For partner code requests where user2 is null, there's no partner yet
+        const partner = partnerId ? {
+          id: partnerId,
+          first_name: partnerFirstName,
+          last_name: partnerLastName,
+          email: partnerEmail
+        } : null;
+        
+        // Return pairing with partner information (null if no partner yet)
         return {
           id: pairing.id,
           status: pairing.status,
           partner_code: pairing.partner_code,
           created_at: pairing.created_at,
           updated_at: pairing.updated_at,
-          partner: {
-            id: partnerId,
-            first_name: partnerFirstName,
-            last_name: partnerLastName,
-            email: partnerEmail
-          }
+          partner: partner
         };
       });
+      
+      // Sort by created_at descending (most recent first)
+      pairings.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       
       return {
         message: 'User pairings retrieved successfully',
@@ -215,19 +228,22 @@ class PairingService {
         const partnerLastName = isUser1 ? pairing.user2_last_name : pairing.user1_last_name;
         const partnerEmail = isUser1 ? pairing.user2_email : pairing.user1_email;
         
-        // Return pairing with only partner information
+        // For partner code requests where user2 is null, there's no partner yet
+        const partner = partnerId ? {
+          id: partnerId,
+          first_name: partnerFirstName,
+          last_name: partnerLastName,
+          email: partnerEmail
+        } : null;
+        
+        // Return pairing with partner information (null if no partner yet)
         return {
           id: pairing.id,
           status: pairing.status,
           partner_code: pairing.partner_code,
           created_at: pairing.created_at,
           updated_at: pairing.updated_at,
-          partner: {
-            id: partnerId,
-            first_name: partnerFirstName,
-            last_name: partnerLastName,
-            email: partnerEmail
-          }
+          partner: partner
         };
       });
       

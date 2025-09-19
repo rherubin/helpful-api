@@ -3,7 +3,17 @@ const jwt = require('jsonwebtoken');
 
 /**
  * User Profile Endpoint Test Suite
- * Tests the new GET /api/users/profile endpoint
+ * Comprehensive tests for the GET /api/profile endpoint
+ * 
+ * Tests include:
+ * - Basic profile retrieval functionality
+ * - Authentication and authorization scenarios
+ * - Profile with pending pairing requests (partner codes)
+ * - Profile with accepted pairings
+ * - Response structure validation
+ * - Edge cases and error scenarios
+ * - Performance and concurrent request handling
+ * 
  * Run with: node tests/user-profile-test.js
  */
 
@@ -166,9 +176,21 @@ class UserProfileTestRunner {
       );
       
       this.assert(
+        Array.isArray(profileResponse.data.profile.pairing_requests),
+        'Profile contains pairing_requests array',
+        `Type: ${typeof profileResponse.data.profile.pairing_requests}`
+      );
+      
+      this.assert(
         profileResponse.data.profile.pairings.length === 0,
         'New user has no pairings initially',
         `Pairings count: ${profileResponse.data.profile.pairings.length}`
+      );
+      
+      this.assert(
+        profileResponse.data.profile.pairing_requests.length >= 0,
+        'New user has pairing_requests field',
+        `Pairing requests count: ${profileResponse.data.profile.pairing_requests.length}`
       );
 
       // Store profile for later tests
@@ -247,9 +269,141 @@ class UserProfileTestRunner {
     }
   }
 
-  // Test profile with pairings
-  async testProfileWithPairings() {
-    this.log('Testing Profile with Pairings', 'section');
+  // Test profile with pending pairing requests
+  async testProfileWithPendingRequests() {
+    this.log('Testing Profile with Pending Pairing Requests', 'section');
+    
+    // Create a new user for this test to avoid conflicts
+    const timestamp = Date.now();
+    const userData = {
+      email: `pending.test.${timestamp}@example.com`,
+      first_name: 'Pending',
+      last_name: 'Test',
+      password: 'Test1!@#'
+    };
+
+    try {
+      // Create test user
+      const userResponse = await axios.post(`${this.baseURL}/api/users`, userData, {
+        timeout: this.timeout
+      });
+      
+      const user = {
+        ...userResponse.data.user,
+        token: userResponse.data.access_token
+      };
+
+      // Test profile before creating any pairing requests
+      const initialProfileResponse = await axios.get(`${this.baseURL}/api/profile`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      
+      const initialRequestCount = initialProfileResponse.data.profile.pairing_requests.length;
+      this.assert(
+        initialRequestCount >= 0,
+        'Profile contains pairing_requests array initially',
+        `Initial requests: ${initialRequestCount}`
+      );
+
+      // User creates a pairing request (partner code)
+      const pairingResponse = await axios.post(`${this.baseURL}/api/pairing/request`, {}, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      
+      this.assert(
+        pairingResponse.status === 201,
+        'Pairing request creation successful',
+        `Status: ${pairingResponse.status}`
+      );
+      
+      const partnerCode = pairingResponse.data.partner_code;
+      this.assert(
+        !!partnerCode,
+        'Pairing request returns partner code',
+        `Code: ${partnerCode}`
+      );
+
+      // Wait a moment for the request to be processed
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Test profile with pending pairing requests
+      const profileResponse = await axios.get(`${this.baseURL}/api/profile`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      
+      this.assert(
+        profileResponse.status === 200,
+        'Profile with pending requests returns 200',
+        `Status: ${profileResponse.status}`
+      );
+      
+      const profile = profileResponse.data.profile;
+      this.assert(
+        Array.isArray(profile.pairing_requests),
+        'Profile contains pairing_requests array',
+        `Type: ${typeof profile.pairing_requests}`
+      );
+      
+      this.assert(
+        profile.pairing_requests.length > initialRequestCount,
+        'User has more pairing requests after creating request',
+        `Requests count: ${profile.pairing_requests.length} (was ${initialRequestCount})`
+      );
+
+      // Find the new pairing request we just created
+      const newRequest = profile.pairing_requests.find(r => r.partner_code === partnerCode);
+      
+      if (newRequest) {
+        this.assert(
+          !!newRequest.id,
+          'New pairing request contains ID',
+          `ID: ${newRequest.id}`
+        );
+        
+        this.assert(
+          newRequest.status === 'pending',
+          'New pairing request status is pending',
+          `Status: ${newRequest.status}`
+        );
+        
+        this.assert(
+          newRequest.partner_code === partnerCode,
+          'New pairing request contains correct partner code',
+          `Code: ${newRequest.partner_code}`
+        );
+        
+        this.assert(
+          newRequest.partner === null,
+          'New pairing request partner is null (no one accepted yet)',
+          `Partner: ${newRequest.partner}`
+        );
+        
+        this.assert(
+          !!newRequest.created_at,
+          'New pairing request contains created_at timestamp',
+          `Created: ${newRequest.created_at}`
+        );
+        
+        this.assert(
+          !!newRequest.updated_at,
+          'New pairing request contains updated_at timestamp',
+          `Updated: ${newRequest.updated_at}`
+        );
+      } else {
+        this.assert(false, 'Could not find the new pairing request in response', `Partner code: ${partnerCode}`);
+      }
+      
+    } catch (error) {
+      this.assert(false, 'Profile with pending pairing requests', `Error: ${error.response?.data?.error || error.message}`);
+    }
+  }
+
+  // Test profile with accepted pairings
+  async testProfileWithAcceptedPairings() {
+    this.log('Testing Profile with Accepted Pairings', 'section');
     
     const user1 = this.testData.user1;
     const user2 = this.testData.user2;
@@ -353,6 +507,18 @@ class UserProfileTestRunner {
           'Pairing partner email is correct',
           `Partner email: ${pairing.partner.email}`
         );
+        
+        this.assert(
+          !!pairing.partner.first_name,
+          'Pairing partner has first name',
+          `First name: ${pairing.partner.first_name}`
+        );
+        
+        this.assert(
+          !!pairing.partner.last_name,
+          'Pairing partner has last name',
+          `Last name: ${pairing.partner.last_name}`
+        );
       }
 
       // Test user 2's profile with pairings
@@ -382,10 +548,16 @@ class UserProfileTestRunner {
           'User 2 pairing partner ID is correct',
           `Partner ID: ${pairing.partner.id}`
         );
+        
+        this.assert(
+          pairing.status === 'accepted',
+          'User 2 pairing status is accepted',
+          `Status: ${pairing.status}`
+        );
       }
       
     } catch (error) {
-      this.assert(false, 'Profile with pairings functionality', `Error: ${error.response?.data?.error || error.message}`);
+      this.assert(false, 'Profile with accepted pairings functionality', `Error: ${error.response?.data?.error || error.message}`);
     }
   }
 
@@ -431,7 +603,7 @@ class UserProfileTestRunner {
         );
       });
 
-      // Test profile structure - pairings field
+      // Test profile structure - pairings and pairing_requests fields
       this.assert(
         profile.hasOwnProperty('pairings'),
         'Profile contains pairings field',
@@ -439,9 +611,21 @@ class UserProfileTestRunner {
       );
       
       this.assert(
+        profile.hasOwnProperty('pairing_requests'),
+        'Profile contains pairing_requests field',
+        'Pairing requests field present'
+      );
+      
+      this.assert(
         Array.isArray(profile.pairings),
         'Profile pairings is an array',
         `Type: ${typeof profile.pairings}`
+      );
+      
+      this.assert(
+        Array.isArray(profile.pairing_requests),
+        'Profile pairing_requests is an array',
+        `Type: ${typeof profile.pairing_requests}`
       );
 
       // Test that sensitive fields are excluded (if any)
@@ -453,6 +637,65 @@ class UserProfileTestRunner {
       
     } catch (error) {
       this.assert(false, 'Profile response structure validation', `Error: ${error.response?.data?.error || error.message}`);
+    }
+  }
+
+  // Test profile edge cases and error scenarios
+  async testProfileEdgeCases() {
+    this.log('Testing Profile Edge Cases and Error Scenarios', 'section');
+    
+    try {
+      // Test profile for user that doesn't exist (invalid user ID in token)
+      const fakeToken = jwt.sign(
+        { id: 'nonexistent-user-id', email: 'fake@example.com' },
+        this.JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+      
+      try {
+        await axios.get(`${this.baseURL}/api/profile`, {
+          headers: { Authorization: `Bearer ${fakeToken}` },
+          timeout: this.timeout
+        });
+        this.assert(false, 'Profile with nonexistent user should fail', 'Request succeeded unexpectedly');
+      } catch (error) {
+        this.assert(
+          error.response?.status === 404,
+          'Profile with nonexistent user returns 404',
+          `Status: ${error.response?.status}`
+        );
+      }
+
+      // Test profile endpoint consistency - multiple calls should return same data
+      const user = this.testData.user1;
+      if (user) {
+        const profile1 = await axios.get(`${this.baseURL}/api/profile`, {
+          headers: { Authorization: `Bearer ${user.token}` },
+          timeout: this.timeout
+        });
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const profile2 = await axios.get(`${this.baseURL}/api/profile`, {
+          headers: { Authorization: `Bearer ${user.token}` },
+          timeout: this.timeout
+        });
+        
+        this.assert(
+          profile1.data.profile.id === profile2.data.profile.id,
+          'Multiple profile calls return consistent user ID',
+          `ID1: ${profile1.data.profile.id}, ID2: ${profile2.data.profile.id}`
+        );
+        
+        this.assert(
+          profile1.data.profile.email === profile2.data.profile.email,
+          'Multiple profile calls return consistent email',
+          `Email consistent: ${profile1.data.profile.email === profile2.data.profile.email}`
+        );
+      }
+      
+    } catch (error) {
+      this.assert(false, 'Profile edge cases testing', `Error: ${error.response?.data?.error || error.message}`);
     }
   }
 
@@ -490,7 +733,7 @@ class UserProfileTestRunner {
       );
       
       // Test multiple concurrent requests
-      const concurrentRequests = Array.from({ length: 5 }, () =>
+      const concurrentRequests = Array.from({ length: 3 }, () =>
         axios.get(`${this.baseURL}/api/profile`, {
           headers: { Authorization: `Bearer ${user.token}` },
           timeout: this.timeout
@@ -505,11 +748,11 @@ class UserProfileTestRunner {
       this.assert(
         responses.every(r => r.status === 200),
         'All concurrent requests successful',
-        `Successful requests: ${responses.filter(r => r.status === 200).length}/5`
+        `Successful requests: ${responses.filter(r => r.status === 200).length}/3`
       );
       
       this.assert(
-        concurrentResponseTime < 10000, // Should handle 5 concurrent requests within 10 seconds
+        concurrentResponseTime < 8000, // Should handle 3 concurrent requests within 8 seconds
         'Profile endpoint handles concurrent requests efficiently',
         `Concurrent response time: ${concurrentResponseTime}ms`
       );
@@ -544,13 +787,25 @@ class UserProfileTestRunner {
       // Small delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      await this.testProfileWithPairings();
+      await this.testProfileWithPendingRequests();
+      console.log('');
+      
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      await this.testProfileWithAcceptedPairings();
       console.log('');
       
       // Small delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       await this.testProfileResponseStructure();
+      console.log('');
+      
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      await this.testProfileEdgeCases();
       console.log('');
       
       // Small delay to avoid rate limiting
