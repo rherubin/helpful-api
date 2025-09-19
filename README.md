@@ -10,7 +10,7 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 - **Combined Profile Endpoint**: Single API call for complete user state (profile + pairings + requests)
 - **Unified Pairing System**: Request, accept, and reject pairings with partner codes
 - **AI Therapy Programs**: OpenAI-generated couples therapy programs with structured daily exercises
-- **Conversation Tracking**: Day-based conversations for each program with message threading
+- **Program Steps**: Day-based program steps for each program with message threading
 
 ### Advanced Features  
 - **Smart Pairing Responses**: Pending requests show `partner: null`, accepted pairings show full partner data
@@ -44,7 +44,7 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
    
    The SQLite database (`helpful-db.sqlite`) will be created automatically when you first start the server. The application will:
    - Create the database file if it doesn't exist
-   - Initialize all required tables (users, refresh_tokens, pairings, programs, conversations)
+   - Initialize all required tables (users, refresh_tokens, pairings, programs, program_steps)
    - Set up proper indexes and constraints
    - Automatically migrate existing databases to support new features
    
@@ -598,23 +598,23 @@ Programs are AI-generated couples therapy programs that can be created with or w
   }
   ```
 
-### Conversations
+### Program Steps
 
-The conversation system allows users to engage with each day of their therapy program. When a program is created, each day automatically gets its own conversation thread containing the AI-generated exercise content. Users can then add their own messages to discuss their progress, experiences, and reflections for each specific day.
+The program steps system allows users to engage with each day of their therapy program. When a program is created, each day automatically gets its own program step containing the AI-generated exercise content. Users can then add their own messages to discuss their progress, experiences, and reflections for each specific day.
 
 **Key Features:**
-- **Day-Based Organization**: Each program day (1-14) has its own conversation thread
-- **AI Content Integration**: Each day's theme, conversation starter, and science explanation are stored as conversations
+- **Day-Based Organization**: Each program day (1-14) has its own program step
+- **AI Content Integration**: Each day's theme, conversation starter, and science explanation are stored as program steps
 - **Background Therapy Responses**: Automatic AI-powered therapeutic guidance when both users engage
 - **Separate Message Storage**: Each message is stored as a separate database record for better organization
-- **User Participation**: Both users in a pairing can contribute messages to any day's conversation
+- **User Participation**: Both users in a pairing can contribute messages to any day's program step
 - **Message Management**: Users can add, edit, and view their own messages
 - **Progress Tracking**: Messages can include metadata to track exercise completion and engagement
-- **Access Control**: Only program owners and paired users can access conversations
+- **Access Control**: Only program owners and paired users can access program steps
 
 **Database Structure:**
-- **Conversations Table**: Stores day-level metadata (theme, conversation starter, science explanation)
-- **Messages Table**: Stores individual messages within conversations with full user tracking
+- **Program Steps Table**: Stores day-level metadata (theme, conversation starter, science explanation)
+- **Messages Table**: Stores individual messages within program steps with full user tracking
 
 ## Background Therapy Response System
 
@@ -622,7 +622,7 @@ The API includes an intelligent background therapy response system that automati
 
 ### How It Works
 
-1. **Trigger Condition**: When both users in a pairing have posted at least one message to a conversation
+1. **Trigger Condition**: When both users in a pairing have posted at least one message to a program step
 2. **Timing**: Activates 2 seconds after the second user posts their first message
 3. **Non-Blocking**: Runs in the background without affecting API response times
 4. **AI Processing**: Uses OpenAI GPT to generate therapeutic responses based on both users' messages
@@ -635,13 +635,13 @@ The AI responses are designed using evidence-based couples therapy methods:
 - **Emotionally Focused Therapy (EFT)**: Primary therapeutic framework focusing on emotional connection
 - **Gottman Method**: Complementary techniques for relationship strengthening
 - **Personalized Guidance**: Responses reference specific user names and message content
-- **Progressive Support**: Each response builds on the conversation context
+- **Progressive Support**: Each response builds on the program step context
 
 ### Example Therapy Response Flow
 
 ```json
 {
-  "conversation_messages": [
+  "step_messages": [
     {
       "id": "msg1",
       "message_type": "user_message",
@@ -702,7 +702,7 @@ The AI responses are designed using evidence-based couples therapy methods:
 ### Technical Implementation
 
 - **Non-Blocking Architecture**: API responses return immediately while therapy processing happens in background
-- **Error Resilience**: Therapy response failures don't affect main conversation functionality  
+- **Error Resilience**: Therapy response failures don't affect main program step functionality  
 - **Rate Limiting**: Built-in OpenAI request queuing and rate limiting
 - **Security**: Input sanitization and validation for all user content sent to AI
 - **Pairing Requirement**: Only works for programs with accepted pairings
@@ -717,19 +717,19 @@ OPENAI_API_KEY=your-openai-api-key-for-therapy-responses
 
 Without this configuration, the system will log warnings but continue normal operation without therapy responses.
 
-#### Get All Program Conversations (Organized by Days)
-- **GET** `/api/programs/:programId/conversations`
+#### Get All Program Steps (Organized by Days)
+- **GET** `/api/programs/:programId/programSteps`
 - **Headers:** `Authorization: Bearer {access_token}`
 - **Response:**
   ```json
   {
-    "message": "Conversations retrieved successfully",
+    "message": "Program steps retrieved successfully",
     "total_days": 14,
     "days": {
       "1": {
         "day": 1,
         "theme": "Reflecting on Happy Memories",
-        "conversation_id": "conversation_id",
+        "step_id": "step_id",
         "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
         "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
         "created_at": "2024-01-01T00:00:00.000Z",

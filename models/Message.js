@@ -45,14 +45,14 @@ class Message {
     const createMessagesTable = `
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,
-        conversation_id TEXT NOT NULL,
+        step_id TEXT NOT NULL,
         message_type TEXT NOT NULL CHECK (message_type IN ('openai_response', 'user_message', 'system')),
         sender_id TEXT,
         content TEXT NOT NULL,
         metadata TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE,
+        FOREIGN KEY (step_id) REFERENCES program_steps (id) ON DELETE CASCADE,
         FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE SET NULL
       )
     `;
@@ -61,11 +61,35 @@ class Message {
       await this.runAsync(createMessagesTable);
       console.log('Messages table initialized successfully.');
       
+      // Migrate existing messages table if needed
+      try {
+        // Check if old messages table with conversation_id exists
+        const tableInfo = await this.allAsync("PRAGMA table_info(messages)");
+        const hasConversationId = tableInfo.some(col => col.name === 'conversation_id');
+        
+        if (hasConversationId && !tableInfo.some(col => col.name === 'step_id')) {
+          console.log('Migrating messages table from conversation_id to step_id...');
+          
+          // Add step_id column
+          await this.runAsync("ALTER TABLE messages ADD COLUMN step_id TEXT");
+          
+          // Update step_id to match conversation_id (assuming 1:1 mapping)
+          await this.runAsync("UPDATE messages SET step_id = conversation_id");
+          
+          console.log('Messages table migration completed successfully.');
+        }
+      } catch (migrationErr) {
+        console.error('Error migrating messages table:', migrationErr.message);
+      }
+      
       // Create indexes for better query performance
       try {
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)");
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)");
+        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_step_id ON messages(step_id)");
         await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id)");
+        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)");
+        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)");
+        // Keep old index for backward compatibility during transition
+        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)");
       } catch (indexErr) {
         console.error('Error creating message indexes:', indexErr.message);
       }
@@ -301,6 +325,74 @@ class Message {
     } catch (err) {
       console.error('Error checking message access:', err.message);
       throw new Error('Failed to check message access');
+    }
+  }
+  // Add user message to a program step
+  async addUserMessage(stepId, senderId, content, metadata = null) {
+    return this.addStepMessage(stepId, 'user_message', senderId, content, metadata);
+  }
+
+  // Add system message to a program step
+  async addSystemMessage(stepId, content, metadata = null) {
+    return this.addStepMessage(stepId, 'system', null, content, metadata);
+  }
+
+  // Add message to a program step
+  async addStepMessage(stepId, messageType, senderId, content, metadata = null) {
+    const messageId = this.generateUniqueId();
+
+    try {
+      const insertQuery = `
+        INSERT INTO messages (id, step_id, message_type, sender_id, content, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `;
+
+      const metadataString = metadata ? JSON.stringify(metadata) : null;
+      await this.runAsync(insertQuery, [messageId, stepId, messageType, senderId, content, metadataString]);
+      
+      return {
+        id: messageId,
+        step_id: stepId,
+        message_type: messageType,
+        sender_id: senderId,
+        content,
+        metadata,
+        created_at: new Date().toISOString()
+      };
+    } catch (err) {
+      console.error('Error adding step message:', err.message);
+      throw new Error('Failed to add message to step');
+    }
+  }
+
+  // Get all messages in a program step
+  async getStepMessages(stepId) {
+    try {
+      const query = `
+        SELECT m.id, m.step_id, m.message_type, m.sender_id, m.content, 
+               m.metadata, m.created_at, m.updated_at,
+               u.first_name, u.last_name, u.email
+        FROM messages m
+        LEFT JOIN users u ON m.sender_id = u.id
+        WHERE m.step_id = ?
+        ORDER BY m.created_at ASC
+      `;
+
+      const messages = await this.allAsync(query, [stepId]);
+      
+      return messages.map(message => ({
+        ...message,
+        metadata: this.parseMetadata(message.metadata),
+        sender: message.sender_id ? {
+          id: message.sender_id,
+          first_name: message.first_name,
+          last_name: message.last_name,
+          email: message.email
+        } : null
+      }));
+    } catch (err) {
+      console.error('Error fetching step messages:', err.message);
+      throw new Error('Failed to fetch step messages');
     }
   }
 }

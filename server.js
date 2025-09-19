@@ -27,7 +27,7 @@ const User = require('./models/User');
 const RefreshToken = require('./models/RefreshToken');
 const Pairing = require('./models/Pairing');
 const Program = require('./models/Program');
-const Conversation = require('./models/Conversation');
+const ProgramStep = require('./models/ProgramStep');
 const Message = require('./models/Message');
 const AuthService = require('./services/AuthService');
 const PairingService = require('./services/PairingService');
@@ -38,7 +38,7 @@ const createUserRoutes = require('./routes/users');
 const createAuthRoutes = require('./routes/auth');
 const createPairingRoutes = require('./routes/pairing');
 const createProgramRoutes = require('./routes/programs');
-const createConversationRoutes = require('./routes/conversations');
+const createProgramStepRoutes = require('./routes/programSteps');
 
 const app = express();
 const PORT = process.env.PORT || 9000;
@@ -64,7 +64,7 @@ try {
 }
 
 // Initialize models and services
-let userModel, refreshTokenModel, pairingModel, programModel, conversationModel, messageModel, authService, pairingService, chatGPTService;
+let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, authService, pairingService, chatGPTService;
 
 async function initializeApp() {
   try {
@@ -73,7 +73,7 @@ async function initializeApp() {
     const refreshTokenModelInstance = new RefreshToken(db);
     const pairingModelInstance = new Pairing(db);
     const programModelInstance = new Program(db);
-    const conversationModelInstance = new Conversation(db);
+    const programStepModelInstance = new ProgramStep(db);
     const messageModelInstance = new Message(db);
     
     // Initialize database tables
@@ -81,7 +81,7 @@ async function initializeApp() {
     await refreshTokenModelInstance.initDatabase();
     await pairingModelInstance.initDatabase();
     await programModelInstance.initDatabase();
-    await conversationModelInstance.initDatabase();
+    await programStepModelInstance.initDatabase();
     await messageModelInstance.initDatabase();
     
     // Assign to global variables after successful initialization
@@ -89,7 +89,7 @@ async function initializeApp() {
     refreshTokenModel = refreshTokenModelInstance;
     pairingModel = pairingModelInstance;
     programModel = programModelInstance;
-    conversationModel = conversationModelInstance;
+    programStepModel = programStepModelInstance;
     messageModel = messageModelInstance;
     
     // Initialize services
@@ -130,12 +130,12 @@ function setupRoutes() {
 
   // Setup program routes
   if (programModel && chatGPTService) {
-    app.use('/api/programs', createProgramRoutes(programModel, chatGPTService, conversationModel));
+    app.use('/api/programs', createProgramRoutes(programModel, chatGPTService, programStepModel));
   }
 
   // Setup conversation routes
-  if (conversationModel && messageModel && programModel && pairingModel && userModel && chatGPTService) {
-    app.use('/api', createConversationRoutes(conversationModel, messageModel, programModel, pairingModel, userModel, chatGPTService));
+  if (programStepModel && messageModel && programModel && pairingModel && userModel && chatGPTService) {
+    app.use('/api', createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService));
   }
 }
 

@@ -1,7 +1,7 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 
-function createProgramRoutes(programModel, chatGPTService, conversationModel = null) {
+function createProgramRoutes(programModel, chatGPTService, programStepModel = null) {
   const router = express.Router();
 
   // Create a program
@@ -55,10 +55,10 @@ function createProgramRoutes(programModel, chatGPTService, conversationModel = n
             // Update the program with the therapy response (for backward compatibility)
             await programModel.updateTherapyResponse(program.id, therapyResponseString);
             
-            // Also save to conversations table if available (create day conversations)
-            if (conversationModel) {
-              await conversationModel.createDayConversations(program.id, therapyResponseString);
-              console.log('Day conversations created for program:', program.id);
+            // Also save to program_steps table if available (create program steps)
+            if (programStepModel) {
+              await programStepModel.createProgramSteps(program.id, therapyResponseString);
+              console.log('Program steps created for program:', program.id);
             }
             
             console.log('ChatGPT response generated and saved for program:', program.id);

@@ -1,4 +1,4 @@
-class Conversation {
+class ProgramStep {
   constructor(db) {
     this.db = db;
   }
@@ -42,8 +42,8 @@ class Conversation {
 
   // Initialize database tables
   async initDatabase() {
-    const createConversationsTable = `
-      CREATE TABLE IF NOT EXISTS conversations (
+    const createProgramStepsTable = `
+      CREATE TABLE IF NOT EXISTS program_steps (
         id TEXT PRIMARY KEY,
         program_id TEXT NOT NULL,
         day INTEGER NOT NULL,
@@ -57,67 +57,61 @@ class Conversation {
     `;
 
     try {
-      await this.runAsync(createConversationsTable);
-      console.log('Conversations table initialized successfully.');
+      await this.runAsync(createProgramStepsTable);
+      console.log('Program steps table initialized successfully.');
       
       // Create indexes for better query performance
       try {
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_conversations_program_id ON conversations(program_id)");
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_conversations_day ON conversations(day)");
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_conversations_program_day ON conversations(program_id, day)");
+        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_program_steps_program_id ON program_steps(program_id)");
+        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_program_steps_day ON program_steps(day)");
+        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_program_steps_program_day ON program_steps(program_id, day)");
       } catch (indexErr) {
-        console.error('Error creating conversation indexes:', indexErr.message);
+        console.error('Error creating program step indexes:', indexErr.message);
       }
 
-      // Migrate existing conversations table if needed
+      // Migrate existing conversations table to program_steps if needed
       try {
-        // Check if old structure exists
-        const tableInfo = await this.allAsync("PRAGMA table_info(conversations)");
-        const hasOldStructure = tableInfo.some(col => col.name === 'message_type');
+        // Check if conversations table exists
+        const conversationsExists = await this.getAsync("SELECT name FROM sqlite_master WHERE type='table' AND name='conversations'");
         
-        if (hasOldStructure) {
-          console.log('Migrating conversations table to new structure...');
+        if (conversationsExists) {
+          console.log('Migrating conversations table to program_steps...');
           
-          // Create new table
-          const createNewTable = `
-            CREATE TABLE conversations_new (
-              id TEXT PRIMARY KEY,
-              program_id TEXT NOT NULL,
-              day INTEGER NOT NULL,
-              theme TEXT NOT NULL,
-              conversation_starter TEXT,
-              science_behind_it TEXT,
-              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              FOREIGN KEY (program_id) REFERENCES programs (id) ON DELETE CASCADE
-            )
-          `;
+          // Check if old structure exists
+          const tableInfo = await this.allAsync("PRAGMA table_info(conversations)");
+          const hasOldStructure = tableInfo.some(col => col.name === 'message_type');
           
-          await this.runAsync(createNewTable);
+          if (hasOldStructure) {
+            // Migrate from old message-based structure
+            await this.runAsync(`
+              INSERT INTO program_steps (id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at)
+              SELECT 
+                id, 
+                program_id, 
+                CAST(JSON_EXTRACT(metadata, '$.day') AS INTEGER) as day,
+                JSON_EXTRACT(metadata, '$.theme') as theme,
+                JSON_EXTRACT(content, '$.conversation_starter') as conversation_starter,
+                JSON_EXTRACT(content, '$.science_behind_it') as science_behind_it,
+                created_at,
+                updated_at
+              FROM conversations 
+              WHERE message_type = 'openai_response' 
+                AND JSON_EXTRACT(metadata, '$.type') = 'day_conversation'
+                AND JSON_EXTRACT(metadata, '$.day') IS NOT NULL
+            `);
+          } else {
+            // Migrate from new conversation structure
+            await this.runAsync(`
+              INSERT INTO program_steps (id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at)
+              SELECT id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at
+              FROM conversations
+            `);
+          }
           
-          // Migrate data - only keep day conversations, user messages will be handled separately
-          await this.runAsync(`
-            INSERT INTO conversations_new (id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at)
-            SELECT 
-              id, 
-              program_id, 
-              CAST(JSON_EXTRACT(metadata, '$.day') AS INTEGER) as day,
-              JSON_EXTRACT(metadata, '$.theme') as theme,
-              JSON_EXTRACT(content, '$.conversation_starter') as conversation_starter,
-              JSON_EXTRACT(content, '$.science_behind_it') as science_behind_it,
-              created_at,
-              updated_at
-            FROM conversations 
-            WHERE message_type = 'openai_response' 
-              AND JSON_EXTRACT(metadata, '$.type') = 'day_conversation'
-              AND JSON_EXTRACT(metadata, '$.day') IS NOT NULL
-          `);
-          
-          // Drop old table and rename new table
+          // Drop old table
           await this.runAsync("DROP TABLE conversations");
-          await this.runAsync("ALTER TABLE conversations_new RENAME TO conversations");
           
-          console.log('Conversations table migration completed successfully.');
+          console.log('Conversations table migrated to program_steps successfully.');
         }
       } catch (migrationErr) {
         console.error('Error migrating conversations table:', migrationErr.message);
@@ -173,20 +167,20 @@ class Conversation {
     }
   }
 
-  // Create a day conversation
-  async createDayConversation(programId, day, theme, conversationStarter, scienceBehindIt) {
-    const conversationId = this.generateUniqueId();
+  // Create a program step
+  async createProgramStep(programId, day, theme, conversationStarter, scienceBehindIt) {
+    const stepId = this.generateUniqueId();
 
     try {
       const insertQuery = `
-        INSERT INTO conversations (id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at)
+        INSERT INTO program_steps (id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `;
 
-      await this.runAsync(insertQuery, [conversationId, programId, day, theme, conversationStarter, scienceBehindIt]);
+      await this.runAsync(insertQuery, [stepId, programId, day, theme, conversationStarter, scienceBehindIt]);
       
       return {
-        id: conversationId,
+        id: stepId,
         program_id: programId,
         day,
         theme,
@@ -195,13 +189,13 @@ class Conversation {
         created_at: new Date().toISOString()
       };
     } catch (err) {
-      console.error('Error creating day conversation:', err.message);
-      throw new Error('Failed to create day conversation');
+      console.error('Error creating program step:', err.message);
+      throw new Error('Failed to create program step');
     }
   }
 
-  // Parse therapy response and create individual day conversations
-  async createDayConversations(programId, therapyResponse) {
+  // Parse therapy response and create individual program steps
+  async createProgramSteps(programId, therapyResponse) {
     try {
       let programData;
       
@@ -215,12 +209,12 @@ class Conversation {
         throw new Error('Invalid therapy response format');
       }
 
-      const conversations = [];
+      const programSteps = [];
       
       if (programData.program && programData.program.days && Array.isArray(programData.program.days)) {
-        // Create a conversation for each day
+        // Create a program step for each day
         for (const dayData of programData.program.days) {
-          const conversation = await this.createDayConversation(
+          const step = await this.createProgramStep(
             programId,
             dayData.day,
             dayData.theme,
@@ -228,18 +222,18 @@ class Conversation {
             dayData.science_behind_it
           );
 
-          conversations.push(conversation);
+          programSteps.push(step);
         }
 
-        console.log(`Created ${conversations.length} day conversations for program ${programId}`);
-        return conversations;
+        console.log(`Created ${programSteps.length} program steps for program ${programId}`);
+        return programSteps;
       } else {
         console.log('No structured days found in therapy response');
         return [];
       }
     } catch (err) {
-      console.error('Error creating day conversations:', err.message);
-      throw new Error('Failed to create day conversations');
+      console.error('Error creating program steps:', err.message);
+      throw new Error('Failed to create program steps');
     }
   }
 
@@ -271,58 +265,58 @@ class Conversation {
     }
   }
 
-  // Get all conversations for a program
-  async getProgramConversations(programId) {
+  // Get all program steps for a program
+  async getProgramSteps(programId) {
     try {
       const query = `
-        SELECT c.id, c.program_id, c.day, c.theme, c.conversation_starter, 
-               c.science_behind_it, c.created_at, c.updated_at
-        FROM conversations c
-        WHERE c.program_id = ?
-        ORDER BY c.day ASC
+        SELECT s.id, s.program_id, s.day, s.theme, s.conversation_starter, 
+               s.science_behind_it, s.created_at, s.updated_at
+        FROM program_steps s
+        WHERE s.program_id = ?
+        ORDER BY s.day ASC
       `;
 
-      const conversations = await this.allAsync(query, [programId]);
-      return conversations;
+      const programSteps = await this.allAsync(query, [programId]);
+      return programSteps;
     } catch (err) {
-      console.error('Error fetching program conversations:', err.message);
-      throw new Error('Failed to fetch program conversations');
+      console.error('Error fetching program steps:', err.message);
+      throw new Error('Failed to fetch program steps');
     }
   }
 
-  // Get conversation for a specific day
-  async getDayConversation(programId, day) {
+  // Get program step for a specific day
+  async getDayStep(programId, day) {
     try {
       const query = `
-        SELECT c.id, c.program_id, c.day, c.theme, c.conversation_starter, 
-               c.science_behind_it, c.created_at, c.updated_at
-        FROM conversations c
-        WHERE c.program_id = ? AND c.day = ?
+        SELECT s.id, s.program_id, s.day, s.theme, s.conversation_starter, 
+               s.science_behind_it, s.created_at, s.updated_at
+        FROM program_steps s
+        WHERE s.program_id = ? AND s.day = ?
       `;
 
-      const conversation = await this.getAsync(query, [programId, day]);
-      if (!conversation) {
-        throw new Error('Day conversation not found');
+      const step = await this.getAsync(query, [programId, day]);
+      if (!step) {
+        throw new Error('Program step not found');
       }
       
-      return conversation;
+      return step;
     } catch (err) {
-      if (err.message === 'Day conversation not found') {
+      if (err.message === 'Program step not found') {
         throw err;
       }
-      console.error('Error fetching day conversation:', err.message);
-      throw new Error('Failed to fetch day conversation');
+      console.error('Error fetching program step:', err.message);
+      throw new Error('Failed to fetch program step');
     }
   }
 
-  // Get all days with conversations for a program
+  // Get all days with program steps for a program
   async getProgramDays(programId) {
     try {
       const query = `
-        SELECT c.day, c.theme, c.created_at, c.id as conversation_id
-        FROM conversations c
-        WHERE c.program_id = ? 
-        ORDER BY c.day ASC
+        SELECT s.day, s.theme, s.created_at, s.id as step_id
+        FROM program_steps s
+        WHERE s.program_id = ? 
+        ORDER BY s.day ASC
       `;
 
       const days = await this.allAsync(query, [programId]);
@@ -330,7 +324,7 @@ class Conversation {
       return days.map(day => ({
         day: day.day,
         theme: day.theme,
-        conversation_id: day.conversation_id,
+        step_id: day.step_id,
         created_at: day.created_at
       }));
     } catch (err) {
@@ -339,28 +333,28 @@ class Conversation {
     }
   }
 
-  // Get conversation by ID
-  async getConversationById(conversationId) {
+  // Get program step by ID
+  async getStepById(stepId) {
     try {
       const query = `
-        SELECT c.id, c.program_id, c.day, c.theme, c.conversation_starter, 
-               c.science_behind_it, c.created_at, c.updated_at
-        FROM conversations c
-        WHERE c.id = ?
+        SELECT s.id, s.program_id, s.day, s.theme, s.conversation_starter, 
+               s.science_behind_it, s.created_at, s.updated_at
+        FROM program_steps s
+        WHERE s.id = ?
       `;
 
-      const conversation = await this.getAsync(query, [conversationId]);
-      if (!conversation) {
-        throw new Error('Conversation not found');
+      const step = await this.getAsync(query, [stepId]);
+      if (!step) {
+        throw new Error('Program step not found');
       }
       
-      return conversation;
+      return step;
     } catch (err) {
-      if (err.message === 'Conversation not found') {
+      if (err.message === 'Program step not found') {
         throw err;
       }
-      console.error('Error fetching conversation:', err.message);
-      throw new Error('Failed to fetch conversation');
+      console.error('Error fetching program step:', err.message);
+      throw new Error('Failed to fetch program step');
     }
   }
 
@@ -410,8 +404,8 @@ class Conversation {
     }
   }
 
-  // Check if user has access to program conversations
-  async checkConversationAccess(userId, programId) {
+  // Check if user has access to program steps
+  async checkStepAccess(userId, programId) {
     try {
       const query = `
         SELECT COUNT(*) as count
@@ -428,10 +422,10 @@ class Conversation {
       const result = await this.getAsync(query, [programId, userId, userId, userId]);
       return result.count > 0;
     } catch (err) {
-      console.error('Error checking conversation access:', err.message);
-      throw new Error('Failed to check conversation access');
+      console.error('Error checking program step access:', err.message);
+      throw new Error('Failed to check program step access');
     }
   }
 }
 
-module.exports = Conversation;
+module.exports = ProgramStep;
