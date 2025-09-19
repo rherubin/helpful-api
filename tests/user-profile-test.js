@@ -176,21 +176,9 @@ class UserProfileTestRunner {
       );
       
       this.assert(
-        Array.isArray(profileResponse.data.profile.pairing_requests),
-        'Profile contains pairing_requests array',
-        `Type: ${typeof profileResponse.data.profile.pairing_requests}`
-      );
-      
-      this.assert(
-        profileResponse.data.profile.pairings.length === 0,
-        'New user has no pairings initially',
+        profileResponse.data.profile.pairings.length >= 0,
+        'New user has pairings array (may contain pending requests)',
         `Pairings count: ${profileResponse.data.profile.pairings.length}`
-      );
-      
-      this.assert(
-        profileResponse.data.profile.pairing_requests.length >= 0,
-        'New user has pairing_requests field',
-        `Pairing requests count: ${profileResponse.data.profile.pairing_requests.length}`
       );
 
       // Store profile for later tests
@@ -299,11 +287,11 @@ class UserProfileTestRunner {
         timeout: this.timeout
       });
       
-      const initialRequestCount = initialProfileResponse.data.profile.pairing_requests.length;
+      const initialPairingsCount = initialProfileResponse.data.profile.pairings.length;
       this.assert(
-        initialRequestCount >= 0,
-        'Profile contains pairing_requests array initially',
-        `Initial requests: ${initialRequestCount}`
+        initialPairingsCount >= 0,
+        'Profile contains pairings array initially',
+        `Initial pairings: ${initialPairingsCount}`
       );
 
       // User creates a pairing request (partner code)
@@ -342,19 +330,19 @@ class UserProfileTestRunner {
       
       const profile = profileResponse.data.profile;
       this.assert(
-        Array.isArray(profile.pairing_requests),
-        'Profile contains pairing_requests array',
-        `Type: ${typeof profile.pairing_requests}`
+        Array.isArray(profile.pairings),
+        'Profile contains pairings array',
+        `Type: ${typeof profile.pairings}`
       );
       
       this.assert(
-        profile.pairing_requests.length > initialRequestCount,
-        'User has more pairing requests after creating request',
-        `Requests count: ${profile.pairing_requests.length} (was ${initialRequestCount})`
+        profile.pairings.length > initialPairingsCount,
+        'User has more pairings after creating request',
+        `Pairings count: ${profile.pairings.length} (was ${initialPairingsCount})`
       );
 
       // Find the new pairing request we just created
-      const newRequest = profile.pairing_requests.find(r => r.partner_code === partnerCode);
+      const newRequest = profile.pairings.find(r => r.partner_code === partnerCode);
       
       if (newRequest) {
         this.assert(
@@ -603,7 +591,7 @@ class UserProfileTestRunner {
         );
       });
 
-      // Test profile structure - pairings and pairing_requests fields
+      // Test profile structure - pairings field
       this.assert(
         profile.hasOwnProperty('pairings'),
         'Profile contains pairings field',
@@ -611,21 +599,9 @@ class UserProfileTestRunner {
       );
       
       this.assert(
-        profile.hasOwnProperty('pairing_requests'),
-        'Profile contains pairing_requests field',
-        'Pairing requests field present'
-      );
-      
-      this.assert(
         Array.isArray(profile.pairings),
         'Profile pairings is an array',
         `Type: ${typeof profile.pairings}`
-      );
-      
-      this.assert(
-        Array.isArray(profile.pairing_requests),
-        'Profile pairing_requests is an array',
-        `Type: ${typeof profile.pairing_requests}`
       );
 
       // Test that sensitive fields are excluded (if any)

@@ -76,7 +76,7 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 
 ### Key Features
 - ✅ **Combined Profile Endpoint**: Single call for complete user state
-- ✅ **Unified Pairings**: Both accepted and pending pairings in one response
+- ✅ **Unified Pairings**: Both accepted and pending pairings in one array
 - ✅ **Rate Limited**: 1000 requests per 15 minutes for general API
 - ✅ **Comprehensive Tests**: 95+ tests with 100% success rates
 - ✅ **JWT Authentication**: Secure access and refresh tokens
@@ -87,10 +87,10 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 
 ### 🚀 User Profile (Recommended - Most Efficient)
 
-#### Get User Profile with Pairings & Requests (Combined)
+#### Get User Profile with Pairings (Combined)
 - **GET** `/api/profile`
 - **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** 🎯 **Most efficient endpoint** - Returns the authenticated user's complete profile combined with their pairing information and pending pairing requests in a single API call
+- **Description:** 🎯 **Most efficient endpoint** - Returns the authenticated user's complete profile combined with all their pairing information (both accepted and pending) in a single API call
 - **Response:**
   ```json
   {
@@ -116,9 +116,7 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
             "last_name": "Doe",
             "email": "jane.doe@example.com"
           }
-        }
-      ],
-      "pairing_requests": [
+        },
         {
           "id": "pending_pairing_id",
           "status": "pending",
@@ -134,13 +132,12 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 
 **✨ Why Use This Endpoint:**
 - **Single API Call**: Get complete user state without multiple requests
-- **Comprehensive Data**: User info + accepted pairings + pending requests
+- **Comprehensive Data**: User info + all pairings (accepted & pending) in one array
 - **Optimized Performance**: Reduces network calls and improves app responsiveness
 - **Real-time State**: Always returns current pairing status
 
 **📋 Data Explanation:**
-- **`pairings`**: Accepted pairings with full partner information
-- **`pairing_requests`**: Pending requests where `partner: null` means waiting for someone to accept your partner code
+- **`pairings`**: Contains both accepted pairings (with full partner info) and pending requests (with `partner: null`)
 
 ### Authentication
 
@@ -345,9 +342,6 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
     }
   }
   ```
-  **Note:** This endpoint combines the functionality of `GET /api/users/:id`, `GET /api/pairings`, and `GET /api/pairing/pending` into a single request, returning the authenticated user's complete profile including all their accepted pairings and pending pairing requests with partner information.
-  
-  **Pairing Requests**: The `pairing_requests` array contains pending pairing requests. For partner code requests (where you generated a code for others to use), the `partner` field will be `null` until someone accepts your code. For requests where someone else is trying to pair with you, the `partner` field will contain their information.
 
 ### Pairing System
 

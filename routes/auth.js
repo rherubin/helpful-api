@@ -107,7 +107,7 @@ function createAuthRoutes(authService, userModel, pairingService) {
     }
   });
 
-  // Get authenticated user profile (with pairings and pairing requests)
+  // Get authenticated user profile (with pairings)
   router.get('/profile', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
@@ -115,17 +115,13 @@ function createAuthRoutes(authService, userModel, pairingService) {
       // Get user information
       const user = await userModel.getUserById(userId);
       
-      // Get user's accepted pairings
+      // Get user's pairings (both accepted and pending)
       const pairingsResult = await pairingService.getUserPairings(userId);
-      
-      // Get user's pending pairing requests
-      const pendingPairingsResult = await pairingService.getPendingPairings(userId);
       
       // Combine the data
       const profile = {
         ...user,
-        pairings: pairingsResult.pairings,
-        pairing_requests: pendingPairingsResult.pairings
+        pairings: pairingsResult.pairings
       };
       
       res.status(200).json({
