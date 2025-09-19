@@ -27,6 +27,11 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
 - **Improved response consistency**: Standardized API response structure across all auth endpoints
 - **Duplicate token prevention**: Automatic cleanup of existing refresh tokens during login
 
+### API Response Optimizations
+- **Simplified pairing accept response**: `/api/pairing/accept` now returns only 200 status on success (no response body)
+- **Reduced bandwidth usage**: Eliminated unnecessary response data for simple success operations
+- **Improved client-side handling**: Cleaner success/failure detection based solely on HTTP status codes
+
 ### Testing Infrastructure
 - **New authentication test suite**: Comprehensive test coverage for all auth functionality (8 test scenarios)
 - **Enhanced error handling**: Better error messages and status codes for auth failures
@@ -290,23 +295,9 @@ This makes pairing more flexible since you don't need to know the other person's
   }
   ```
   **Note**: Use the partner code that someone shared with you to pair with them.
-- **Response:**
-  ```json
-  {
-    "message": "Pairing accepted successfully",
-    "pairing": {
-      "id": "pairing_id",
-      "partner_code": "ABC123",
-      "requester": {
-        "id": "requester_user_id",
-        "first_name": "John",
-        "last_name": "Doe",
-        "email": "john.doe@example.com",
-
-      }
-    }
-  }
-  ```
+- **Response:** `200 OK` (empty response body)
+  
+  **Note**: On successful pairing acceptance, only a 200 status code is returned. Use the "Get Accepted Pairings" endpoint to retrieve pairing details if needed.
 
 #### Reject Pairing Request
 - **POST** `/api/pairing/reject/:pairingId`
