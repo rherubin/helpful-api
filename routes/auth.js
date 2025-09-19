@@ -9,7 +9,7 @@ const {
   securityLogger 
 } = require('../middleware/security');
 
-function createAuthRoutes(authService) {
+function createAuthRoutes(authService, userModel, pairingService) {
   const router = express.Router();
 
   // Apply security logging to all auth routes
@@ -107,14 +107,27 @@ function createAuthRoutes(authService) {
     }
   });
 
-  // Get authenticated user profile
+  // Get authenticated user profile (with pairings)
   router.get('/profile', authenticateToken, async (req, res) => {
     try {
-      const authHeader = req.headers['authorization'];
-      const token = authHeader && authHeader.split(' ')[1];
+      const userId = req.user.id;
       
-      const result = await authService.getProfileFromToken(token);
-      res.status(200).json(result);
+      // Get user information
+      const user = await userModel.getUserById(userId);
+      
+      // Get user's pairings
+      const pairingsResult = await pairingService.getUserPairings(userId);
+      
+      // Combine the data
+      const profile = {
+        ...user,
+        pairings: pairingsResult.pairings
+      };
+      
+      res.status(200).json({
+        message: 'User profile retrieved successfully',
+        profile: profile
+      });
     } catch (error) {
       if (error.message === 'User not found') {
         return res.status(404).json({ error: error.message });

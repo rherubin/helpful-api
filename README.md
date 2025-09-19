@@ -245,24 +245,43 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
   }
   ```
 
-#### Get User Profile (Authenticated)
+#### Get User Profile with Pairings (Combined)
 - **GET** `/api/profile`
 - **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Returns the authenticated user's complete profile combined with their pairing information
 - **Response:**
   ```json
   {
-    "message": "Profile retrieved successfully",
-    "user": {
+    "message": "User profile retrieved successfully",
+    "profile": {
       "id": "unique_id",
       "email": "user@example.com",
       "first_name": "John",
       "last_name": "Doe",
-
+      "password_hash": "$2b$10$...",
       "max_pairings": 1,
-      "created_at": "2024-01-01T00:00:00.000Z"
+      "deleted_at": null,
+      "created_at": "2024-01-01T00:00:00.000Z",
+      "updated_at": "2024-01-01T00:00:00.000Z",
+      "pairings": [
+        {
+          "id": "pairing_id",
+          "status": "accepted",
+          "partner_code": "ABC123",
+          "created_at": "2024-01-01T00:30:00.000Z",
+          "updated_at": "2024-01-01T00:35:00.000Z",
+          "partner": {
+            "id": "partner_user_id",
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "email": "jane.doe@example.com"
+          }
+        }
+      ]
     }
   }
   ```
+  **Note:** This endpoint combines the functionality of `GET /api/users/:id` and `GET /api/pairings` into a single request, returning the authenticated user's complete profile including all their pairings with partner information.
 
 ### Pairing System
 
@@ -1019,6 +1038,18 @@ Comprehensive authentication system tests including:
 - Profile endpoint access control
 - JWT token structure validation
 - Error scenarios and edge cases
+
+#### User Profile Tests
+```bash
+node tests/user-profile-test.js
+```
+Comprehensive user profile endpoint tests including:
+- Basic profile endpoint functionality (GET `/api/profile`)
+- Authentication and authorization testing
+- Profile with pairings integration
+- Response structure validation
+- Performance and concurrent request testing
+- Error handling and edge cases
 
 ### Test Categories
 

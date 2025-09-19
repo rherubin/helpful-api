@@ -3,7 +3,7 @@ const rateLimit = require('express-rate-limit');
 // Rate limiting for login attempts
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limit each IP to 5 requests per windowMs
+  max: 100, // Limit each IP to 100 requests per windowMs
   message: {
     error: 'Too many login attempts, please try again later',
     retryAfter: '15 minutes'
@@ -16,22 +16,25 @@ const loginLimiter = rateLimit({
 
 // Strict rate limiting for repeated failed attempts from same IP
 const strictLoginLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // Only 10 failed attempts per hour per IP
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50, // 50 failed attempts per 15 minutes per IP
   message: {
     error: 'Too many failed login attempts. Account temporarily locked.',
-    retryAfter: '1 hour'
+    retryAfter: '15 minutes'
   },
   skipSuccessfulRequests: true
 });
 
-// General API rate limiting
+// General API rate limiting (consistent across all environments)
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 1000, // 1000 requests per 15 minutes for all environments
   message: {
     error: 'Too many requests, please try again later'
-  }
+  },
+  // Add rate limit headers for debugging
+  standardHeaders: true,
+  legacyHeaders: false
 });
 
 // Account lockout tracking (in-memory store - use Redis in production)
@@ -39,7 +42,7 @@ const failedAttempts = new Map();
 const lockedAccounts = new Map();
 
 const LOCKOUT_THRESHOLD = 5; // Lock after 5 failed attempts
-const LOCKOUT_DURATION = 30 * 60 * 1000; // 30 minutes
+const LOCKOUT_DURATION = 5 * 60 * 1000; // 5 minutes
 const ATTEMPT_WINDOW = 15 * 60 * 1000; // 15 minutes
 
 function isAccountLocked(email) {

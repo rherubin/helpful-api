@@ -145,14 +145,14 @@ class APITestRunner {
       );
       
       this.assert(
-        !!loginResponse.data.access_token,
+        !!loginResponse.data.data?.access_token,
         'Login returns access token',
         'Token received'
       );
 
       // Update stored tokens with login response
-      this.testData.token = loginResponse.data.access_token;
-      this.testData.refreshToken = loginResponse.data.refresh_token;
+      this.testData.token = loginResponse.data.data?.access_token || this.testData.token;
+      this.testData.refreshToken = loginResponse.data.data?.refresh_token || this.testData.refreshToken;
       
     } catch (error) {
       this.assert(false, 'Login with correct credentials', `Error: ${error.response?.data?.error || error.message}`);
@@ -328,6 +328,41 @@ class APITestRunner {
       
     } catch (error) {
       this.assert(false, 'Update user email', `Error: ${error.response?.data?.error || error.message}`);
+    }
+
+    // Test user profile endpoint (combines user info and pairings)
+    try {
+      const profileResponse = await axios.get(`${this.baseURL}/api/users/profile`, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: this.timeout
+      });
+      
+      this.assert(
+        profileResponse.status === 200,
+        'User profile endpoint returns 200',
+        `Status: ${profileResponse.status}`
+      );
+      
+      this.assert(
+        !!profileResponse.data.profile,
+        'User profile endpoint returns profile object',
+        'Profile object present'
+      );
+      
+      this.assert(
+        profileResponse.data.profile.id === userId,
+        'User profile endpoint returns correct user ID',
+        `ID: ${profileResponse.data.profile.id}`
+      );
+      
+      this.assert(
+        Array.isArray(profileResponse.data.profile.pairings),
+        'User profile endpoint includes pairings array',
+        `Pairings type: ${typeof profileResponse.data.profile.pairings}`
+      );
+      
+    } catch (error) {
+      this.assert(false, 'User profile endpoint', `Error: ${error.response?.data?.error || error.message}`);
     }
 
     // Test update non-existent user
