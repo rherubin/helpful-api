@@ -33,6 +33,12 @@ class PairingService {
         message: 'Partner code generated successfully. Share this code with someone to pair with you.',
         partner_code: pairing.partner_code,
         pairing_id: pairing.id,
+        requester: {
+          id: requestingUser.id,
+          first_name: requestingUser.first_name,
+          last_name: requestingUser.last_name,
+          email: requestingUser.email
+        },
         expires_note: 'This partner code is valid until someone uses it or you cancel the request.'
       };
     } catch (error) {

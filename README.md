@@ -29,6 +29,7 @@ A comprehensive Node.js REST API with SQLite backend for managing users with aut
 
 ### API Response Optimizations
 - **Simplified pairing accept response**: `/api/pairing/accept` now returns only 200 status on success (no response body)
+- **Enhanced pairing request response**: `/api/pairing/request` now includes requester information for easier partner identification
 - **Partner-focused pairing responses**: All pairing endpoints (`/api/pairings`, `/api/pairing/pending`, `/api/pairing/accepted`) now return only partner information, not current user data
 - **Reduced bandwidth usage**: Eliminated unnecessary response data for simple success operations and duplicate user information
 - **Improved client-side handling**: Cleaner success/failure detection based solely on HTTP status codes and simplified partner data structure
@@ -281,10 +282,16 @@ This makes pairing more flexible since you don't need to know the other person's
     "message": "Partner code generated successfully. Share this code with someone to pair with you.",
     "partner_code": "ABC123",
     "pairing_id": "pairing_id",
+    "requester": {
+      "id": "user_id",
+      "first_name": "John",
+      "last_name": "Doe",
+      "email": "john.doe@example.com"
+    },
     "expires_note": "This partner code is valid until someone uses it or you cancel the request."
   }
   ```
-  **Note**: This generates a temporary partner code that others can use to pair with you. You don't need to specify who you want to pair with.
+  **Note**: This generates a temporary partner code that others can use to pair with you. The response includes your information so you can share it along with the partner code.
 
 #### Accept Pairing Request
 - **POST** `/api/pairing/accept`
