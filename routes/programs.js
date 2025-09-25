@@ -7,28 +7,18 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
   // Create a program
   router.post('/', authenticateToken, async (req, res) => {
     try {
-      const { user_name, partner_name, children, user_input, pairing_id } = req.body;
+      const { user_input, pairing_id } = req.body;
       const userId = req.user.id;
 
       // Validation
-      if (!user_name || !partner_name || children === undefined || !user_input) {
+      if (!user_input) {
         return res.status(400).json({ 
-          error: 'Fields user_name, partner_name, children, and user_input are required. pairing_id is optional.' 
-        });
-      }
-
-      // Validate children is a number
-      if (!Number.isInteger(children) || children < 0) {
-        return res.status(400).json({ 
-          error: 'Children must be a non-negative integer' 
+          error: 'Field user_input is required. pairing_id is optional.' 
         });
       }
 
       // Create the program first
       const program = await programModel.createProgram(userId, {
-        user_name,
-        partner_name,
-        children,
         user_input,
         pairing_id
       });
@@ -45,7 +35,7 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         (async () => {
           try {
             console.log('Generating ChatGPT response for program:', program.id);
-            const therapyResponse = await chatGPTService.generateCouplesProgram(user_name, partner_name, user_input);
+            const therapyResponse = await chatGPTService.generateCouplesProgram('User', 'Partner', user_input);
             
             // Convert response to string if it's an object
             const therapyResponseString = typeof therapyResponse === 'object' 

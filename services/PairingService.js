@@ -35,8 +35,7 @@ class PairingService {
         pairing_id: pairing.id,
         requester: {
           id: requestingUser.id,
-          first_name: requestingUser.first_name,
-          last_name: requestingUser.last_name,
+          user_name: requestingUser.user_name,
           email: requestingUser.email
         },
         expires_note: 'This partner code is valid until someone uses it or you cancel the request.'
@@ -123,8 +122,7 @@ class PairingService {
           partner_code: partnerCode,
           requester: {
             id: pairing.user1_id,
-            first_name: pairing.user1_first_name,
-            last_name: pairing.user1_last_name,
+            user_name: pairing.user1_user_name,
             email: pairing.user1_email
           }
         }
@@ -179,15 +177,13 @@ class PairingService {
         // Determine which user is the partner (not the current user)
         const isUser1 = pairing.user1_id === userId;
         const partnerId = isUser1 ? pairing.user2_id : pairing.user1_id;
-        const partnerFirstName = isUser1 ? pairing.user2_first_name : pairing.user1_first_name;
-        const partnerLastName = isUser1 ? pairing.user2_last_name : pairing.user1_last_name;
+        const partnerUserName = isUser1 ? pairing.user2_user_name : pairing.user1_user_name;
         const partnerEmail = isUser1 ? pairing.user2_email : pairing.user1_email;
         
         // For partner code requests where user2 is null, there's no partner yet
         const partner = partnerId ? {
           id: partnerId,
-          first_name: partnerFirstName,
-          last_name: partnerLastName,
+          user_name: partnerUserName,
           email: partnerEmail
         } : null;
         
@@ -224,15 +220,13 @@ class PairingService {
         // Determine which user is the partner (not the current user)
         const isUser1 = pairing.user1_id === userId;
         const partnerId = isUser1 ? pairing.user2_id : pairing.user1_id;
-        const partnerFirstName = isUser1 ? pairing.user2_first_name : pairing.user1_first_name;
-        const partnerLastName = isUser1 ? pairing.user2_last_name : pairing.user1_last_name;
+        const partnerUserName = isUser1 ? pairing.user2_user_name : pairing.user1_user_name;
         const partnerEmail = isUser1 ? pairing.user2_email : pairing.user1_email;
         
         // For partner code requests where user2 is null, there's no partner yet
         const partner = partnerId ? {
           id: partnerId,
-          first_name: partnerFirstName,
-          last_name: partnerLastName,
+          user_name: partnerUserName,
           email: partnerEmail
         } : null;
         
@@ -266,8 +260,7 @@ class PairingService {
         // Determine which user is the partner (not the current user)
         const isUser1 = pairing.user1_id === userId;
         const partnerId = isUser1 ? pairing.user2_id : pairing.user1_id;
-        const partnerFirstName = isUser1 ? pairing.user2_first_name : pairing.user1_first_name;
-        const partnerLastName = isUser1 ? pairing.user2_last_name : pairing.user1_last_name;
+        const partnerUserName = isUser1 ? pairing.user2_user_name : pairing.user1_user_name;
         const partnerEmail = isUser1 ? pairing.user2_email : pairing.user1_email;
         
         // Return pairing with only partner information
@@ -279,8 +272,7 @@ class PairingService {
           updated_at: pairing.updated_at,
           partner: {
             id: partnerId,
-            first_name: partnerFirstName,
-            last_name: partnerLastName,
+            user_name: partnerUserName,
             email: partnerEmail
           }
         };

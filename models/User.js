@@ -48,9 +48,10 @@ class User {
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         email TEXT UNIQUE NOT NULL,
-        first_name TEXT,
-        last_name TEXT,
         password_hash TEXT NOT NULL,
+        user_name TEXT,
+        partner_name TEXT,
+        children INTEGER,
         max_pairings INTEGER DEFAULT 1,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -72,41 +73,76 @@ class User {
         }
       }
 
-      // Migrate first_name/last_name to be nullable if existing DB has NOT NULL constraint
+      // Add user_name, partner_name, children columns if they don't exist
       try {
-        const columns = await this.allAsync('PRAGMA table_info(users)');
-        const firstNameCol = columns.find(c => c.name === 'first_name');
-        const lastNameCol = columns.find(c => c.name === 'last_name');
-        const needsMigration = (firstNameCol && firstNameCol.notnull === 1) || (lastNameCol && lastNameCol.notnull === 1);
-        if (needsMigration) {
-          await this.runAsync('BEGIN');
-          const createUsersTableNullable = `
+        await this.runAsync("ALTER TABLE users ADD COLUMN user_name TEXT");
+      } catch (alterErr) {
+        if (!alterErr.message.includes('duplicate column name')) {
+          console.error('Error adding user_name column to users:', alterErr.message);
+        }
+      }
+
+      try {
+        await this.runAsync("ALTER TABLE users ADD COLUMN partner_name TEXT");
+      } catch (alterErr) {
+        if (!alterErr.message.includes('duplicate column name')) {
+          console.error('Error adding partner_name column to users:', alterErr.message);
+        }
+      }
+
+      try {
+        await this.runAsync("ALTER TABLE users ADD COLUMN children INTEGER");
+      } catch (alterErr) {
+        if (!alterErr.message.includes('duplicate column name')) {
+          console.error('Error adding children column to users:', alterErr.message);
+        }
+      }
+
+      // Migration logic for removing first_name and last_name columns
+      try {
+        const tableInfo = await this.allAsync("PRAGMA table_info(users)");
+        const hasFirstName = tableInfo.some(col => col.name === 'first_name');
+        const hasLastName = tableInfo.some(col => col.name === 'last_name');
+        
+        if (hasFirstName || hasLastName) {
+          console.log('Migrating users table to remove first_name and last_name columns...');
+          
+          // Create new table without first_name and last_name
+          const createNewTable = `
             CREATE TABLE users_new (
               id TEXT PRIMARY KEY,
               email TEXT UNIQUE NOT NULL,
-              first_name TEXT,
-              last_name TEXT,
               password_hash TEXT NOT NULL,
+              user_name TEXT,
+              partner_name TEXT,
+              children INTEGER,
               max_pairings INTEGER DEFAULT 1,
               deleted_at DATETIME DEFAULT NULL,
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
           `;
-          await this.runAsync(createUsersTableNullable);
+          
+          await this.runAsync(createNewTable);
+          
+          // Copy data from old table to new table (excluding first_name and last_name)
           await this.runAsync(`
-            INSERT INTO users_new (id, email, first_name, last_name, password_hash, max_pairings, deleted_at, created_at, updated_at)
-            SELECT id, email, first_name, last_name, password_hash, max_pairings, deleted_at, created_at, updated_at FROM users
+            INSERT INTO users_new (id, email, password_hash, user_name, partner_name, children, max_pairings, deleted_at, created_at, updated_at)
+            SELECT id, email, password_hash, user_name, partner_name, children, max_pairings, deleted_at, created_at, updated_at
+            FROM users
           `);
-          await this.runAsync('DROP TABLE users');
-          await this.runAsync('ALTER TABLE users_new RENAME TO users');
-          await this.runAsync('COMMIT');
-          console.log('Migrated users table to allow NULL first_name and last_name.');
+          
+          // Drop old table and rename new table
+          await this.runAsync("DROP TABLE users");
+          await this.runAsync("ALTER TABLE users_new RENAME TO users");
+          
+          console.log('Users table migration completed successfully.');
         }
-      } catch (migErr) {
-        try { await this.runAsync('ROLLBACK'); } catch (_) {}
-        console.warn('Migration check/operation failed (first_name/last_name nullability). Proceeding:', migErr.message);
+      } catch (migrationErr) {
+        console.error('Error migrating users table:', migrationErr.message);
+        // Don't throw here as the table might already be correct
       }
+
 
       // Remove pairing_code column if it exists (migration)
       try {
@@ -212,7 +248,7 @@ class User {
 
   // Create a new user
   async createUser(userData) {
-    const { email, first_name = null, last_name = null, password } = userData;
+    const { email, password } = userData;
     const max_pairings = 1; // Always set to 1 - constraint enforced
     
     // Validate password
@@ -235,18 +271,16 @@ class User {
     });
 
     const insertUser = `
-      INSERT INTO users (id, email, first_name, last_name, password_hash, max_pairings, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      INSERT INTO users (id, email, password_hash, max_pairings, created_at, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `;
 
     try {
-      await this.runAsync(insertUser, [userId, email, first_name, last_name, hash, max_pairings]);
+      await this.runAsync(insertUser, [userId, email, hash, max_pairings]);
       
       return {
         id: userId,
         email,
-        first_name,
-        last_name,
         max_pairings: max_pairings,
         created_at: new Date().toISOString()
       };
@@ -303,20 +337,12 @@ class User {
 
   // Update user
   async updateUser(id, updateData) {
-    const { first_name, last_name, email, max_pairings } = updateData;
+    const { email, max_pairings, user_name, partner_name, children } = updateData;
 
     // Build update query dynamically
     const updateFields = [];
     const updateValues = [];
     
-    if (first_name) {
-      updateFields.push('first_name = ?');
-      updateValues.push(first_name);
-    }
-    if (last_name) {
-      updateFields.push('last_name = ?');
-      updateValues.push(last_name);
-    }
     if (email) {
       updateFields.push('email = ?');
       updateValues.push(email);
@@ -324,6 +350,27 @@ class User {
     if (max_pairings !== undefined) {
       updateFields.push('max_pairings = ?');
       updateValues.push(max_pairings);
+    }
+    if (user_name !== undefined) {
+      updateFields.push('user_name = ?');
+      updateValues.push(user_name);
+    }
+    if (partner_name !== undefined) {
+      updateFields.push('partner_name = ?');
+      updateValues.push(partner_name);
+    }
+    if (children !== undefined) {
+      // Validate children is a number if provided
+      if (children !== null && (!Number.isInteger(children) || children < 0)) {
+        throw new Error('Children must be a non-negative integer');
+      }
+      updateFields.push('children = ?');
+      updateValues.push(children);
+    }
+
+    // Check if at least one field is being updated (excluding updated_at)
+    if (updateFields.length === 0) {
+      throw new Error('At least one field must be provided for update');
     }
     
     // Always update the updated_at timestamp

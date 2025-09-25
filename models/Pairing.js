@@ -266,8 +266,8 @@ class Pairing {
     try {
       const query = `
         SELECT p.*, 
-               u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
-               u2.first_name as user2_first_name, u2.last_name as user2_last_name, u2.email as user2_email
+               u1.user_name as user1_user_name, u1.email as user1_email,
+               u2.user_name as user2_user_name, u2.email as user2_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
         JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
@@ -287,8 +287,8 @@ class Pairing {
     try {
       const query = `
         SELECT p.*, 
-               u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
-               u2.first_name as user2_first_name, u2.last_name as user2_last_name, u2.email as user2_email
+               u1.user_name as user1_user_name, u1.email as user1_email,
+               u2.user_name as user2_user_name, u2.email as user2_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
         LEFT JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
@@ -308,8 +308,8 @@ class Pairing {
     try {
       const query = `
         SELECT p.*, 
-               u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
-               u2.first_name as user2_first_name, u2.last_name as user2_last_name, u2.email as user2_email
+               u1.user_name as user1_user_name, u1.email as user1_email,
+               u2.user_name as user2_user_name, u2.email as user2_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
         JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
@@ -344,8 +344,8 @@ class Pairing {
     try {
       const query = `
         SELECT p.*, 
-               u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
-               u2.first_name as user2_first_name, u2.last_name as user2_last_name, u2.email as user2_email
+               u1.user_name as user1_user_name, u1.email as user1_email,
+               u2.user_name as user2_user_name, u2.email as user2_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
         JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
@@ -480,8 +480,8 @@ class Pairing {
     try {
       const query = `
         SELECT p.*, 
-               u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
-               u2.first_name as user2_first_name, u2.last_name as user2_last_name, u2.email as user2_email
+               u1.user_name as user1_user_name, u1.email as user1_email,
+               u2.user_name as user2_user_name, u2.email as user2_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id
         JOIN users u2 ON p.user2_id = u2.id
@@ -503,8 +503,8 @@ class Pairing {
     try {
       const query = `
         SELECT p.*, 
-               u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email,
-               u2.first_name as user2_first_name, u2.last_name as user2_last_name, u2.email as user2_email
+               u1.user_name as user1_user_name, u1.email as user1_email,
+               u2.user_name as user2_user_name, u2.email as user2_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id
         JOIN users u2 ON p.user2_id = u2.id

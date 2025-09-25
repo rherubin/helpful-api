@@ -46,9 +46,6 @@ class Program {
       CREATE TABLE IF NOT EXISTS programs (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
-        user_name TEXT NOT NULL,
-        partner_name TEXT NOT NULL,
-        children INTEGER NOT NULL,
         user_input TEXT NOT NULL,
         pairing_id TEXT,
         therapy_response TEXT,
@@ -73,6 +70,52 @@ class Program {
         }
       }
       
+      // Migration logic for removing user_name, partner_name, children columns
+      try {
+        const tableInfo = await this.allAsync("PRAGMA table_info(programs)");
+        const hasUserName = tableInfo.some(col => col.name === 'user_name');
+        const hasPartnerName = tableInfo.some(col => col.name === 'partner_name');
+        const hasChildren = tableInfo.some(col => col.name === 'children');
+        
+        if (hasUserName || hasPartnerName || hasChildren) {
+          console.log('Migrating programs table to remove user_name, partner_name, children columns...');
+          
+          // Create new table without user_name, partner_name, children
+          const createNewTable = `
+            CREATE TABLE programs_new (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              user_input TEXT NOT NULL,
+              pairing_id TEXT,
+              therapy_response TEXT,
+              deleted_at DATETIME DEFAULT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+              FOREIGN KEY (pairing_id) REFERENCES pairings (id) ON DELETE CASCADE
+            )
+          `;
+          
+          await this.runAsync(createNewTable);
+          
+          // Copy data from old table to new table (excluding user_name, partner_name, children)
+          await this.runAsync(`
+            INSERT INTO programs_new (id, user_id, user_input, pairing_id, therapy_response, deleted_at, created_at, updated_at)
+            SELECT id, user_id, user_input, pairing_id, therapy_response, deleted_at, created_at, updated_at
+            FROM programs
+          `);
+          
+          // Drop old table and rename new table
+          await this.runAsync("DROP TABLE programs");
+          await this.runAsync("ALTER TABLE programs_new RENAME TO programs");
+          
+          console.log('Programs table migration completed successfully.');
+        }
+      } catch (migrationErr) {
+        console.error('Error migrating programs table:', migrationErr.message);
+        // Don't throw here as the table might already be correct
+      }
+
       // Make pairing_id nullable for existing databases
       try {
         // SQLite doesn't support ALTER COLUMN directly, so we need to check if we need to recreate the table
@@ -144,23 +187,20 @@ class Program {
 
   // Create a program
   async createProgram(userId, programData) {
-    const { user_name, partner_name, children, user_input, pairing_id } = programData;
+    const { user_input, pairing_id } = programData;
     const programId = this.generateUniqueId();
 
     try {
       const insertProgram = `
-        INSERT INTO programs (id, user_id, user_name, partner_name, children, user_input, pairing_id, therapy_response, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        INSERT INTO programs (id, user_id, user_input, pairing_id, therapy_response, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `;
 
-      await this.runAsync(insertProgram, [programId, userId, user_name, partner_name, children, user_input, pairing_id, programData.therapy_response || null]);
+      await this.runAsync(insertProgram, [programId, userId, user_input, pairing_id, programData.therapy_response || null]);
       
       return {
         id: programId,
         user_id: userId,
-        user_name,
-        partner_name,
-        children,
         user_input,
         pairing_id,
         therapy_response: programData.therapy_response || null,

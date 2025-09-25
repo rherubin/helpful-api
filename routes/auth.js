@@ -137,6 +137,34 @@ function createAuthRoutes(authService, userModel, pairingService) {
     }
   });
 
+  // Get user profile with pairings
+  router.get('/profile', authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const user = await userModel.getUserById(userId);
+      
+      // Get user's pairings (both accepted and pending)
+      const pairingsResult = await pairingService.getUserPairings(userId);
+
+      const profile = {
+        ...user,
+        pairings: pairingsResult.pairings
+      };
+      
+      res.status(200).json({
+        message: 'User profile retrieved successfully',
+        profile: profile
+      });
+    } catch (error) {
+      console.error('Profile endpoint error:', error.message);
+      if (error.message === 'User not found') {
+        return res.status(404).json({ error: error.message });
+      } else {
+        return res.status(500).json({ error: 'Failed to fetch user profile' });
+      }
+    }
+  });
+
   return router;
 }
 

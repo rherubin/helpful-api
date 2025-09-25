@@ -95,7 +95,7 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 
 ## API Endpoints
 
-**Note**: `first_name` and `last_name` fields are optional throughout the API. When not provided during user creation, they will be stored as `null` and returned as `null` in responses.
+**Note**: User profiles now use `user_name` and `partner_name` fields for relationship information instead of generic first/last names.
 
 ### 🚀 User Profile (Recommended - Most Efficient)
 
@@ -110,8 +110,9 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
     "profile": {
       "id": "user_id",
       "email": "user@example.com",
-      "first_name": "John",
-      "last_name": "Doe",
+      "user_name": "John",
+      "partner_name": "Jane",
+      "children": 2,
       "max_pairings": 1,
       "created_at": "2024-01-01T00:00:00.000Z",
       "updated_at": "2024-01-01T00:00:00.000Z",
@@ -124,8 +125,7 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
           "updated_at": "2024-01-01T00:35:00.000Z",
           "partner": {
             "id": "partner_user_id",
-            "first_name": "Jane",
-            "last_name": "Doe",
+            "user_name": "Jane",
             "email": "jane.doe@example.com"
           }
         },
@@ -169,9 +169,9 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
     "user": {
       "id": "unique_id",
       "email": "user@example.com",
-      "first_name": "John",
-      "last_name": "Doe",
-
+      "user_name": "John",
+      "partner_name": "Jane",
+      "children": 2,
       "max_pairings": 1,
       "created_at": "2024-01-01T00:00:00.000Z"
     },
@@ -222,21 +222,10 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
   ```json
   {
     "email": "user@example.com",
-    "first_name": "John",
-    "last_name": "Doe",
-    "password": "Test1!@#",
-    "max_pairings": 1
-  }
-  ```
-  **Note**: Only `email` and `password` are required. `first_name` and `last_name` are optional and will be set to `null` if not provided.
-
-- **Minimal Request Body:**
-  ```json
-  {
-    "email": "user@example.com",
     "password": "Test1!@#"
   }
   ```
+  **Note**: Only `email` and `password` are required.
 - **Response:**
   ```json
   {
@@ -244,9 +233,6 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
     "user": {
       "id": "unique_id",
       "email": "user@example.com",
-      "first_name": "John",
-      "last_name": "Doe",
-
       "max_pairings": 1,
       "created_at": "2024-01-01T00:00:00.000Z"
     },
@@ -257,25 +243,6 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
   }
   ```
 
-- **Response (when first_name and last_name are not provided):**
-  ```json
-  {
-    "message": "Account created successfully",
-    "user": {
-      "id": "unique_id",
-      "email": "user@example.com",
-      "first_name": null,
-      "last_name": null,
-
-      "max_pairings": 1,
-      "created_at": "2024-01-01T00:00:00.000Z"
-    },
-    "access_token": "jwt_token",
-    "refresh_token": "refresh_jwt_token",
-    "expires_in": "1h",
-    "refresh_expires_in": "7d"
-  }
-  ```
 
 #### Get User by ID
 - **GET** `/api/users/:id`
@@ -283,13 +250,15 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 
 #### Update User
 - **PUT** `/api/users/:id`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Update user profile including relationship details. Users can only update their own profile.
 - **Body:**
   ```json
   {
-    "first_name": "Johnny",
-    "last_name": "Smith",
     "email": "johnny.smith@example.com",
-    "max_pairings": 2
+    "user_name": "Johnny",
+    "partner_name": "Sarah",
+    "children": 2
   }
   ```
 - **Response:**
@@ -299,14 +268,16 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
     "user": {
       "id": "unique_id",
       "email": "johnny.smith@example.com",
-      "first_name": "Johnny",
-      "last_name": "Smith",
-
-      "max_pairings": 2,
-      "updated_at": "2024-01-01T00:00:00.000Z"
+      "user_name": "Johnny",
+      "partner_name": "Sarah",
+      "children": 2,
+      "max_pairings": 1,
+      "created_at": "2024-01-01T00:00:00.000Z",
+      "updated_at": "2024-01-01T01:00:00.000Z"
     }
   }
   ```
+  **Note**: All fields are optional. Only provided fields will be updated. The `children` field must be a non-negative integer if provided.
 
 #### Get User Profile with Pairings & Requests (Combined)
 - **GET** `/api/profile`
@@ -319,8 +290,9 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
     "profile": {
       "id": "unique_id",
       "email": "user@example.com",
-      "first_name": "John",
-      "last_name": "Doe",
+      "user_name": "John",
+      "partner_name": "Jane",
+      "children": 2,
       "password_hash": "$2b$10$...",
       "max_pairings": 1,
       "deleted_at": null,
@@ -335,8 +307,7 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
           "updated_at": "2024-01-01T00:35:00.000Z",
           "partner": {
             "id": "partner_user_id",
-            "first_name": "Jane",
-            "last_name": "Doe",
+            "user_name": "Jane",
             "email": "jane.doe@example.com"
           }
         }
@@ -375,8 +346,7 @@ This makes pairing more flexible since you don't need to know the other person's
     "pairing_id": "pairing_id",
     "requester": {
       "id": "user_id",
-      "first_name": "John",
-      "last_name": "Doe",
+      "user_name": "John",
       "email": "john.doe@example.com"
     },
     "expires_note": "This partner code is valid until someone uses it or you cancel the request."
@@ -426,8 +396,7 @@ This makes pairing more flexible since you don't need to know the other person's
         "updated_at": "2025-01-20T10:35:00.000Z",
         "partner": {
           "id": "partner_user_id",
-          "first_name": "Jane",
-          "last_name": "Doe",
+          "user_name": "Jane",
           "email": "jane.doe@example.com"
         }
       },
@@ -461,8 +430,7 @@ This makes pairing more flexible since you don't need to know the other person's
         "updated_at": "2025-01-20T10:30:00.000Z",
         "partner": {
           "id": "partner_user_id",
-          "first_name": "Pending",
-          "last_name": "User",
+          "user_name": "PendingUser",
           "email": "pending@example.com"
         }
       }
@@ -486,8 +454,7 @@ This makes pairing more flexible since you don't need to know the other person's
         "updated_at": "2025-01-20T10:35:00.000Z",
         "partner": {
           "id": "partner_user_id",
-          "first_name": "Jane",
-          "last_name": "Doe",
+          "user_name": "Jane",
           "email": "jane.doe@example.com"
         }
       }
@@ -534,14 +501,11 @@ Programs are AI-generated couples therapy programs that can be created with or w
 - **Body:**
   ```json
   {
-    "user_name": "Steve",
-    "partner_name": "Becca",
-    "children": 3,
     "user_input": "I feel less and less connected with my wife. I want a plan that will help us have what we used to. We would laugh and joke all the time and now things feel disconnected and distant",
     "pairing_id": "pairing_id"
   }
   ```
-  **Note**: `pairing_id` is optional. Programs can be created independently without a pairing.
+  **Note**: `pairing_id` is optional. Programs can be created independently without a pairing. User names and relationship details are now managed through the user profile (PUT /users/:id).
 - **Response:**
   ```json
   {
@@ -549,9 +513,6 @@ Programs are AI-generated couples therapy programs that can be created with or w
     "program": {
       "id": "unique_id",
       "user_id": "user_id",
-      "user_name": "Steve",
-      "partner_name": "Becca",
-      "children": 3,
       "user_input": "I feel less and less connected with my wife...",
       "pairing_id": "pairing_id",
       "created_at": "2024-01-01T00:00:00.000Z"
@@ -881,10 +842,10 @@ The SQLite database automatically creates the following tables:
 CREATE TABLE users (
   id TEXT PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
-  first_name TEXT,
-  last_name TEXT,
   password_hash TEXT NOT NULL,
-
+  user_name TEXT,
+  partner_name TEXT,
+  children INTEGER,
   max_pairings INTEGER DEFAULT 1,
   deleted_at DATETIME DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1172,15 +1133,12 @@ Comprehensive test suite for the updated GET `/api/pairings` endpoint including:
 ### Complete Pairing Workflow
 
 ```bash
-# 1. Create two users (showing both full and minimal request formats)
+# 1. Create two users
 curl -X POST http://localhost:9000/api/users \
   -H "Content-Type: application/json" \
   -d '{
     "email": "john.doe@example.com",
-    "first_name": "John",
-    "last_name": "Doe",
-    "password": "Test1!@#",
-    "max_pairings": 1
+    "password": "Test1!@#"
   }'
 
 curl -X POST http://localhost:9000/api/users \
@@ -1335,13 +1293,13 @@ curl -X GET http://localhost:9000/api/programSteps/{step_id}/messages \
 #     {
 #       "id": "user_msg_1",
 #       "message_type": "user_message", 
-#       "sender": {"first_name": "Steve", ...},
+#       "sender": {"user_name": "Steve", ...},
 #       "content": "I feel like we have grown apart over the years..."
 #     },
 #     {
 #       "id": "user_msg_2", 
 #       "message_type": "user_message",
-#       "sender": {"first_name": "Becca", ...}, 
+#       "sender": {"user_name": "Becca", ...}, 
 #       "content": "I feel the same way. I want us to find our way back..."
 #     },
 #     {

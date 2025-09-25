@@ -7,7 +7,7 @@ function createUserRoutes(userModel, authService, pairingService) {
   // Create user
   router.post('/', async (req, res) => {
     try {
-      const { email, first_name = null, last_name = null, password } = req.body;
+      const { email, password } = req.body;
 
       // Validation
       if (!email || !password) {
@@ -24,7 +24,7 @@ function createUserRoutes(userModel, authService, pairingService) {
         });
       }
 
-      const user = await userModel.createUser({ email, first_name, last_name, password });
+      const user = await userModel.createUser({ email, password });
       
       // Automatically create a pairing request for the new user
       let pairingCode = null;
@@ -85,47 +85,6 @@ function createUserRoutes(userModel, authService, pairingService) {
     }
   });
 
-  // Update user
-  router.put('/:id', authenticateToken, async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { first_name, last_name, email } = req.body;
-
-      // Validation
-      if (!first_name && !last_name && !email) {
-        return res.status(400).json({ 
-          error: 'At least one field (first_name, last_name, or email) is required' 
-        });
-      }
-
-      // Email validation if provided
-      if (email) {
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-          return res.status(400).json({ 
-            error: 'Invalid email format' 
-          });
-        }
-      }
-
-      const updatedUser = await userModel.updateUser(id, { first_name, last_name, email });
-      
-      // Return user data (excluding password hash)
-      const { password_hash, ...userData } = updatedUser;
-      res.status(200).json({
-        message: 'User updated successfully',
-        user: userData
-      });
-    } catch (error) {
-      if (error.message === 'User not found') {
-        return res.status(404).json({ error: error.message });
-      } else if (error.message === 'Email already exists') {
-        return res.status(409).json({ error: error.message });
-      } else {
-        return res.status(500).json({ error: 'Failed to update user' });
-      }
-    }
-  });
 
   // Soft delete user
   router.delete('/:id', authenticateToken, async (req, res) => {
@@ -157,6 +116,54 @@ function createUserRoutes(userModel, authService, pairingService) {
         return res.status(404).json({ error: error.message });
       } else {
         return res.status(500).json({ error: 'Failed to restore user' });
+      }
+    }
+  });
+
+  // Update user
+  router.put('/:id', authenticateToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+      
+      // Users can only update their own profile
+      if (id !== userId) {
+        return res.status(403).json({ error: 'Not authorized to update this user' });
+      }
+
+      const { email, user_name, partner_name, children } = req.body;
+      
+      // Validate email format if provided
+      if (email) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          return res.status(400).json({ 
+            error: 'Invalid email format' 
+          });
+        }
+      }
+
+      const updatedUser = await userModel.updateUser(id, {
+        email,
+        user_name,
+        partner_name,
+        children
+      });
+
+      res.status(200).json({
+        message: 'User updated successfully',
+        user: updatedUser
+      });
+    } catch (error) {
+      if (error.message === 'User not found') {
+        return res.status(404).json({ error: error.message });
+      } else if (error.message === 'Email already exists') {
+        return res.status(409).json({ error: error.message });
+      } else if (error.message.includes('Children must be')) {
+        return res.status(400).json({ error: error.message });
+      } else {
+        console.error('Error updating user:', error.message);
+        return res.status(500).json({ error: 'Failed to update user' });
       }
     }
   });
