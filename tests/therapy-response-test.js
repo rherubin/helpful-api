@@ -6,7 +6,7 @@ const path = require('path');
 const User = require('../models/User');
 const Pairing = require('../models/Pairing');
 const Program = require('../models/Program');
-const Conversation = require('../models/Conversation');
+const ProgramStep = require('../models/ProgramStep');
 const Message = require('../models/Message');
 const ChatGPTService = require('../services/ChatGPTService');
 
@@ -80,7 +80,7 @@ class TherapyResponseTest {
     this.models.user = new User(this.testDb);
     this.models.pairing = new Pairing(this.testDb);
     this.models.program = new Program(this.testDb);
-    this.models.conversation = new Conversation(this.testDb);
+    this.models.programStep = new ProgramStep(this.testDb);
     this.models.message = new Message(this.testDb);
     
     // Initialize mock ChatGPT service

@@ -369,7 +369,7 @@ class Pairing {
     try {
       const query = `
         SELECT p.*, 
-               u1.first_name as user1_first_name, u1.last_name as user1_last_name, u1.email as user1_email
+               u1.user_name as user1_user_name, u1.email as user1_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
         WHERE p.partner_code = ? AND p.status = 'pending' AND p.deleted_at IS NULL AND p.user2_id IS NULL

@@ -215,7 +215,7 @@ class Program {
   async getUserPrograms(userId) {
     try {
       const query = `
-        SELECT p.id, p.user_id, p.user_name, p.partner_name, p.children, 
+        SELECT p.id, p.user_id, p.user_input, p.pairing_id,
                p.therapy_response, p.created_at, p.updated_at,
                pair.user1_id, pair.user2_id 
         FROM programs p
@@ -266,8 +266,8 @@ class Program {
   async getProgramById(programId) {
     try {
       const query = `
-        SELECT id, user_id, user_name, partner_name, children, 
-               user_input, pairing_id, therapy_response, created_at, updated_at
+        SELECT id, user_id, user_input, pairing_id, 
+               therapy_response, created_at, updated_at
         FROM programs 
         WHERE id = ? AND deleted_at IS NULL
       `;

@@ -66,16 +66,12 @@ class UserProfileTestRunner {
     // Create first test user
     const user1Data = {
       email: `profile.user1.${timestamp}@example.com`,
-      first_name: 'Profile',
-      last_name: 'User1',
       password: 'Test1!@#'
     };
     
     // Create second test user for pairing tests
     const user2Data = {
       email: `profile.user2.${timestamp}@example.com`,
-      first_name: 'Profile',
-      last_name: 'User2',
       password: 'Test2!@#'
     };
 
@@ -164,9 +160,9 @@ class UserProfileTestRunner {
       );
       
       this.assert(
-        profileResponse.data.profile.first_name === user.first_name,
-        'Profile contains correct first name',
-        `Name: ${profileResponse.data.profile.first_name}`
+        profileResponse.data.profile.user_name !== undefined || profileResponse.data.profile.user_name === null,
+        'Profile contains user_name field (may be null)',
+        `Name: ${profileResponse.data.profile.user_name}`
       );
       
       this.assert(
@@ -265,8 +261,6 @@ class UserProfileTestRunner {
     const timestamp = Date.now();
     const userData = {
       email: `pending.test.${timestamp}@example.com`,
-      first_name: 'Pending',
-      last_name: 'Test',
       password: 'Test1!@#'
     };
 
@@ -497,15 +491,9 @@ class UserProfileTestRunner {
         );
         
         this.assert(
-          !!pairing.partner.first_name,
-          'Pairing partner has first name',
-          `First name: ${pairing.partner.first_name}`
-        );
-        
-        this.assert(
-          !!pairing.partner.last_name,
-          'Pairing partner has last name',
-          `Last name: ${pairing.partner.last_name}`
+          pairing.partner.user_name !== undefined,
+          'Pairing partner has user_name field (may be null)',
+          `User name: ${pairing.partner.user_name}`
         );
       }
 
@@ -582,7 +570,7 @@ class UserProfileTestRunner {
       );
 
       // Test profile structure - user fields
-      const requiredUserFields = ['id', 'email', 'first_name', 'last_name', 'max_pairings', 'created_at', 'updated_at'];
+      const requiredUserFields = ['id', 'email', 'max_pairings', 'created_at', 'updated_at'];
       requiredUserFields.forEach(field => {
         this.assert(
           profile.hasOwnProperty(field),
