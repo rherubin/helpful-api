@@ -177,6 +177,18 @@ class UserProfileTestRunner {
         `Pairings count: ${profileResponse.data.profile.pairings.length}`
       );
 
+      this.assert(
+        Array.isArray(profileResponse.data.profile.pairing_codes),
+        'Profile contains pairing_codes array',
+        `Type: ${typeof profileResponse.data.profile.pairing_codes}`
+      );
+      
+      this.assert(
+        profileResponse.data.profile.pairing_codes.length >= 0,
+        'New user has pairing_codes array (may be empty)',
+        `Pairing codes count: ${profileResponse.data.profile.pairing_codes.length}`
+      );
+
       // Store profile for later tests
       this.testData.user1Profile = profileResponse.data.profile;
       
@@ -377,6 +389,25 @@ class UserProfileTestRunner {
       } else {
         this.assert(false, 'Could not find the new pairing request in response', `Partner code: ${partnerCode}`);
       }
+
+      // Test pairing_codes array contains the partner code
+      this.assert(
+        Array.isArray(profile.pairing_codes),
+        'Profile contains pairing_codes array',
+        `Type: ${typeof profile.pairing_codes}`
+      );
+      
+      this.assert(
+        profile.pairing_codes.includes(partnerCode),
+        'Pairing codes array contains the new partner code',
+        `Codes: ${profile.pairing_codes.join(', ')}, Looking for: ${partnerCode}`
+      );
+      
+      this.assert(
+        profile.pairing_codes.length > 0,
+        'User with pending requests has pairing codes',
+        `Pairing codes count: ${profile.pairing_codes.length}`
+      );
       
     } catch (error) {
       this.assert(false, 'Profile with pending pairing requests', `Error: ${error.response?.data?.error || error.message}`);
@@ -531,6 +562,19 @@ class UserProfileTestRunner {
           `Status: ${pairing.status}`
         );
       }
+
+      // Test pairing_codes array for accepted pairings
+      this.assert(
+        Array.isArray(user2Profile.pairing_codes),
+        'User 2 profile contains pairing_codes array',
+        `Type: ${typeof user2Profile.pairing_codes}`
+      );
+      
+      this.assert(
+        user2Profile.pairing_codes.length > 0,
+        'User 2 with accepted pairings has pairing codes',
+        `Pairing codes count: ${user2Profile.pairing_codes.length}`
+      );
       
     } catch (error) {
       this.assert(false, 'Profile with accepted pairings functionality', `Error: ${error.response?.data?.error || error.message}`);
@@ -590,6 +634,19 @@ class UserProfileTestRunner {
         Array.isArray(profile.pairings),
         'Profile pairings is an array',
         `Type: ${typeof profile.pairings}`
+      );
+
+      // Test profile structure - pairing_codes field
+      this.assert(
+        profile.hasOwnProperty('pairing_codes'),
+        'Profile contains pairing_codes field',
+        'Pairing codes field present'
+      );
+      
+      this.assert(
+        Array.isArray(profile.pairing_codes),
+        'Profile pairing_codes is an array',
+        `Type: ${typeof profile.pairing_codes}`
       );
 
       // Test that sensitive fields are excluded (if any)

@@ -107,36 +107,6 @@ function createAuthRoutes(authService, userModel, pairingService) {
     }
   });
 
-  // Get authenticated user profile (with pairings)
-  router.get('/profile', authenticateToken, async (req, res) => {
-    try {
-      const userId = req.user.id;
-      
-      // Get user information
-      const user = await userModel.getUserById(userId);
-      
-      // Get user's pairings (both accepted and pending)
-      const pairingsResult = await pairingService.getUserPairings(userId);
-      
-      // Combine the data
-      const profile = {
-        ...user,
-        pairings: pairingsResult.pairings
-      };
-      
-      res.status(200).json({
-        message: 'User profile retrieved successfully',
-        profile: profile
-      });
-    } catch (error) {
-      if (error.message === 'User not found') {
-        return res.status(404).json({ error: error.message });
-      } else {
-        return res.status(500).json({ error: 'Failed to fetch user profile' });
-      }
-    }
-  });
-
   // Get user profile with pairings
   router.get('/profile', authenticateToken, async (req, res) => {
     try {
@@ -146,9 +116,13 @@ function createAuthRoutes(authService, userModel, pairingService) {
       // Get user's pairings (both accepted and pending)
       const pairingsResult = await pairingService.getUserPairings(userId);
 
+      // Extract all pairing codes from the user's pairings
+      const pairingCodes = pairingsResult.pairings.map(pairing => pairing.partner_code).filter(code => code);
+
       const profile = {
         ...user,
-        pairings: pairingsResult.pairings
+        pairings: pairingsResult.pairings,
+        pairing_codes: pairingCodes
       };
       
       res.status(200).json({

@@ -141,7 +141,8 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
           "updated_at": "2024-01-01T00:45:00.000Z",
           "partner": null
         }
-      ]
+      ],
+      "pairing_codes": ["ABC123", "XYZ789"]
     }
   }
   ```
@@ -149,11 +150,13 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 **✨ Why Use This Endpoint:**
 - **Single API Call**: Get complete user state without multiple requests
 - **Comprehensive Data**: User info + all pairings (accepted & pending) in one array
+- **Pairing Codes Array**: Quick access to all partner codes without parsing pairings
 - **Optimized Performance**: Reduces network calls and improves app responsiveness
 - **Real-time State**: Always returns current pairing status
 
 **📋 Data Explanation:**
 - **`pairings`**: Contains both accepted pairings (with full partner info) and pending requests (with `partner: null`)
+- **`pairing_codes`**: Array of all partner codes for this user (both accepted and pending) for quick access
 
 ### Authentication
 
@@ -314,18 +317,17 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
             "user_name": "Jane",
             "email": "jane.doe@example.com"
           }
-        }
-      ],
-      "pairing_requests": [
+        },
         {
-          "id": "pairing_request_id",
+          "id": "pending_pairing_id",
           "status": "pending",
           "partner_code": "XYZ789",
           "created_at": "2024-01-01T00:45:00.000Z",
           "updated_at": "2024-01-01T00:45:00.000Z",
           "partner": null
         }
-      ]
+      ],
+      "pairing_codes": ["ABC123", "XYZ789"]
     }
   }
   ```
@@ -1098,16 +1100,17 @@ Comprehensive test suite for the GET `/api/profile` endpoint including:
 - ✅ JWT authentication and authorization
 - ✅ Pairing requests with partner codes (partner: null)
 - ✅ Accepted pairings with partner data
+- ✅ Pairing codes array validation and content verification
 - ✅ Error handling (404, 401, 403 responses)
 - ✅ Performance benchmarks (<5s response, <8s concurrent)
-- ✅ 58 comprehensive tests with 100% success rate
+- ✅ 67 comprehensive tests with 100% success rate
 
 **Sample Test Output:**
 ```
 🧪 Starting User Profile Endpoint Test Suite
 📊 User Profile Test Results Summary
-Total Tests: 58
-Passed: 58
+Total Tests: 67
+Passed: 67
 Failed: 0
 Success Rate: 100.0%
 🎉 All user profile tests passed! The endpoint is working correctly.
