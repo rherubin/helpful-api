@@ -697,9 +697,6 @@ class APITestRunner {
     
     // Test program creation with pairing (from original test-api.js)
     const testProgram = {
-      user_name: "Steve",
-      partner_name: "Becca", 
-      children: 3,
       user_input: "I feel less and less connected with my wife. I want a plan that will help us have what we used to.",
       pairing_id: pairingId
     };
@@ -723,9 +720,9 @@ class APITestRunner {
       );
       
       this.assert(
-        createResponse.data.program.user_name === testProgram.user_name,
-        'Program creation returns correct user_name',
-        `Name: ${createResponse.data.program.user_name}`
+        createResponse.data.program.user_input === testProgram.user_input,
+        'Program creation returns correct user_input',
+        `Input: ${createResponse.data.program.user_input}`
       );
       
       // Store program for later tests
@@ -762,6 +759,29 @@ class APITestRunner {
         'Get user programs returns at least one program',
         `Count: ${getResponse.data.programs.length}`
       );
+
+      // Test program structure
+      if (getResponse.data.programs.length > 0) {
+        const firstProgram = getResponse.data.programs[0];
+        
+        this.assert(
+          firstProgram.hasOwnProperty('program_steps'),
+          'Program contains program_steps array',
+          `Has program_steps: ${firstProgram.hasOwnProperty('program_steps')}`
+        );
+        
+        this.assert(
+          Array.isArray(firstProgram.program_steps),
+          'Program steps is an array',
+          `Type: ${typeof firstProgram.program_steps}`
+        );
+        
+        this.assert(
+          !firstProgram.hasOwnProperty('therapy_response'),
+          'Program does not contain therapy_response (replaced by program_steps)',
+          `Has therapy_response: ${firstProgram.hasOwnProperty('therapy_response')}`
+        );
+      }
       
     } catch (error) {
       this.assert(false, 'Get user programs', `Error: ${error.response?.data?.error || error.message}`);
@@ -786,6 +806,27 @@ class APITestRunner {
           programResponse.data.program.id === programId,
           'Get program by ID returns correct program',
           `ID: ${programResponse.data.program.id}`
+        );
+
+        // Test program structure for individual program
+        const program = programResponse.data.program;
+        
+        this.assert(
+          program.hasOwnProperty('program_steps'),
+          'Individual program contains program_steps array',
+          `Has program_steps: ${program.hasOwnProperty('program_steps')}`
+        );
+        
+        this.assert(
+          Array.isArray(program.program_steps),
+          'Individual program steps is an array',
+          `Type: ${typeof program.program_steps}`
+        );
+        
+        this.assert(
+          !program.hasOwnProperty('therapy_response'),
+          'Individual program does not contain therapy_response (replaced by program_steps)',
+          `Has therapy_response: ${program.hasOwnProperty('therapy_response')}`
         );
         
       } catch (error) {
@@ -836,9 +877,6 @@ class APITestRunner {
     if (pairingId) {
       try {
         const conversationTestProgram = {
-          user_name: "Alice",
-          partner_name: "Bob", 
-          children: 2,
           user_input: "We want to improve our communication and build stronger intimacy.",
           pairing_id: pairingId
         };
@@ -865,8 +903,7 @@ class APITestRunner {
     // Test program creation with invalid data
     try {
       await axios.post(`${this.baseURL}/api/programs`, {
-        user_name: 'Test'
-        // Missing required fields
+        // Missing required user_input field
       }, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: this.timeout

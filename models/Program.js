@@ -216,7 +216,7 @@ class Program {
     try {
       const query = `
         SELECT p.id, p.user_id, p.user_input, p.pairing_id,
-               p.therapy_response, p.created_at, p.updated_at,
+               p.created_at, p.updated_at,
                pair.user1_id, pair.user2_id 
         FROM programs p
         LEFT JOIN pairings pair ON p.pairing_id = pair.id
@@ -230,11 +230,8 @@ class Program {
 
       const programs = await this.allAsync(query, [userId, userId, userId]);
       
-      // Parse therapy responses
-      return programs.map(program => ({
-        ...program,
-        therapy_response: this.parseTherapyResponse(program.therapy_response)
-      }));
+      // Return programs without therapy_response
+      return programs;
     } catch (err) {
       throw new Error('Failed to fetch programs');
     }
@@ -267,7 +264,7 @@ class Program {
     try {
       const query = `
         SELECT id, user_id, user_input, pairing_id, 
-               therapy_response, created_at, updated_at
+               created_at, updated_at
         FROM programs 
         WHERE id = ? AND deleted_at IS NULL
       `;
@@ -277,11 +274,8 @@ class Program {
         throw new Error('Program not found');
       }
       
-      // Parse therapy response
-      return {
-        ...program,
-        therapy_response: this.parseTherapyResponse(program.therapy_response)
-      };
+      // Return program without therapy_response
+      return program;
     } catch (err) {
       throw new Error('Failed to fetch program');
     }

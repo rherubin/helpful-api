@@ -83,6 +83,7 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 - ✅ **Unified Pairings**: Both accepted and pending pairings in one array
 - ✅ **Complete Pairing Workflow**: Full end-to-end pairing acceptance and management
 - ✅ **Program Steps**: Clean, efficient day-based therapy program structure
+- ✅ **Structured Program Data**: Programs return organized program_steps arrays instead of raw JSON (fully tested)
 - ✅ **Simplified Messages**: Clean message responses without metadata bloat
 - ✅ **Rate Limited**: 1000 requests per 15 minutes for general API
 - ✅ **Comprehensive Tests**: 95+ tests with 98%+ success rates (Profile tests: 100%)
@@ -91,6 +92,7 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 ### API Design Philosophy
 - **Clean Responses**: Minimal, essential data only - no unnecessary nesting or metadata
 - **Efficient Structure**: Array-based responses instead of complex nested objects
+- **Structured Data**: Program steps returned as structured arrays instead of raw JSON responses
 - **Separation of Concerns**: Messages fetched separately when needed, not bundled with program steps
 - **RESTful Design**: Intuitive endpoints that follow REST conventions
 - **Performance First**: Optimized for speed and minimal bandwidth usage
@@ -525,6 +527,7 @@ Programs are AI-generated couples therapy programs that can be created with or w
 #### Get User's Programs
 - **GET** `/api/programs`
 - **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Returns all programs for the authenticated user with their program steps.
 - **Response:**
   ```json
   {
@@ -533,10 +536,21 @@ Programs are AI-generated couples therapy programs that can be created with or w
       {
         "id": "unique_id",
         "user_id": "user_id",
-        "user_name": "Steve",
-        "partner_name": "Becca",
-        "children": 3,
-        "created_at": "2024-01-01T00:00:00.000Z"
+        "user_input": "I feel less and less connected with my wife...",
+        "pairing_id": "pairing_id",
+        "created_at": "2024-01-01T00:00:00.000Z",
+        "updated_at": "2024-01-01T00:00:00.000Z",
+        "program_steps": [
+          {
+            "id": "step_id",
+            "day": 1,
+            "theme": "Reflecting on Happy Memories",
+            "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
+            "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
+            "created_at": "2024-01-01T00:00:00.000Z",
+            "updated_at": "2024-01-01T00:00:00.000Z"
+          }
+        ]
       }
     ]
   }
@@ -545,6 +559,7 @@ Programs are AI-generated couples therapy programs that can be created with or w
 #### Get Program by ID
 - **GET** `/api/programs/:id`
 - **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Returns a specific program with its program steps.
 - **Response:**
   ```json
   {
@@ -552,12 +567,21 @@ Programs are AI-generated couples therapy programs that can be created with or w
     "program": {
       "id": "unique_id",
       "user_id": "user_id",
-      "user_name": "Steve",
-      "partner_name": "Becca",
-      "children": 3,
       "user_input": "I feel less and less connected with my wife...",
       "pairing_id": "pairing_id",
-      "created_at": "2024-01-01T00:00:00.000Z"
+      "created_at": "2024-01-01T00:00:00.000Z",
+      "updated_at": "2024-01-01T00:00:00.000Z",
+      "program_steps": [
+        {
+          "id": "step_id",
+          "day": 1,
+          "theme": "Reflecting on Happy Memories",
+          "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
+          "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
+          "created_at": "2024-01-01T00:00:00.000Z",
+          "updated_at": "2024-01-01T00:00:00.000Z"
+        }
+      ]
     }
   }
   ```
@@ -1126,6 +1150,7 @@ Comprehensive test suite for the updated GET `/api/pairings` endpoint including:
 
 - **Unit Tests**: Test individual components and business logic
 - **Integration Tests**: Test full API workflows with real HTTP requests
+- **Program Structure Tests**: Verify program_steps arrays and absence of therapy_response
 - **Security Tests**: Validate security measures and input sanitization
 - **Performance Tests**: Ensure API can handle concurrent load
 - **Therapy System Tests**: Validate background AI therapy response functionality

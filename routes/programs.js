@@ -71,9 +71,20 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       const userId = req.user.id;
       const programs = await programModel.getUserPrograms(userId);
       
+      // Fetch program steps for each program
+      const programsWithSteps = await Promise.all(
+        programs.map(async (program) => {
+          const programSteps = programStepModel ? await programStepModel.getProgramSteps(program.id) : [];
+          return {
+            ...program,
+            program_steps: programSteps
+          };
+        })
+      );
+      
       res.status(200).json({
         message: 'Programs retrieved successfully',
-        programs
+        programs: programsWithSteps
       });
     } catch (error) {
       return res.status(500).json({ error: 'Failed to fetch programs' });
@@ -92,9 +103,16 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         return res.status(403).json({ error: 'Not authorized to access this program' });
       }
 
+      // Fetch program steps for this program
+      const programSteps = programStepModel ? await programStepModel.getProgramSteps(id) : [];
+      const programWithSteps = {
+        ...program,
+        program_steps: programSteps
+      };
+
       res.status(200).json({
         message: 'Program retrieved successfully',
-        program
+        program: programWithSteps
       });
     } catch (error) {
       if (error.message === 'Program not found') {
