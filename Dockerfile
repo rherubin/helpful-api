@@ -21,7 +21,10 @@ EXPOSE 9000
 
 # Set environment variables
 ENV NODE_ENV=production
-ENV DATABASE_PATH=./helpful-db.sqlite
+ENV DATABASE_PATH=/data/helpful-db.sqlite
+
+# Create data directory for volume mount
+RUN mkdir -p /data
 
 # Start the application
 CMD ["npm", "start"]
