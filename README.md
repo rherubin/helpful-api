@@ -240,15 +240,32 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
     "user": {
       "id": "unique_id",
       "email": "user@example.com",
-      "max_pairings": 1,
-      "created_at": "2024-01-01T00:00:00.000Z"
+      "user_name": null,
+      "partner_name": null,
+      "children": null
     },
     "access_token": "jwt_token",
-    "refresh_token": "refresh_jwt_token",
-    "expires_in": "1h",
-    "refresh_expires_in": "7d"
+    "refresh_token": "refresh_jwt_token", 
+    "expires_in": 3600,
+    "refresh_expires_in": 604800,
+    "pairings": [
+      {
+        "id": "pairing_id",
+        "status": "pending",
+        "partner_code": "ABC123",
+        "created_at": "2024-01-01T00:00:00.000Z",
+        "updated_at": "2024-01-01T00:00:00.000Z",
+        "partner": null
+      }
+    ],
+    "pairing_code": "ABC123"
   }
   ```
+  **Note**: 
+  - The response now includes a `pairings` array containing the user's current pairings
+  - A pairing request is automatically created for new users
+  - The `pairing_code` field contains the partner code for sharing (when automatic pairing is created)
+  - User object excludes sensitive fields (`max_pairings`, `created_at`, `password_hash`)
 
 
 #### Get User by ID

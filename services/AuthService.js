@@ -23,9 +23,28 @@ class AuthService {
       user: userData,
       access_token: accessToken,
       refresh_token: refreshToken,
-      expires_in: this.JWT_EXPIRES_IN,
-      refresh_expires_in: this.JWT_REFRESH_EXPIRES_IN
+      expires_in: this.parseExpirationToSeconds(this.JWT_EXPIRES_IN),
+      refresh_expires_in: this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN)
     };
+  }
+
+  // Parse expiration string to seconds
+  parseExpirationToSeconds(expiration) {
+    if (typeof expiration === 'number') return expiration;
+    
+    const match = expiration.match(/^(\d+)([smhd])$/);
+    if (!match) return 3600; // Default to 1 hour
+    
+    const value = parseInt(match[1]);
+    const unit = match[2];
+    
+    switch (unit) {
+      case 's': return value;
+      case 'm': return value * 60;
+      case 'h': return value * 60 * 60;
+      case 'd': return value * 60 * 60 * 24;
+      default: return 3600;
+    }
   }
 
   // Generate access token

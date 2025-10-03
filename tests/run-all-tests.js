@@ -4,6 +4,7 @@ const APITestRunner = require('./api-test');
 const OpenAITestRunner = require('./openai-test');
 const TherapyTestRunner = require('./run-therapy-tests');
 const AuthTestRunner = require('./auth-test');
+const UserCreationTestRunner = require('./user-creation-test');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -20,6 +21,7 @@ class TestSuiteRunner {
       runOpenAI: options.runOpenAI !== false, // Default true
       runTherapy: options.runTherapy !== false, // Default true
       runAuth: options.runAuth !== false, // Default true
+      runUserCreation: options.runUserCreation !== false, // Default true
       baseURL: options.baseURL || 'http://localhost:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
@@ -32,6 +34,7 @@ class TestSuiteRunner {
       openai: null,
       therapy: null,
       auth: null,
+      userCreation: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -251,6 +254,44 @@ class TestSuiteRunner {
     }
   }
 
+  async runUserCreationTests() {
+    if (!this.options.runUserCreation) {
+      this.log('Skipping user creation tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('👥 Running User Creation Test Suite', 'section');
+    
+    try {
+      const userCreationRunner = new UserCreationTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await userCreationRunner.runAllTests();
+      
+      this.results.userCreation = { 
+        success, 
+        skipped: false,
+        details: 'POST /users endpoint functionality including pairings',
+        passed: userCreationRunner.testResults.passed,
+        failed: userCreationRunner.testResults.failed,
+        total: userCreationRunner.testResults.total
+      };
+      
+      if (success) {
+        this.log('User creation tests completed successfully', 'success');
+      } else {
+        this.log('User creation tests failed', 'error');
+      }
+      
+      return this.results.userCreation;
+    } catch (error) {
+      this.log(`User creation tests failed: ${error.message}`, 'error');
+      this.results.userCreation = { success: false, error: error.message };
+      return this.results.userCreation;
+    }
+  }
+
   // Run all test suites
   async runAllTests() {
     this.log('🎯 Starting Comprehensive Test Suite', 'section');
@@ -263,6 +304,7 @@ class TestSuiteRunner {
     this.log(`  OpenAI Tests: ${this.options.runOpenAI ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Therapy Response Tests: ${this.options.runTherapy ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Authentication Tests: ${this.options.runAuth ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  User Creation Tests: ${this.options.runUserCreation ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
     // Check server health
@@ -324,6 +366,15 @@ class TestSuiteRunner {
     if (this.options.runAuth) {
       await this.runAuthTests();
       if (this.results.auth && !this.results.auth.success && !this.results.auth.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run user creation tests
+    if (this.options.runUserCreation) {
+      await this.runUserCreationTests();
+      if (this.results.userCreation && !this.results.userCreation.success && !this.results.userCreation.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -407,6 +458,17 @@ class TestSuiteRunner {
         this.log('🔐 Authentication Tests: PASSED', 'success');
       } else {
         this.log('🔐 Authentication Tests: FAILED', 'error');
+      }
+    }
+
+    // User creation test results
+    if (this.results.userCreation) {
+      if (this.results.userCreation.skipped) {
+        this.log('👥 User Creation Tests: SKIPPED', 'warn');
+      } else if (this.results.userCreation.success) {
+        this.log(`👥 User Creation Tests: PASSED (${this.results.userCreation.passed}/${this.results.userCreation.total})`, 'success');
+      } else {
+        this.log(`👥 User Creation Tests: FAILED (${this.results.userCreation.failed}/${this.results.userCreation.total} failures)`, 'error');
       }
     }
 

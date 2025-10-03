@@ -24,7 +24,10 @@ function createUserRoutes(userModel, authService, pairingService) {
         });
       }
 
-      const user = await userModel.createUser({ email, password });
+      const createdUser = await userModel.createUser({ email, password });
+      
+      // Get the complete user object for token generation
+      const user = await userModel.getUserById(createdUser.id);
       
       // Automatically create a pairing request for the new user
       let pairingCode = null;
@@ -41,8 +44,18 @@ function createUserRoutes(userModel, authService, pairingService) {
       // Set Authorization header for convenience
       res.set('Authorization', `Bearer ${tokenPayload.access_token}`);
       
-      // Extract user data and exclude max_pairings and created_at
-      const { max_pairings, created_at, ...filteredUser } = tokenPayload.user;
+      // Get user's pairings
+      let pairings = [];
+      try {
+        const pairingsResult = await pairingService.getUserPairings(user.id);
+        pairings = pairingsResult.pairings || [];
+      } catch (pairingError) {
+        // Log the error but don't fail user creation
+        console.warn('Failed to fetch pairings for new user:', pairingError.message);
+      }
+      
+      // Filter out sensitive fields for the response
+      const { max_pairings, created_at, updated_at, deleted_at, ...filteredUser } = tokenPayload.user;
       
       const response = {
         message: 'Account created successfully',
@@ -50,7 +63,8 @@ function createUserRoutes(userModel, authService, pairingService) {
         access_token: tokenPayload.access_token,
         refresh_token: tokenPayload.refresh_token,
         expires_in: tokenPayload.expires_in,
-        refresh_expires_in: tokenPayload.refresh_expires_in
+        refresh_expires_in: tokenPayload.refresh_expires_in,
+        pairings: pairings
       };
       
       // Include pairing code in response if it was successfully created
