@@ -1,8 +1,8 @@
 # Use the official Node.js 18 image
 FROM node:18-alpine
 
-# Install required packages for better-sqlite3
-RUN apk add --no-cache python3 make g++ sqlite
+# Install required packages for MySQL connectivity
+RUN apk add --no-cache python3 make g++
 
 # Set the working directory
 WORKDIR /app
@@ -21,10 +21,6 @@ EXPOSE 9000
 
 # Set environment variables
 ENV NODE_ENV=production
-ENV DATABASE_PATH=/data/helpful-db.sqlite
-
-# Create data directory for volume mount
-RUN mkdir -p /data
 
 # Start the application
 CMD ["npm", "start"]

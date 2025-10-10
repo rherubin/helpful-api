@@ -11,11 +11,8 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
-# Database files (auto-generated - see README for setup)
-*.sqlite
-*.sqlite3
-*.db
-helpful-db.sqlite
+# Database files
+# Note: MySQL database is hosted externally (Railway/cloud)
 
 # Logs
 logs
