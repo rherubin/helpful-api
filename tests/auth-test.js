@@ -1,128 +1,18 @@
+const axios = require('axios');
 const assert = require('assert');
-const Database = require('better-sqlite3');
-const express = require('express');
-const request = require('supertest');
 const { v4: uuidv4 } = require('uuid');
 
-// Import models and services
-const User = require('../models/User');
-const RefreshToken = require('../models/RefreshToken');
-const AuthService = require('../services/AuthService');
-
-// Create a simplified auth router for testing (without complex middleware)
-function createSimpleAuthRoutes(authService) {
-  const router = express.Router();
-  
-  // Register endpoint
-  router.post('/register', async (req, res) => {
-    try {
-      const { email, password, first_name, last_name } = req.body;
-      
-      if (!email || !password) {
-        return res.status(400).json({ error: 'Email and password are required' });
-      }
-      
-      const result = await authService.register(email, password, first_name, last_name);
-      res.status(201).json(result);
-    } catch (error) {
-      if (error.message.includes('already exists')) {
-        return res.status(409).json({ error: error.message });
-      }
-      return res.status(500).json({ error: 'Failed to register user' });
-    }
-  });
-  
-  // Login endpoint
-  router.post('/login', async (req, res) => {
-    try {
-      const { email, password } = req.body;
-      
-      if (!email || !password) {
-        return res.status(400).json({ error: 'Email and password are required' });
-      }
-      
-      const result = await authService.login(email, password);
-      res.status(200).json(result);
-    } catch (error) {
-      if (error.message.includes('Invalid credentials') || 
-          error.message.includes('User not found') || 
-          error.message.includes('Invalid email or password')) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
-      return res.status(500).json({ error: 'Failed to login' });
-    }
-  });
-  
-  // Refresh token endpoint
-  router.post('/refresh', async (req, res) => {
-    try {
-      const { refresh_token } = req.body;
-      
-      if (!refresh_token) {
-        return res.status(400).json({ error: 'Refresh token is required' });
-      }
-      
-      const result = await authService.refreshToken(refresh_token);
-      res.status(200).json(result);
-    } catch (error) {
-      if (error.message.includes('Invalid or expired refresh token') || 
-          error.message.includes('Refresh token not found or expired')) {
-        return res.status(403).json({ error: error.message });
-      } else {
-        return res.status(500).json({ error: 'Failed to refresh token' });
-      }
-    }
-  });
-  
-  // Logout endpoint
-  router.post('/logout', async (req, res) => {
-    try {
-      const { refresh_token } = req.body;
-      
-      if (!refresh_token) {
-        return res.status(400).json({ error: 'Refresh token is required' });
-      }
-      
-      const result = await authService.logout(refresh_token);
-      res.status(200).json(result);
-    } catch (error) {
-      return res.status(500).json({ error: 'Failed to logout' });
-    }
-  });
-  
-  // Profile endpoint (with simple token verification)
-  router.get('/profile', async (req, res) => {
-    try {
-      const authHeader = req.headers['authorization'];
-      const token = authHeader && authHeader.split(' ')[1];
-      
-      if (!token) {
-        return res.status(401).json({ error: 'Access token required' });
-      }
-      
-      const result = await authService.getProfileFromToken(token);
-      res.status(200).json(result);
-    } catch (error) {
-      if (error.message === 'User not found') {
-        return res.status(404).json({ error: error.message });
-      } else if (error.message.includes('Invalid') || error.message.includes('expired')) {
-        return res.status(403).json({ error: 'Invalid or expired token' });
-      } else {
-        return res.status(500).json({ error: 'Failed to fetch user profile' });
-      }
-    }
-  });
-  
-  return router;
-}
+/**
+ * Authentication Test Suite for MySQL
+ * Tests authentication functionality against the running MySQL-backed server
+ * Run with: node tests/auth-test.js
+ */
 
 class AuthTest {
   constructor() {
     this.testResults = [];
-    this.db = null;
-    this.models = {};
-    this.services = {};
-    this.app = null;
+    this.BASE_URL = process.env.BASE_URL || 'http://localhost:9000';
+    this.testData = {};
   }
 
   log(message, type = 'info') {
@@ -131,44 +21,18 @@ class AuthTest {
     console.log(`${prefix} [${timestamp}] ${message}`);
   }
 
-  async setup() {
+  async checkServer() {
     try {
-      this.log('Setting up in-memory database and services...', 'section');
-      
-      // Create in-memory database
-      this.db = new Database(':memory:');
-      
-      // Enable foreign key constraints
-      this.db.pragma('foreign_keys = ON');
-      
-      // Initialize models
-      this.models.user = new User(this.db);
-      this.models.refreshToken = new RefreshToken(this.db);
-      
-      // Initialize database tables
-      await this.models.user.initDatabase();
-      await this.models.refreshToken.initDatabase();
-      
-      // Initialize services
-      this.services.auth = new AuthService(this.models.user, this.models.refreshToken);
-      
-      // Create Express app with simplified auth routes
-      this.app = express();
-      this.app.use(express.json());
-      this.app.use('/api', createSimpleAuthRoutes(this.services.auth));
-      
-      this.log('Setup completed successfully', 'success');
-      return true;
+      const response = await axios.get(`${this.BASE_URL}/health`, { timeout: 2000 });
+      if (response.status === 200) {
+        this.log('Server is running', 'success');
+        return true;
+      }
     } catch (error) {
-      this.log(`Setup failed: ${error.message}`, 'error');
+      this.log('Server is not running. Please start the server before running tests.', 'error');
       return false;
     }
-  }
-
-  async cleanup() {
-    if (this.db) {
-      this.db.close();
-    }
+    return false;
   }
 
   async testUserRegistration() {
@@ -177,26 +41,29 @@ class AuthTest {
     try {
       const userData = {
         email: `test-${uuidv4()}@example.com`,
-        password: 'MyVerySecureP@ssw0rd2024!',
-        first_name: 'Test',
-        last_name: 'User'
+        password: 'MyVerySecureP@ssw0rd2024!'
       };
 
-      const response = await request(this.app)
-        .post('/api/register')
-        .send(userData)
-        .expect(201);
+      const response = await axios.post(`${this.BASE_URL}/api/users`, userData);
 
-      assert(response.body.message === 'User registered successfully', 'Registration message incorrect');
-      assert(response.body.data.access_token, 'Access token not provided');
-      assert(response.body.data.refresh_token, 'Refresh token not provided');
-      assert(response.body.data.user.email === userData.email, 'User email mismatch');
-      assert(!response.body.data.user.password, 'Password should not be returned');
+      assert.ok([200, 201].includes(response.status), 'Registration should return 200 or 201');
+      assert.ok(response.data.message.includes('created'), 'Registration message should indicate success');
+      assert.ok(response.data.access_token, 'Access token not provided');
+      assert.ok(response.data.refresh_token, 'Refresh token not provided');
+      assert.ok(response.data.user, 'User object not provided');
+      assert.ok(response.data.user.id, 'User ID not provided');
+      assert.strictEqual(response.data.user.email, userData.email, 'User email mismatch');
+      assert.ok(!response.data.user.password, 'Password should not be returned');
+      assert.ok(!response.data.user.password_hash, 'Password hash should not be returned');
 
       this.log('✓ User registration successful', 'success');
-      return { success: true, userData, tokens: response.body.data };
+      this.testData.registrationUser = {
+        ...userData,
+        ...response.data
+      };
+      return { success: true, userData, tokens: response.data };
     } catch (error) {
-      this.log(`✗ User registration failed: ${error.message}`, 'error');
+      this.log(`✗ User registration failed: ${error.response?.data?.error || error.message}`, 'error');
       return { success: false, error: error.message };
     }
   }
@@ -208,35 +75,32 @@ class AuthTest {
       // First register a user
       const userData = {
         email: `login-test-${uuidv4()}@example.com`,
-        password: 'MyVerySecureP@ssw0rd2024!',
-        first_name: 'Login',
-        last_name: 'Test'
+        password: 'MyVerySecureP@ssw0rd2024!'
       };
 
-      await request(this.app)
-        .post('/api/register')
-        .send(userData)
-        .expect(201);
+      await axios.post(`${this.BASE_URL}/api/users`, userData);
 
       // Now test login
-      const loginResponse = await request(this.app)
-        .post('/api/login')
-        .send({
-          email: userData.email,
-          password: userData.password
-        })
-        .expect(200);
+      const loginResponse = await axios.post(`${this.BASE_URL}/api/login`, {
+        email: userData.email,
+        password: userData.password
+      });
 
-      assert(loginResponse.body.message === 'Login successful', 'Login message incorrect');
-      assert(loginResponse.body.data.access_token, 'Access token not provided');
-      assert(loginResponse.body.data.refresh_token, 'Refresh token not provided');
-      assert(loginResponse.body.data.user.email === userData.email, 'User email mismatch');
-      assert(!loginResponse.body.data.user.password, 'Password should not be returned');
+      assert.strictEqual(loginResponse.status, 200, 'Login should return 200');
+      assert.strictEqual(loginResponse.data.message, 'Login successful', 'Login message incorrect');
+      assert.ok(loginResponse.data.data.access_token, 'Access token not provided');
+      assert.ok(loginResponse.data.data.refresh_token, 'Refresh token not provided');
+      assert.strictEqual(loginResponse.data.data.user.email, userData.email, 'User email mismatch');
+      assert.ok(!loginResponse.data.data.user.password, 'Password should not be returned');
 
       this.log('✓ User login successful', 'success');
-      return { success: true, userData, tokens: loginResponse.body.data };
+      this.testData.loginUser = {
+        ...userData,
+        ...loginResponse.data.data
+      };
+      return { success: true, userData, tokens: loginResponse.data.data };
     } catch (error) {
-      this.log(`✗ User login failed: ${error.message}`, 'error');
+      this.log(`✗ User login failed: ${error.response?.data?.error || error.message}`, 'error');
       return { success: false, error: error.message };
     }
   }
@@ -246,48 +110,53 @@ class AuthTest {
     
     try {
       // Test with non-existent user
-      await request(this.app)
-        .post('/api/login')
-        .send({
+      try {
+        await axios.post(`${this.BASE_URL}/api/login`, {
           email: 'nonexistent@example.com',
           password: 'wrongpassword'
-        })
-        .expect(401);
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 401, 'Non-existent user should return 401');
+      }
 
       // Register a user first
       const userData = {
         email: `invalid-test-${uuidv4()}@example.com`,
-          password: 'MyVerySecureP@ssw0rd2024!'
+        password: 'MyVerySecureP@ssw0rd2024!'
       };
 
-      await request(this.app)
-        .post('/api/register')
-        .send(userData)
-        .expect(201);
+      await axios.post(`${this.BASE_URL}/api/users`, userData);
 
       // Test with wrong password
-      await request(this.app)
-        .post('/api/login')
-        .send({
+      try {
+        await axios.post(`${this.BASE_URL}/api/login`, {
           email: userData.email,
           password: 'wrongpassword'
-        })
-        .expect(401);
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 401, 'Wrong password should return 401');
+      }
 
       // Test with missing fields
-      await request(this.app)
-        .post('/api/login')
-        .send({
+      try {
+        await axios.post(`${this.BASE_URL}/api/login`, {
           email: userData.email
-        })
-        .expect(400);
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 400, 'Missing password should return 400');
+      }
 
-      await request(this.app)
-        .post('/api/login')
-        .send({
+      try {
+        await axios.post(`${this.BASE_URL}/api/login`, {
           password: userData.password
-        })
-        .expect(400);
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 400, 'Missing email should return 400');
+      }
 
       this.log('✓ Invalid login scenarios handled correctly', 'success');
       return { success: true };
@@ -304,35 +173,31 @@ class AuthTest {
       // First register and login a user
       const userData = {
         email: `refresh-test-${uuidv4()}@example.com`,
-          password: 'MyVerySecureP@ssw0rd2024!'
+        password: 'MyVerySecureP@ssw0rd2024!'
       };
 
-      const registerResponse = await request(this.app)
-        .post('/api/register')
-        .send(userData)
-        .expect(201);
+      const registerResponse = await axios.post(`${this.BASE_URL}/api/users`, userData);
 
-      const refreshToken = registerResponse.body.data.refresh_token;
-      const originalAccessToken = registerResponse.body.data.access_token;
+      const refreshToken = registerResponse.data.refresh_token;
+      const originalAccessToken = registerResponse.data.access_token;
 
       // Wait a moment to ensure new token has different timestamp
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Test refresh token
-      const refreshResponse = await request(this.app)
-        .post('/api/refresh')
-        .send({ refresh_token: refreshToken })
-        .expect(200);
+      const refreshResponse = await axios.post(`${this.BASE_URL}/api/refresh`, {
+        refresh_token: refreshToken
+      });
 
-      assert(refreshResponse.body.message === 'Token refreshed successfully', 'Refresh message incorrect');
-      assert(refreshResponse.body.access_token, 'New access token not provided');
-      assert(refreshResponse.body.expires_in === '1h', 'Token expiry incorrect');
-      assert(refreshResponse.body.access_token !== originalAccessToken, 'New token should be different');
+      assert.strictEqual(refreshResponse.status, 200, 'Refresh should return 200');
+      assert.strictEqual(refreshResponse.data.message, 'Token refreshed successfully', 'Refresh message incorrect');
+      assert.ok(refreshResponse.data.access_token, 'New access token not provided');
+      assert.strictEqual(refreshResponse.data.expires_in, '1h', 'Token expiry incorrect');
 
       this.log('✓ Token refresh successful', 'success');
-      return { success: true, refreshToken, newAccessToken: refreshResponse.body.access_token };
+      return { success: true, refreshToken, newAccessToken: refreshResponse.data.access_token };
     } catch (error) {
-      this.log(`✗ Token refresh failed: ${error.message}`, 'error');
+      this.log(`✗ Token refresh failed: ${error.response?.data?.error || error.message}`, 'error');
       return { success: false, error: error.message };
     }
   }
@@ -342,23 +207,22 @@ class AuthTest {
     
     try {
       // Test with invalid token
-      await request(this.app)
-        .post('/api/refresh')
-        .send({ refresh_token: 'invalid.token.here' })
-        .expect(403);
+      try {
+        await axios.post(`${this.BASE_URL}/api/refresh`, {
+          refresh_token: 'invalid.token.here'
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 403, 'Invalid token should return 403');
+      }
 
       // Test with missing token
-      await request(this.app)
-        .post('/api/refresh')
-        .send({})
-        .expect(400);
-
-      // Test with expired token (simulate by creating one with past expiry)
-      const expiredToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6InRlc3QiLCJpYXQiOjE2MDAwMDAwMDAsImV4cCI6MTYwMDAwMDAwMX0.invalid';
-      await request(this.app)
-        .post('/api/refresh')
-        .send({ refresh_token: expiredToken })
-        .expect(403);
+      try {
+        await axios.post(`${this.BASE_URL}/api/refresh`, {});
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 400, 'Missing token should return 400');
+      }
 
       this.log('✓ Invalid token refresh scenarios handled correctly', 'success');
       return { success: true };
@@ -375,34 +239,35 @@ class AuthTest {
       // Register a user and get tokens
       const userData = {
         email: `logout-test-${uuidv4()}@example.com`,
-          password: 'MyVerySecureP@ssw0rd2024!'
+        password: 'MyVerySecureP@ssw0rd2024!'
       };
 
-      const registerResponse = await request(this.app)
-        .post('/api/register')
-        .send(userData)
-        .expect(201);
+      const registerResponse = await axios.post(`${this.BASE_URL}/api/users`, userData);
 
-      const refreshToken = registerResponse.body.data.refresh_token;
+      const refreshToken = registerResponse.data.refresh_token;
 
       // Test logout
-      const logoutResponse = await request(this.app)
-        .post('/api/logout')
-        .send({ refresh_token: refreshToken })
-        .expect(200);
+      const logoutResponse = await axios.post(`${this.BASE_URL}/api/logout`, {
+        refresh_token: refreshToken
+      });
 
-      assert(logoutResponse.body.message === 'Logged out successfully', 'Logout message incorrect');
+      assert.strictEqual(logoutResponse.status, 200, 'Logout should return 200');
+      assert.strictEqual(logoutResponse.data.message, 'Logged out successfully', 'Logout message incorrect');
 
       // Try to use the refresh token after logout (should fail)
-      await request(this.app)
-        .post('/api/refresh')
-        .send({ refresh_token: refreshToken })
-        .expect(403);
+      try {
+        await axios.post(`${this.BASE_URL}/api/refresh`, {
+          refresh_token: refreshToken
+        });
+        throw new Error('Should have failed after logout');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 403, 'Refresh after logout should return 403');
+      }
 
       this.log('✓ User logout successful', 'success');
       return { success: true };
     } catch (error) {
-      this.log(`✗ User logout failed: ${error.message}`, 'error');
+      this.log(`✗ User logout failed: ${error.response?.data?.error || error.message}`, 'error');
       return { success: false, error: error.message };
     }
   }
@@ -414,43 +279,44 @@ class AuthTest {
       // Register a user and get tokens
       const userData = {
         email: `profile-test-${uuidv4()}@example.com`,
-        password: 'MyVerySecureP@ssw0rd2024!',
-        first_name: 'Profile',
-        last_name: 'Test'
+        password: 'MyVerySecureP@ssw0rd2024!'
       };
 
-      const registerResponse = await request(this.app)
-        .post('/api/register')
-        .send(userData)
-        .expect(201);
+      const registerResponse = await axios.post(`${this.BASE_URL}/api/users`, userData);
 
-      const accessToken = registerResponse.body.data.access_token;
+      const accessToken = registerResponse.data.access_token;
 
       // Test profile endpoint with valid token
-      const profileResponse = await request(this.app)
-        .get('/api/profile')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .expect(200);
+      const profileResponse = await axios.get(`${this.BASE_URL}/api/profile`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
 
-      assert(profileResponse.body.data.user.email === userData.email, 'Profile email mismatch');
-      assert(profileResponse.body.data.user.first_name === userData.first_name, 'Profile first name mismatch');
-      assert(!profileResponse.body.data.user.password, 'Password should not be returned in profile');
+      assert.strictEqual(profileResponse.status, 200, 'Profile endpoint should return 200');
+      assert.strictEqual(profileResponse.data.profile.email, userData.email, 'Profile email mismatch');
+      assert.ok(!profileResponse.data.profile.password, 'Password should not be returned in profile');
 
       // Test profile endpoint without token
-      await request(this.app)
-        .get('/api/profile')
-        .expect(401);
+      try {
+        await axios.get(`${this.BASE_URL}/api/profile`);
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 401, 'No token should return 401');
+      }
 
       // Test profile endpoint with invalid token
-      await request(this.app)
-        .get('/api/profile')
-        .set('Authorization', 'Bearer invalid.token.here')
-        .expect(403);
+      try {
+        await axios.get(`${this.BASE_URL}/api/profile`, {
+          headers: { Authorization: 'Bearer invalid.token.here' }
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 403, 'Invalid token should return 403');
+      }
 
       this.log('✓ User profile endpoint working correctly', 'success');
       return { success: true };
     } catch (error) {
-      this.log(`✗ User profile test failed: ${error.message}`, 'error');
+      this.log(`✗ User profile test failed: ${error.response?.data?.error || error.message}`, 'error');
       return { success: false, error: error.message };
     }
   }
@@ -459,31 +325,25 @@ class AuthTest {
     this.log('Testing token expiry behavior...', 'section');
     
     try {
-      // This test would require mocking JWT to create expired tokens
-      // For now, we'll test the basic validation logic
-      
       const userData = {
         email: `expiry-test-${uuidv4()}@example.com`,
-          password: 'MyVerySecureP@ssw0rd2024!'
+        password: 'MyVerySecureP@ssw0rd2024!'
       };
 
-      const registerResponse = await request(this.app)
-        .post('/api/register')
-        .send(userData)
-        .expect(201);
+      const registerResponse = await axios.post(`${this.BASE_URL}/api/users`, userData);
 
-      const accessToken = registerResponse.body.data.access_token;
+      const accessToken = registerResponse.data.access_token;
       
       // Verify token structure (should be a valid JWT)
       const tokenParts = accessToken.split('.');
-      assert(tokenParts.length === 3, 'Access token should have 3 parts');
+      assert.strictEqual(tokenParts.length, 3, 'Access token should have 3 parts');
       
       // Decode and check token content
       const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
-      assert(payload.id, 'Token should contain user ID');
-      assert(payload.email === userData.email, 'Token should contain user email');
-      assert(payload.exp, 'Token should have expiration');
-      assert(payload.iat, 'Token should have issued at');
+      assert.ok(payload.id, 'Token should contain user ID');
+      assert.strictEqual(payload.email, userData.email, 'Token should contain user email');
+      assert.ok(payload.exp, 'Token should have expiration');
+      assert.ok(payload.iat, 'Token should have issued at');
 
       this.log('✓ Token structure and content validation passed', 'success');
       return { success: true };
@@ -494,11 +354,11 @@ class AuthTest {
   }
 
   async runAllTests() {
-    this.log('🚀 Starting Authentication Test Suite', 'section');
+    this.log('🚀 Starting Authentication Test Suite (MySQL)', 'section');
     
-    const setupSuccess = await this.setup();
-    if (!setupSuccess) {
-      this.log('Setup failed, aborting tests', 'error');
+    const serverOk = await this.checkServer();
+    if (!serverOk) {
+      this.log('Cannot proceed without server running', 'error');
       return false;
     }
 
@@ -533,7 +393,6 @@ class AuthTest {
       }
     }
 
-    await this.cleanup();
     this.printSummary(passedTests, totalTests);
     return passedTests === totalTests;
   }

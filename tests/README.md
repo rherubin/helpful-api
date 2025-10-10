@@ -2,6 +2,39 @@
 
 This directory contains comprehensive test suites for the Helpful API, designed for both development and CI/CD pipeline integration.
 
+## ⚠️ MySQL Migration Update
+
+After migrating from SQLite to MySQL, the test suite has been updated. 
+
+### ✅ Recommended Test Suite (MySQL Compatible)
+
+**`npm run test:mysql`** - **100% Working with MySQL** ✅
+- Comprehensive integration tests for MySQL-based API
+- Tests all core functionality against running server
+- **14/14 tests passing (100% success rate)**
+- See [MYSQL_TESTING.md](./MYSQL_TESTING.md) for details
+
+**Quick Start:**
+```bash
+# Start MySQL and server
+brew services start mysql
+npm start
+
+# Run MySQL-compatible tests (in new terminal)
+npm run test:mysql
+```
+
+### ⚠️ Legacy Tests (Need MySQL Updates)
+
+The following tests were written for SQLite and need refactoring:
+- `auth-test.js`
+- `therapy-response-test.js`  
+- `therapy-response-integration-test.js`
+
+These create their own SQLite database instances and need to be updated to work with MySQL connection pools.
+
+---
+
 ## Test Categories
 
 ### 🔒 Security Tests (`security-test.js`)

@@ -2,25 +2,8 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
-// Try to require better-sqlite3, and if it fails, install it properly
-let Database;
-try {
-  Database = require('better-sqlite3');
-  console.log('better-sqlite3 loaded successfully');
-} catch (error) {
-  console.log('better-sqlite3 failed to load, attempting to install:', error.message);
-  try {
-    const { execSync } = require('child_process');
-    console.log('Installing better-sqlite3 from source...');
-    execSync('npm install better-sqlite3 --build-from-source', { stdio: 'inherit' });
-    Database = require('better-sqlite3');
-    console.log('better-sqlite3 installed and loaded successfully');
-  } catch (installError) {
-    console.error('Failed to install better-sqlite3:', installError.message);
-    console.error('Application cannot start without database support');
-    process.exit(1);
-  }
-}
+// Import MySQL database configuration
+const { getPool, testConnection, closePool } = require('./config/database');
 
 // Import models and services
 const User = require('./models/User');
@@ -52,16 +35,22 @@ app.use(express.json());
 app.use(apiLimiter); // Apply rate limiting to all API endpoints
 
 // Database setup
-const DATABASE_PATH = process.env.DATABASE_PATH || './helpful-db.sqlite';
 let db;
-try {
-  db = new Database(DATABASE_PATH);
-  console.log('Connected to SQLite database.');
-  initializeApp();
-} catch (err) {
-  console.error('Error opening database:', err.message);
-  process.exit(1);
+async function setupDatabase() {
+  try {
+    await testConnection();
+    db = getPool();
+    console.log('Connected to MySQL database.');
+    await initializeApp();
+  } catch (err) {
+    console.error('Error connecting to database:', err.message);
+    console.error('Please ensure MySQL is running and credentials are correct.');
+    process.exit(1);
+  }
 }
+
+// Start database setup
+setupDatabase();
 
 // Initialize models and services
 let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, authService, pairingService, chatGPTService;
@@ -167,12 +156,22 @@ app.listen(PORT, HOST, () => {
 });
 
 // Graceful shutdown
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   try {
-    db.close();
-    console.log('Database connection closed.');
+    await closePool();
+    console.log('Database connection pool closed.');
   } catch (err) {
-    console.error('Error closing database:', err.message);
+    console.error('Error closing database pool:', err.message);
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  try {
+    await closePool();
+    console.log('Database connection pool closed.');
+  } catch (err) {
+    console.error('Error closing database pool:', err.message);
   }
   process.exit(0);
 }); 

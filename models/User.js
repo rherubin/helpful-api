@@ -2,204 +2,54 @@ const bcrypt = require('bcrypt');
 
 class User {
   constructor(db) {
-    this.db = db;
+    this.db = db; // MySQL pool
   }
 
-  // Helper method to promisify better-sqlite3 operations for compatibility
-  runAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.run(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
+  // Helper method to execute queries
+  async query(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results;
   }
 
-  getAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.get(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
-  allAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.all(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
+  async queryOne(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results[0] || null;
   }
 
   // Initialize database tables
   async initDatabase() {
     const createUsersTable = `
       CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        user_name TEXT,
-        partner_name TEXT,
-        children INTEGER,
-        max_pairings INTEGER DEFAULT 1,
+        id VARCHAR(50) PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        user_name VARCHAR(255) DEFAULT NULL,
+        partner_name VARCHAR(255) DEFAULT NULL,
+        children INT DEFAULT NULL,
+        max_pairings INT DEFAULT 1,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_email (email),
+        INDEX idx_deleted_at (deleted_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
 
     try {
-      await this.runAsync(createUsersTable);
+      await this.query(createUsersTable);
       console.log('Users table initialized successfully.');
-      
-      // Add deleted_at column if it doesn't exist (for existing databases)
-      try {
-        await this.runAsync("ALTER TABLE users ADD COLUMN deleted_at DATETIME DEFAULT NULL");
-      } catch (alterErr) {
-        // Ignore error if column already exists
-        if (!alterErr.message.includes('duplicate column name')) {
-          console.error('Error adding deleted_at column:', alterErr.message);
-        }
-      }
-
-      // Add user_name, partner_name, children columns if they don't exist
-      try {
-        await this.runAsync("ALTER TABLE users ADD COLUMN user_name TEXT");
-      } catch (alterErr) {
-        if (!alterErr.message.includes('duplicate column name')) {
-          console.error('Error adding user_name column to users:', alterErr.message);
-        }
-      }
-
-      try {
-        await this.runAsync("ALTER TABLE users ADD COLUMN partner_name TEXT");
-      } catch (alterErr) {
-        if (!alterErr.message.includes('duplicate column name')) {
-          console.error('Error adding partner_name column to users:', alterErr.message);
-        }
-      }
-
-      try {
-        await this.runAsync("ALTER TABLE users ADD COLUMN children INTEGER");
-      } catch (alterErr) {
-        if (!alterErr.message.includes('duplicate column name')) {
-          console.error('Error adding children column to users:', alterErr.message);
-        }
-      }
-
-      // Migration logic for removing first_name and last_name columns
-      try {
-        const tableInfo = await this.allAsync("PRAGMA table_info(users)");
-        const hasFirstName = tableInfo.some(col => col.name === 'first_name');
-        const hasLastName = tableInfo.some(col => col.name === 'last_name');
-        
-        if (hasFirstName || hasLastName) {
-          console.log('Migrating users table to remove first_name and last_name columns...');
-          
-          // Create new table without first_name and last_name
-          const createNewTable = `
-            CREATE TABLE users_new (
-              id TEXT PRIMARY KEY,
-              email TEXT UNIQUE NOT NULL,
-              password_hash TEXT NOT NULL,
-              user_name TEXT,
-              partner_name TEXT,
-              children INTEGER,
-              max_pairings INTEGER DEFAULT 1,
-              deleted_at DATETIME DEFAULT NULL,
-              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-          `;
-          
-          await this.runAsync(createNewTable);
-          
-          // Copy data from old table to new table (excluding first_name and last_name)
-          await this.runAsync(`
-            INSERT INTO users_new (id, email, password_hash, user_name, partner_name, children, max_pairings, deleted_at, created_at, updated_at)
-            SELECT id, email, password_hash, user_name, partner_name, children, max_pairings, deleted_at, created_at, updated_at
-            FROM users
-          `);
-          
-          // Drop old table and rename new table
-          await this.runAsync("DROP TABLE users");
-          await this.runAsync("ALTER TABLE users_new RENAME TO users");
-          
-          console.log('Users table migration completed successfully.');
-        }
-      } catch (migrationErr) {
-        console.error('Error migrating users table:', migrationErr.message);
-        // Don't throw here as the table might already be correct
-      }
-
-
-      // Remove pairing_code column if it exists (migration)
-      try {
-        const checkQuery = "PRAGMA table_info(users)";
-        const columns = await this.allAsync(checkQuery);
-        const pairingCodeColumn = columns.find(col => col.name === 'pairing_code');
-        
-        if (pairingCodeColumn) {
-          // Need to migrate - recreate table without pairing_code
-          await this.runAsync('BEGIN');
-          
-          const createNewTable = `
-            CREATE TABLE users_new (
-              id TEXT PRIMARY KEY,
-              email TEXT UNIQUE NOT NULL,
-              first_name TEXT,
-              last_name TEXT,
-              password_hash TEXT NOT NULL,
-              max_pairings INTEGER DEFAULT 1,
-              deleted_at DATETIME DEFAULT NULL,
-              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-          `;
-          
-          await this.runAsync(createNewTable);
-          
-          // Copy existing data (excluding pairing_code)
-          await this.runAsync(`
-            INSERT INTO users_new (id, email, first_name, last_name, password_hash, max_pairings, deleted_at, created_at, updated_at)
-            SELECT id, email, first_name, last_name, password_hash, max_pairings, deleted_at, created_at, updated_at FROM users
-          `);
-          
-          await this.runAsync('DROP TABLE users');
-          await this.runAsync('ALTER TABLE users_new RENAME TO users');
-          await this.runAsync('COMMIT');
-          
-          console.log('Migrated users table to remove pairing_code column.');
-        }
-      } catch (migErr) {
-        try { await this.runAsync('ROLLBACK'); } catch (_) {}
-        console.warn('Migration check/operation failed (pairing_code removal). Proceeding:', migErr.message);
-      }
     } catch (err) {
       console.error('Error creating users table:', err.message);
       throw err;
     }
   }
 
-
-
   // Generate unique ID
   generateUniqueId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 
-  // Password validation function (back to 8 chars for easier account creation)
+  // Password validation function
   validatePassword(password) {
     // Minimum 8 characters for balance of security and usability
     if (password.length < 8) {
@@ -272,11 +122,11 @@ class User {
 
     const insertUser = `
       INSERT INTO users (id, email, password_hash, max_pairings, created_at, updated_at)
-      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, NOW(), NOW())
     `;
 
     try {
-      await this.runAsync(insertUser, [userId, email, hash, max_pairings]);
+      await this.query(insertUser, [userId, email, hash, max_pairings]);
       
       return {
         id: userId,
@@ -285,13 +135,10 @@ class User {
         created_at: new Date().toISOString()
       };
     } catch (err) {
-      if (err.message.includes('UNIQUE constraint failed')) {
-        if (err.message.includes('email')) {
-          throw new Error('Email already exists');
-        } else {
-          throw new Error('Failed to create user');
-        }
+      if (err.code === 'ER_DUP_ENTRY') {
+        throw new Error('Email already exists');
       } else {
+        console.error('Database error:', err);
         throw new Error('Failed to create user');
       }
     }
@@ -300,7 +147,7 @@ class User {
   // Get user by ID (excluding soft deleted)
   async getUserById(id) {
     try {
-      const row = await this.getAsync('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [id]);
+      const row = await this.queryOne('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [id]);
       if (!row) {
         throw new Error('User not found');
       }
@@ -318,7 +165,7 @@ class User {
   // Get user by email (excluding soft deleted)
   async getUserByEmail(email) {
     try {
-      const row = await this.getAsync('SELECT * FROM users WHERE email = ? AND deleted_at IS NULL', [email]);
+      const row = await this.queryOne('SELECT * FROM users WHERE email = ? AND deleted_at IS NULL', [email]);
       if (!row) {
         throw new Error('User not found');
       }
@@ -332,8 +179,6 @@ class User {
       throw new Error('Failed to fetch user');
     }
   }
-
-
 
   // Update user
   async updateUser(id, updateData) {
@@ -368,27 +213,28 @@ class User {
       updateValues.push(children);
     }
 
-    // Check if at least one field is being updated (excluding updated_at)
+    // Check if at least one field is being updated
     if (updateFields.length === 0) {
       throw new Error('At least one field must be provided for update');
     }
     
-    // Always update the updated_at timestamp
-    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    // updated_at is automatically handled by ON UPDATE CURRENT_TIMESTAMP
     
     const updateQuery = `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`;
     updateValues.push(id);
 
     try {
-      const result = await this.runAsync(updateQuery, updateValues);
-      if (result.changes === 0) {
+      const result = await this.query(updateQuery, updateValues);
+      if (result.affectedRows === 0) {
         throw new Error('User not found');
       }
       // Get updated user data
       return await this.getUserById(id);
     } catch (err) {
-      if (err.message.includes('UNIQUE constraint failed') && err.message.includes('email')) {
+      if (err.code === 'ER_DUP_ENTRY') {
         throw new Error('Email already exists');
+      } else if (err.message === 'User not found') {
+        throw err;
       } else {
         throw new Error('Failed to update user');
       }
@@ -410,40 +256,37 @@ class User {
 
   // Soft delete a user and cascade delete their pairings
   async softDeleteUser(id, pairingModel = null) {
-    return new Promise(async (resolve, reject) => {
-      try {
-        // First, soft delete the user
-        const updateUserQuery = `
-          UPDATE users 
-          SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
-          WHERE id = ? AND deleted_at IS NULL
-        `;
+    try {
+      // First, soft delete the user
+      const updateUserQuery = `
+        UPDATE users 
+        SET deleted_at = NOW(), updated_at = NOW()
+        WHERE id = ? AND deleted_at IS NULL
+      `;
 
-        const result = await this.runAsync(updateUserQuery, [id]);
-        if (result.changes === 0) {
-          throw new Error('User not found or already deleted');
-        }
-
-        // Then, cascade soft delete their pairings if pairingModel is provided
-        let pairingResult = null;
-        if (pairingModel) {
-          try {
-            pairingResult = await pairingModel.softDeleteUserPairings(id);
-          } catch (pairingError) {
-            console.warn('Warning: Failed to cascade delete user pairings:', pairingError.message);
-          }
-        }
-
-        resolve({ 
-          message: 'User deleted successfully', 
-          deleted_at: new Date().toISOString(),
-          cascade_result: pairingResult
-        });
-
-      } catch (error) {
-        reject(error);
+      const result = await this.query(updateUserQuery, [id]);
+      if (result.affectedRows === 0) {
+        throw new Error('User not found or already deleted');
       }
-    });
+
+      // Then, cascade soft delete their pairings if pairingModel is provided
+      let pairingResult = null;
+      if (pairingModel) {
+        try {
+          pairingResult = await pairingModel.softDeleteUserPairings(id);
+        } catch (pairingError) {
+          console.warn('Warning: Failed to cascade delete user pairings:', pairingError.message);
+        }
+      }
+
+      return { 
+        message: 'User deleted successfully', 
+        deleted_at: new Date().toISOString(),
+        cascade_result: pairingResult
+      };
+    } catch (error) {
+      throw error;
+    }
   }
 
   // Restore a soft deleted user
@@ -451,12 +294,12 @@ class User {
     try {
       const updateQuery = `
         UPDATE users 
-        SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP 
+        SET deleted_at = NULL, updated_at = NOW()
         WHERE id = ? AND deleted_at IS NOT NULL
       `;
 
-      const result = await this.runAsync(updateQuery, [id]);
-      if (result.changes === 0) {
+      const result = await this.query(updateQuery, [id]);
+      if (result.affectedRows === 0) {
         throw new Error('User not found or not deleted');
       }
       return { message: 'User restored successfully' };
@@ -468,7 +311,7 @@ class User {
   // Get user by ID including soft deleted (for admin purposes)
   async getUserByIdIncludingDeleted(id) {
     try {
-      const row = await this.getAsync('SELECT * FROM users WHERE id = ?', [id]);
+      const row = await this.queryOne('SELECT * FROM users WHERE id = ?', [id]);
       if (!row) {
         throw new Error('User not found');
       }
@@ -482,7 +325,7 @@ class User {
   async getDeletedUsers() {
     try {
       const query = 'SELECT * FROM users WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC';
-      const rows = await this.allAsync(query);
+      const rows = await this.query(query);
       return rows;
     } catch (err) {
       throw new Error('Failed to fetch deleted users');
@@ -490,4 +333,4 @@ class User {
   }
 }
 
-module.exports = User; 
+module.exports = User;

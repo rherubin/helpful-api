@@ -1,6 +1,6 @@
 # Helpful API
 
-A comprehensive Node.js REST API with SQLite backend featuring user management, JWT authentication, a flexible pairing system, AI-generated therapy programs with structured program steps, and efficient combined endpoints for optimal client performance.
+A comprehensive Node.js REST API with MySQL backend featuring user management, JWT authentication, a flexible pairing system, AI-generated therapy programs with structured program steps, and efficient combined endpoints for optimal client performance.
 
 ## Features
 
@@ -19,8 +19,9 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
 - **Complete Pairing System**: Full end-to-end pairing workflow with acceptance, rejection, and profile integration
 - **Password Security**: Bcrypt hashing with strict password requirements (uppercase, lowercase, number, special char)
 - **Token Management**: Short-lived access tokens (15min) with long-lived refresh tokens (7 days)
-- **Database Integrity**: SQLite with automatic schema creation and proper JOIN handling
+- **Database Integrity**: MySQL with automatic schema creation and proper JOIN handling
 - **RESTful Design**: Clean, consistent API with comprehensive error handling and status codes
+- **Railway Deployment**: Optimized for Railway platform with MySQL database service
 
 ## Setup
 
@@ -29,32 +30,66 @@ A comprehensive Node.js REST API with SQLite backend featuring user management, 
    npm install
    ```
 
-2. Create a `.env` file in the root directory (optional):
+2. Create a `.env` file in the root directory:
    ```
    PORT=9000
    NODE_ENV=development
+   HOST=0.0.0.0
+   
+   # MySQL Database Configuration
+   MYSQL_HOST=localhost
+   MYSQL_PORT=3306
+   MYSQL_USER=root
+   MYSQL_PASSWORD=your_password
+   MYSQL_DATABASE=helpful_db
+   
+   # Or use MySQL connection URL (preferred for Railway)
+   # MYSQL_URL=mysql://user:password@host:port/database
+   
+   # JWT Configuration
    JWT_SECRET=your-secret-key-change-in-production
    JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
    JWT_EXPIRES_IN=1h
    JWT_REFRESH_EXPIRES_IN=7d
-   DATABASE_PATH=./helpful-db.sqlite
+   
+   # OpenAI API
    OPENAI_API_KEY=your-openai-api-key-for-therapy-content
    ```
 
-3. **Database Setup** (Automatic):
+3. **Database Setup**:
    
-   The SQLite database (`helpful-db.sqlite`) will be created automatically when you first start the server. The application will:
-   - Create the database file if it doesn't exist
-   - Initialize all required tables (users, refresh_tokens, pairings, programs, program_steps)
-   - Set up proper indexes and constraints
-   - Automatically migrate existing databases to support new features
+   ### Local Development
    
-   **Note**: Database files are excluded from version control. Each developer gets a clean database on first run.
+   **Option 1: Local MySQL**
+   1. Install MySQL 8.0+
+   2. Create a database:
+      ```sql
+      CREATE DATABASE helpful_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+      ```
+   3. Update your `.env` file with MySQL credentials
+   4. Start the server - tables will be created automatically
    
-   **Development Tips**:
-   - To reset your database: Stop the server, delete `helpful-db.sqlite`, then restart
-   - First user created will have ID and pairing code generated automatically
-   - All tables and schemas are created automatically - no manual SQL needed
+   **Option 2: Docker MySQL**
+   ```bash
+   docker run --name helpful-mysql \
+     -e MYSQL_ROOT_PASSWORD=password \
+     -e MYSQL_DATABASE=helpful_db \
+     -p 3306:3306 \
+     -d mysql:8.0
+   ```
+   
+   ### Railway Deployment
+   
+   For production deployment on Railway:
+   1. See [RAILWAY_SETUP.md](./RAILWAY_SETUP.md) for detailed instructions
+   2. Add MySQL database service in Railway dashboard
+   3. Railway automatically provides `MYSQL_URL` environment variable
+   4. Set `JWT_SECRET`, `JWT_REFRESH_SECRET`, and `OPENAI_API_KEY`
+   
+   **Automatic Schema Creation**:
+   - All tables are created automatically on first connection
+   - Proper indexes and foreign keys are set up automatically
+   - No manual SQL migration needed
 
 4. Start the server:
    ```bash
@@ -880,100 +915,117 @@ Without this configuration, the system will log warnings but continue normal ope
 
 ## Database Schema
 
-The SQLite database automatically creates the following tables:
+The MySQL database automatically creates the following tables:
 
 ### Users Table
 ```sql
 CREATE TABLE users (
-  id TEXT PRIMARY KEY,
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  user_name TEXT,
-  partner_name TEXT,
-  children INTEGER,
-  max_pairings INTEGER DEFAULT 1,
+  id VARCHAR(50) PRIMARY KEY,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  user_name VARCHAR(255) DEFAULT NULL,
+  partner_name VARCHAR(255) DEFAULT NULL,
+  children INT DEFAULT NULL,
+  max_pairings INT DEFAULT 1,
   deleted_at DATETIME DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_email (email),
+  INDEX idx_deleted_at (deleted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
 ### Refresh Tokens Table
 ```sql
 CREATE TABLE refresh_tokens (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  token TEXT UNIQUE NOT NULL,
+  id VARCHAR(50) PRIMARY KEY,
+  user_id VARCHAR(50) NOT NULL,
+  token VARCHAR(500) UNIQUE NOT NULL,
   expires_at DATETIME NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user_id (user_id),
+  INDEX idx_token (token),
+  INDEX idx_expires_at (expires_at),
   FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
 ### Pairings Table
 ```sql
 CREATE TABLE pairings (
-  id TEXT PRIMARY KEY,
-  user1_id TEXT NOT NULL,
-  user2_id TEXT,
-  partner_code TEXT,
-  status TEXT DEFAULT 'pending',
+  id VARCHAR(50) PRIMARY KEY,
+  user1_id VARCHAR(50) NOT NULL,
+  user2_id VARCHAR(50) DEFAULT NULL,
+  partner_code VARCHAR(10) DEFAULT NULL,
+  status VARCHAR(20) DEFAULT 'pending',
   deleted_at DATETIME DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_user1_id (user1_id),
+  INDEX idx_user2_id (user2_id),
+  INDEX idx_partner_code (partner_code),
+  INDEX idx_status (status),
+  INDEX idx_deleted_at (deleted_at),
   FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
   FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
 ### Programs Table
 ```sql
 CREATE TABLE programs (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  user_name TEXT NOT NULL,
-  partner_name TEXT NOT NULL,
-  children INTEGER NOT NULL,
+  id VARCHAR(50) PRIMARY KEY,
+  user_id VARCHAR(50) NOT NULL,
   user_input TEXT NOT NULL,
-  pairing_id TEXT,
-  therapy_response TEXT,
+  pairing_id VARCHAR(50) DEFAULT NULL,
+  therapy_response LONGTEXT DEFAULT NULL,
   deleted_at DATETIME DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_user_id (user_id),
+  INDEX idx_pairing_id (pairing_id),
+  INDEX idx_deleted_at (deleted_at),
   FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
   FOREIGN KEY (pairing_id) REFERENCES pairings (id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
-### Conversations Table
+### Program Steps Table
 ```sql
-CREATE TABLE conversations (
-  id TEXT PRIMARY KEY,
-  program_id TEXT NOT NULL,
-  day INTEGER NOT NULL,
-  theme TEXT NOT NULL,
-  conversation_starter TEXT,
-  science_behind_it TEXT,
+CREATE TABLE program_steps (
+  id VARCHAR(50) PRIMARY KEY,
+  program_id VARCHAR(50) NOT NULL,
+  day INT NOT NULL,
+  theme VARCHAR(255) NOT NULL,
+  conversation_starter TEXT DEFAULT NULL,
+  science_behind_it TEXT DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_program_id (program_id),
+  INDEX idx_day (day),
+  INDEX idx_program_day (program_id, day),
   FOREIGN KEY (program_id) REFERENCES programs (id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
 ### Messages Table
 ```sql
 CREATE TABLE messages (
-  id TEXT PRIMARY KEY,
-  conversation_id TEXT NOT NULL,
-  message_type TEXT NOT NULL CHECK (message_type IN ('openai_response', 'user_message', 'system')),
-  sender_id TEXT,
+  id VARCHAR(50) PRIMARY KEY,
+  step_id VARCHAR(50) NOT NULL,
+  message_type VARCHAR(20) NOT NULL CHECK (message_type IN ('openai_response', 'user_message', 'system')),
+  sender_id VARCHAR(50) DEFAULT NULL,
   content TEXT NOT NULL,
-  metadata TEXT,
+  metadata TEXT DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_step_id (step_id),
+  INDEX idx_sender_id (sender_id),
+  INDEX idx_message_type (message_type),
+  INDEX idx_created_at (created_at),
+  FOREIGN KEY (step_id) REFERENCES program_steps (id) ON DELETE CASCADE,
   FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
 **Message Types:**
@@ -1378,12 +1430,14 @@ curl -X GET http://localhost:9000/api/programSteps/{step_id}/messages \
 
 ```
 helpful-api/
+├── config/
+│   └── database.js          # MySQL connection configuration
 ├── models/
 │   ├── User.js              # User data model
 │   ├── RefreshToken.js      # Refresh token model
 │   ├── Pairing.js           # Pairing model
 │   ├── Program.js           # Program model
-│   ├── Conversation.js      # Conversation model (day-level containers)
+│   ├── ProgramStep.js       # Program step model (day-level containers)
 │   └── Message.js           # Message model (individual messages)
 ├── services/
 │   ├── AuthService.js       # Authentication service

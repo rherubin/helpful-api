@@ -1,98 +1,43 @@
 class Message {
   constructor(db) {
-    this.db = db;
+    this.db = db; // MySQL pool
   }
 
-  // Helper method to promisify better-sqlite3 operations
-  runAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.run(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
+  // Helper method to execute queries
+  async query(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results;
   }
 
-  getAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.get(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
-  allAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.all(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
+  async queryOne(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results[0] || null;
   }
 
   // Initialize database tables
   async initDatabase() {
     const createMessagesTable = `
       CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY,
-        step_id TEXT NOT NULL,
-        message_type TEXT NOT NULL CHECK (message_type IN ('openai_response', 'user_message', 'system')),
-        sender_id TEXT,
+        id VARCHAR(50) PRIMARY KEY,
+        step_id VARCHAR(50) NOT NULL,
+        message_type VARCHAR(20) NOT NULL CHECK (message_type IN ('openai_response', 'user_message', 'system')),
+        sender_id VARCHAR(50) DEFAULT NULL,
         content TEXT NOT NULL,
-        metadata TEXT,
+        metadata TEXT DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_step_id (step_id),
+        INDEX idx_sender_id (sender_id),
+        INDEX idx_message_type (message_type),
+        INDEX idx_created_at (created_at),
         FOREIGN KEY (step_id) REFERENCES program_steps (id) ON DELETE CASCADE,
         FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE SET NULL
-      )
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
 
     try {
-      await this.runAsync(createMessagesTable);
+      await this.query(createMessagesTable);
       console.log('Messages table initialized successfully.');
-      
-      // Migrate existing messages table if needed
-      try {
-        // Check if old messages table with conversation_id exists
-        const tableInfo = await this.allAsync("PRAGMA table_info(messages)");
-        const hasConversationId = tableInfo.some(col => col.name === 'conversation_id');
-        
-        if (hasConversationId && !tableInfo.some(col => col.name === 'step_id')) {
-          console.log('Migrating messages table from conversation_id to step_id...');
-          
-          // Add step_id column
-          await this.runAsync("ALTER TABLE messages ADD COLUMN step_id TEXT");
-          
-          // Update step_id to match conversation_id (assuming 1:1 mapping)
-          await this.runAsync("UPDATE messages SET step_id = conversation_id");
-          
-          console.log('Messages table migration completed successfully.');
-        }
-      } catch (migrationErr) {
-        console.error('Error migrating messages table:', migrationErr.message);
-      }
-      
-      // Create indexes for better query performance
-      try {
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_step_id ON messages(step_id)");
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id)");
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)");
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)");
-        // Keep old index for backward compatibility during transition
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)");
-      } catch (indexErr) {
-        console.error('Error creating message indexes:', indexErr.message);
-      }
     } catch (err) {
       console.error('Error creating messages table:', err.message);
       throw err;
@@ -115,22 +60,23 @@ class Message {
     }
   }
 
-  // Add a message to a conversation
+  // Add a message to a conversation (legacy method for backward compatibility)
   async addMessage(conversationId, messageType, senderId, content, metadata = null) {
     const messageId = this.generateUniqueId();
 
     try {
       const insertQuery = `
-        INSERT INTO messages (id, conversation_id, message_type, sender_id, content, metadata, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        INSERT INTO messages (id, step_id, message_type, sender_id, content, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
       `;
 
       const metadataString = metadata ? JSON.stringify(metadata) : null;
-      await this.runAsync(insertQuery, [messageId, conversationId, messageType, senderId, content, metadataString]);
+      await this.query(insertQuery, [messageId, conversationId, messageType, senderId, content, metadataString]);
       
       return {
         id: messageId,
         conversation_id: conversationId,
+        step_id: conversationId,
         message_type: messageType,
         sender_id: senderId,
         content,
@@ -143,18 +89,18 @@ class Message {
     }
   }
 
-  // Get all messages for a conversation
+  // Get all messages for a conversation (legacy method - maps to step)
   async getConversationMessages(conversationId) {
     try {
       const query = `
-        SELECT m.id, m.conversation_id, m.message_type, m.sender_id, m.content, 
+        SELECT m.id, m.step_id as conversation_id, m.message_type, m.sender_id, m.content, 
                m.created_at, m.updated_at
         FROM messages m
-        WHERE m.conversation_id = ?
+        WHERE m.step_id = ?
         ORDER BY m.created_at ASC
       `;
 
-      const messages = await this.allAsync(query, [conversationId]);
+      const messages = await this.query(query, [conversationId]);
       
       return messages.map(message => ({
         id: message.id,
@@ -171,53 +117,19 @@ class Message {
     }
   }
 
-  // Get messages for a specific day across all conversations in a program
-  async getDayMessages(programId, day) {
-    try {
-      const query = `
-        SELECT m.id, m.conversation_id, m.message_type, m.sender_id, m.content, 
-               m.metadata, m.created_at, m.updated_at,
-               u.first_name, u.last_name, u.email,
-               c.day, c.theme
-        FROM messages m
-        LEFT JOIN users u ON m.sender_id = u.id
-        JOIN conversations c ON m.conversation_id = c.id
-        WHERE c.program_id = ? AND c.day = ?
-        ORDER BY m.created_at ASC
-      `;
-
-      const messages = await this.allAsync(query, [programId, day]);
-      
-      // Parse metadata for each message
-      return messages.map(msg => ({
-        ...msg,
-        metadata: this.parseMetadata(msg.metadata),
-        sender: msg.sender_id ? {
-          id: msg.sender_id,
-          first_name: msg.first_name,
-          last_name: msg.last_name,
-          email: msg.email
-        } : null
-      }));
-    } catch (err) {
-      console.error('Error fetching day messages:', err.message);
-      throw new Error('Failed to fetch day messages');
-    }
-  }
-
   // Get message by ID
   async getMessageById(messageId) {
     try {
       const query = `
-        SELECT m.id, m.conversation_id, m.message_type, m.sender_id, m.content, 
+        SELECT m.id, m.step_id, m.message_type, m.sender_id, m.content, 
                m.metadata, m.created_at, m.updated_at,
-               u.first_name, u.last_name, u.email
+               u.user_name, u.email
         FROM messages m
         LEFT JOIN users u ON m.sender_id = u.id
         WHERE m.id = ?
       `;
 
-      const message = await this.getAsync(query, [messageId]);
+      const message = await this.queryOne(query, [messageId]);
       if (!message) {
         throw new Error('Message not found');
       }
@@ -227,8 +139,7 @@ class Message {
         metadata: this.parseMetadata(message.metadata),
         sender: message.sender_id ? {
           id: message.sender_id,
-          first_name: message.first_name,
-          last_name: message.last_name,
+          user_name: message.user_name,
           email: message.email
         } : null
       };
@@ -246,14 +157,14 @@ class Message {
     try {
       const updateQuery = `
         UPDATE messages 
-        SET content = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP 
+        SET content = ?, metadata = ?, updated_at = NOW()
         WHERE id = ?
       `;
 
       const metadataString = metadata ? JSON.stringify(metadata) : null;
-      const result = await this.runAsync(updateQuery, [content, metadataString, messageId]);
+      const result = await this.query(updateQuery, [content, metadataString, messageId]);
       
-      if (result.changes === 0) {
+      if (result.affectedRows === 0) {
         throw new Error('Message not found');
       }
       
@@ -271,9 +182,9 @@ class Message {
   async deleteMessage(messageId) {
     try {
       const deleteQuery = `DELETE FROM messages WHERE id = ?`;
-      const result = await this.runAsync(deleteQuery, [messageId]);
+      const result = await this.query(deleteQuery, [messageId]);
       
-      if (result.changes === 0) {
+      if (result.affectedRows === 0) {
         throw new Error('Message not found');
       }
       
@@ -287,11 +198,11 @@ class Message {
     }
   }
 
-  // Get message count for a conversation
+  // Get message count for a conversation/step
   async getMessageCount(conversationId) {
     try {
-      const query = `SELECT COUNT(*) as count FROM messages WHERE conversation_id = ?`;
-      const result = await this.getAsync(query, [conversationId]);
+      const query = `SELECT COUNT(*) as count FROM messages WHERE step_id = ?`;
+      const result = await this.queryOne(query, [conversationId]);
       return result.count;
     } catch (err) {
       console.error('Error getting message count:', err.message);
@@ -305,8 +216,8 @@ class Message {
       const query = `
         SELECT COUNT(*) as count
         FROM messages m
-        JOIN conversations c ON m.conversation_id = c.id
-        JOIN programs p ON c.program_id = p.id
+        JOIN program_steps ps ON m.step_id = ps.id
+        JOIN programs p ON ps.program_id = p.id
         LEFT JOIN pairings pair ON p.pairing_id = pair.id
         WHERE m.id = ?
           AND p.deleted_at IS NULL
@@ -316,13 +227,14 @@ class Message {
           )
       `;
 
-      const result = await this.getAsync(query, [messageId, userId, userId, userId]);
+      const result = await this.queryOne(query, [messageId, userId, userId, userId]);
       return result.count > 0;
     } catch (err) {
       console.error('Error checking message access:', err.message);
       throw new Error('Failed to check message access');
     }
   }
+
   // Add user message to a program step
   async addUserMessage(stepId, senderId, content, metadata = null) {
     return this.addStepMessage(stepId, 'user_message', senderId, content, metadata);
@@ -340,11 +252,11 @@ class Message {
     try {
       const insertQuery = `
         INSERT INTO messages (id, step_id, message_type, sender_id, content, metadata, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
       `;
 
       const metadataString = metadata ? JSON.stringify(metadata) : null;
-      await this.runAsync(insertQuery, [messageId, stepId, messageType, senderId, content, metadataString]);
+      await this.query(insertQuery, [messageId, stepId, messageType, senderId, content, metadataString]);
       
       return {
         id: messageId,
@@ -372,7 +284,7 @@ class Message {
         ORDER BY m.created_at ASC
       `;
 
-      const messages = await this.allAsync(query, [stepId]);
+      const messages = await this.query(query, [stepId]);
       
       return messages.map(message => ({
         id: message.id,

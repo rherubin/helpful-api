@@ -1,124 +1,43 @@
 class ProgramStep {
   constructor(db) {
-    this.db = db;
+    this.db = db; // MySQL pool
   }
 
-  // Helper method to promisify better-sqlite3 operations
-  runAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.run(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
+  // Helper method to execute queries
+  async query(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results;
   }
 
-  getAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.get(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
-  allAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.all(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
+  async queryOne(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results[0] || null;
   }
 
   // Initialize database tables
   async initDatabase() {
     const createProgramStepsTable = `
       CREATE TABLE IF NOT EXISTS program_steps (
-        id TEXT PRIMARY KEY,
-        program_id TEXT NOT NULL,
-        day INTEGER NOT NULL,
-        theme TEXT NOT NULL,
-        conversation_starter TEXT,
-        science_behind_it TEXT,
+        id VARCHAR(50) PRIMARY KEY,
+        program_id VARCHAR(50) NOT NULL,
+        day INT NOT NULL,
+        theme VARCHAR(255) NOT NULL,
+        conversation_starter TEXT DEFAULT NULL,
+        science_behind_it TEXT DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_program_id (program_id),
+        INDEX idx_day (day),
+        INDEX idx_program_day (program_id, day),
         FOREIGN KEY (program_id) REFERENCES programs (id) ON DELETE CASCADE
-      )
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
 
     try {
-      await this.runAsync(createProgramStepsTable);
+      await this.query(createProgramStepsTable);
       console.log('Program steps table initialized successfully.');
-      
-      // Create indexes for better query performance
-      try {
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_program_steps_program_id ON program_steps(program_id)");
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_program_steps_day ON program_steps(day)");
-        await this.runAsync("CREATE INDEX IF NOT EXISTS idx_program_steps_program_day ON program_steps(program_id, day)");
-      } catch (indexErr) {
-        console.error('Error creating program step indexes:', indexErr.message);
-      }
-
-      // Migrate existing conversations table to program_steps if needed
-      try {
-        // Check if conversations table exists
-        const conversationsExists = await this.getAsync("SELECT name FROM sqlite_master WHERE type='table' AND name='conversations'");
-        
-        if (conversationsExists) {
-          console.log('Migrating conversations table to program_steps...');
-          
-          // Check if old structure exists
-          const tableInfo = await this.allAsync("PRAGMA table_info(conversations)");
-          const hasOldStructure = tableInfo.some(col => col.name === 'message_type');
-          
-          if (hasOldStructure) {
-            // Migrate from old message-based structure
-            await this.runAsync(`
-              INSERT INTO program_steps (id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at)
-              SELECT 
-                id, 
-                program_id, 
-                CAST(JSON_EXTRACT(metadata, '$.day') AS INTEGER) as day,
-                JSON_EXTRACT(metadata, '$.theme') as theme,
-                JSON_EXTRACT(content, '$.conversation_starter') as conversation_starter,
-                JSON_EXTRACT(content, '$.science_behind_it') as science_behind_it,
-                created_at,
-                updated_at
-              FROM conversations 
-              WHERE message_type = 'openai_response' 
-                AND JSON_EXTRACT(metadata, '$.type') = 'day_conversation'
-                AND JSON_EXTRACT(metadata, '$.day') IS NOT NULL
-            `);
-          } else {
-            // Migrate from new conversation structure
-            await this.runAsync(`
-              INSERT INTO program_steps (id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at)
-              SELECT id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at
-              FROM conversations
-            `);
-          }
-          
-          // Drop old table
-          await this.runAsync("DROP TABLE conversations");
-          
-          console.log('Conversations table migrated to program_steps successfully.');
-        }
-      } catch (migrationErr) {
-        console.error('Error migrating conversations table:', migrationErr.message);
-        // Don't throw here as the table might already be correct
-      }
     } catch (err) {
-      console.error('Error creating conversations table:', err.message);
+      console.error('Error creating program_steps table:', err.message);
       throw err;
     }
   }
@@ -139,34 +58,6 @@ class ProgramStep {
     }
   }
 
-  // Add OpenAI response to conversation
-  async addOpenAIResponse(programId, content, metadata = null) {
-    const conversationId = this.generateUniqueId();
-
-    try {
-      const insertQuery = `
-        INSERT INTO conversations (id, program_id, message_type, sender_id, content, metadata, created_at, updated_at)
-        VALUES (?, ?, 'openai_response', NULL, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `;
-
-      const metadataString = metadata ? JSON.stringify(metadata) : null;
-      await this.runAsync(insertQuery, [conversationId, programId, content, metadataString]);
-      
-      return {
-        id: conversationId,
-        program_id: programId,
-        message_type: 'openai_response',
-        sender_id: null,
-        content,
-        metadata,
-        created_at: new Date().toISOString()
-      };
-    } catch (err) {
-      console.error('Error adding OpenAI response:', err.message);
-      throw new Error('Failed to add OpenAI response to conversation');
-    }
-  }
-
   // Create a program step
   async createProgramStep(programId, day, theme, conversationStarter, scienceBehindIt) {
     const stepId = this.generateUniqueId();
@@ -174,10 +65,10 @@ class ProgramStep {
     try {
       const insertQuery = `
         INSERT INTO program_steps (id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
       `;
 
-      await this.runAsync(insertQuery, [stepId, programId, day, theme, conversationStarter, scienceBehindIt]);
+      await this.query(insertQuery, [stepId, programId, day, theme, conversationStarter, scienceBehindIt]);
       
       return {
         id: stepId,
@@ -237,34 +128,6 @@ class ProgramStep {
     }
   }
 
-  // Add user message to conversation
-  async addUserMessage(programId, senderId, content, metadata = null) {
-    const conversationId = this.generateUniqueId();
-
-    try {
-      const insertQuery = `
-        INSERT INTO conversations (id, program_id, message_type, sender_id, content, metadata, created_at, updated_at)
-        VALUES (?, ?, 'user_message', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `;
-
-      const metadataString = metadata ? JSON.stringify(metadata) : null;
-      await this.runAsync(insertQuery, [conversationId, programId, senderId, content, metadataString]);
-      
-      return {
-        id: conversationId,
-        program_id: programId,
-        message_type: 'user_message',
-        sender_id: senderId,
-        content,
-        metadata,
-        created_at: new Date().toISOString()
-      };
-    } catch (err) {
-      console.error('Error adding user message:', err.message);
-      throw new Error('Failed to add user message to conversation');
-    }
-  }
-
   // Get all program steps for a program
   async getProgramSteps(programId) {
     try {
@@ -276,7 +139,7 @@ class ProgramStep {
         ORDER BY s.day ASC
       `;
 
-      const programSteps = await this.allAsync(query, [programId]);
+      const programSteps = await this.query(query, [programId]);
       return programSteps;
     } catch (err) {
       console.error('Error fetching program steps:', err.message);
@@ -294,7 +157,7 @@ class ProgramStep {
         WHERE s.program_id = ? AND s.day = ?
       `;
 
-      const step = await this.getAsync(query, [programId, day]);
+      const step = await this.queryOne(query, [programId, day]);
       if (!step) {
         throw new Error('Program step not found');
       }
@@ -319,7 +182,7 @@ class ProgramStep {
         ORDER BY s.day ASC
       `;
 
-      const days = await this.allAsync(query, [programId]);
+      const days = await this.query(query, [programId]);
       
       return days.map(day => ({
         day: day.day,
@@ -343,7 +206,7 @@ class ProgramStep {
         WHERE s.id = ?
       `;
 
-      const step = await this.getAsync(query, [stepId]);
+      const step = await this.queryOne(query, [stepId]);
       if (!step) {
         throw new Error('Program step not found');
       }
@@ -355,52 +218,6 @@ class ProgramStep {
       }
       console.error('Error fetching program step:', err.message);
       throw new Error('Failed to fetch program step');
-    }
-  }
-
-  // Update conversation content (for editing messages)
-  async updateConversation(conversationId, content, metadata = null) {
-    try {
-      const updateQuery = `
-        UPDATE conversations 
-        SET content = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP 
-        WHERE id = ?
-      `;
-
-      const metadataString = metadata ? JSON.stringify(metadata) : null;
-      const result = await this.runAsync(updateQuery, [content, metadataString, conversationId]);
-      
-      if (result.changes === 0) {
-        throw new Error('Conversation not found');
-      }
-      
-      return { message: 'Conversation updated successfully' };
-    } catch (err) {
-      if (err.message === 'Conversation not found') {
-        throw err;
-      }
-      console.error('Error updating conversation:', err.message);
-      throw new Error('Failed to update conversation');
-    }
-  }
-
-  // Delete conversation
-  async deleteConversation(conversationId) {
-    try {
-      const deleteQuery = `DELETE FROM conversations WHERE id = ?`;
-      const result = await this.runAsync(deleteQuery, [conversationId]);
-      
-      if (result.changes === 0) {
-        throw new Error('Conversation not found');
-      }
-      
-      return { message: 'Conversation deleted successfully' };
-    } catch (err) {
-      if (err.message === 'Conversation not found') {
-        throw err;
-      }
-      console.error('Error deleting conversation:', err.message);
-      throw new Error('Failed to delete conversation');
     }
   }
 
@@ -419,7 +236,7 @@ class ProgramStep {
           )
       `;
 
-      const result = await this.getAsync(query, [programId, userId, userId, userId]);
+      const result = await this.queryOne(query, [programId, userId, userId, userId]);
       return result.count > 0;
     } catch (err) {
       console.error('Error checking program step access:', err.message);

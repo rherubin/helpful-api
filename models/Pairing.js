@@ -1,127 +1,44 @@
 class Pairing {
   constructor(db) {
-    this.db = db;
+    this.db = db; // MySQL pool
   }
 
-  // Helper method to promisify better-sqlite3 operations for compatibility
-  runAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.run(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
+  // Helper method to execute queries
+  async query(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results;
   }
 
-  getAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.get(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
-  allAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-      try {
-        const stmt = this.db.prepare(query);
-        const result = stmt.all(params);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    });
+  async queryOne(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results[0] || null;
   }
 
   // Initialize database tables
   async initDatabase() {
     const createPairingsTable = `
       CREATE TABLE IF NOT EXISTS pairings (
-        id TEXT PRIMARY KEY,
-        user1_id TEXT NOT NULL,
-        user2_id TEXT,
-        partner_code TEXT,
-        status TEXT DEFAULT 'pending',
+        id VARCHAR(50) PRIMARY KEY,
+        user1_id VARCHAR(50) NOT NULL,
+        user2_id VARCHAR(50) DEFAULT NULL,
+        partner_code VARCHAR(10) DEFAULT NULL,
+        status VARCHAR(20) DEFAULT 'pending',
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_user1_id (user1_id),
+        INDEX idx_user2_id (user2_id),
+        INDEX idx_partner_code (partner_code),
+        INDEX idx_status (status),
+        INDEX idx_deleted_at (deleted_at),
         FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
         FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE
-      )
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
 
     try {
-      await this.runAsync(createPairingsTable);
+      await this.query(createPairingsTable);
       console.log('Pairings table initialized successfully.');
-      
-      // Add columns if they don't exist (for existing databases)
-      try {
-        await this.runAsync("ALTER TABLE pairings ADD COLUMN deleted_at DATETIME DEFAULT NULL");
-      } catch (alterErr) {
-        if (!alterErr.message.includes('duplicate column name')) {
-          console.error('Error adding deleted_at column to pairings:', alterErr.message);
-        }
-      }
-
-      try {
-        await this.runAsync("ALTER TABLE pairings ADD COLUMN partner_code TEXT");
-      } catch (alterErr) {
-        if (!alterErr.message.includes('duplicate column name')) {
-          console.error('Error adding partner_code column to pairings:', alterErr.message);
-        }
-      }
-
-      // Drop the old unique constraint and modify user2_id to be nullable
-      try {
-        // Check if we need to migrate the table structure
-        const checkQuery = "PRAGMA table_info(pairings)";
-        const columns = await this.allAsync(checkQuery);
-        const user2Column = columns.find(col => col.name === 'user2_id');
-        
-        if (user2Column && user2Column.notnull === 1) {
-          // Need to migrate - recreate table with nullable user2_id
-          await this.runAsync('BEGIN');
-          
-          const createNewTable = `
-            CREATE TABLE pairings_new (
-              id TEXT PRIMARY KEY,
-              user1_id TEXT NOT NULL,
-              user2_id TEXT,
-              partner_code TEXT,
-              status TEXT DEFAULT 'pending',
-              deleted_at DATETIME DEFAULT NULL,
-              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
-              FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE
-            )
-          `;
-          
-          await this.runAsync(createNewTable);
-          
-          // Copy existing data
-          await this.runAsync(`
-            INSERT INTO pairings_new (id, user1_id, user2_id, status, deleted_at, created_at, updated_at)
-            SELECT id, user1_id, user2_id, status, deleted_at, created_at, updated_at FROM pairings
-          `);
-          
-          await this.runAsync('DROP TABLE pairings');
-          await this.runAsync('ALTER TABLE pairings_new RENAME TO pairings');
-          await this.runAsync('COMMIT');
-          
-          console.log('Migrated pairings table to support partner codes.');
-        }
-      } catch (migErr) {
-        try { await this.runAsync('ROLLBACK'); } catch (_) {}
-        console.warn('Migration check/operation failed. Proceeding:', migErr.message);
-      }
     } catch (err) {
       console.error('Error creating pairings table:', err.message);
       throw err;
@@ -150,10 +67,10 @@ class Pairing {
     try {
       const insertPairing = `
         INSERT INTO pairings (id, user1_id, user2_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, 'pending', NOW(), NOW())
       `;
 
-      await this.runAsync(insertPairing, [pairingId, user1Id, user2Id]);
+      await this.query(insertPairing, [pairingId, user1Id, user2Id]);
       
       return {
         id: pairingId,
@@ -163,7 +80,7 @@ class Pairing {
         created_at: new Date().toISOString()
       };
     } catch (err) {
-      if (err.message.includes('UNIQUE constraint failed')) {
+      if (err.code === 'ER_DUP_ENTRY') {
         throw new Error('Pairing already exists');
       } else {
         throw new Error('Failed to create pairing');
@@ -184,7 +101,7 @@ class Pairing {
       
       // Check if this partner code already exists and is active
       try {
-        const existingPairing = await this.getAsync(
+        const existingPairing = await this.queryOne(
           "SELECT id FROM pairings WHERE partner_code = ? AND status = 'pending' AND deleted_at IS NULL",
           [partnerCode]
         );
@@ -205,10 +122,10 @@ class Pairing {
     try {
       const insertPairing = `
         INSERT INTO pairings (id, user1_id, user2_id, partner_code, status, created_at, updated_at)
-        VALUES (?, ?, NULL, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, NULL, ?, 'pending', NOW(), NOW())
       `;
 
-      await this.runAsync(insertPairing, [pairingId, userId, partnerCode]);
+      await this.query(insertPairing, [pairingId, userId, partnerCode]);
       
       return {
         id: pairingId,
@@ -228,12 +145,12 @@ class Pairing {
     try {
       const updatePairing = `
         UPDATE pairings 
-        SET status = 'accepted', updated_at = CURRENT_TIMESTAMP 
+        SET status = 'accepted', updated_at = NOW()
         WHERE id = ? AND status = 'pending'
       `;
 
-      const result = await this.runAsync(updatePairing, [pairingId]);
-      if (result.changes === 0) {
+      const result = await this.query(updatePairing, [pairingId]);
+      if (result.affectedRows === 0) {
         throw new Error('Pairing not found or already processed');
       }
       return { message: 'Pairing accepted successfully' };
@@ -247,12 +164,12 @@ class Pairing {
     try {
       const updatePairing = `
         UPDATE pairings 
-        SET status = 'rejected', updated_at = CURRENT_TIMESTAMP 
+        SET status = 'rejected', updated_at = NOW()
         WHERE id = ? AND status = 'pending'
       `;
 
-      const result = await this.runAsync(updatePairing, [pairingId]);
-      if (result.changes === 0) {
+      const result = await this.query(updatePairing, [pairingId]);
+      if (result.affectedRows === 0) {
         throw new Error('Pairing not found or already processed');
       }
       return { message: 'Pairing rejected successfully' };
@@ -275,7 +192,7 @@ class Pairing {
         ORDER BY p.created_at DESC
       `;
 
-      const rows = await this.allAsync(query, [userId, userId]);
+      const rows = await this.query(query, [userId, userId]);
       return rows;
     } catch (err) {
       throw new Error('Failed to fetch pairings');
@@ -296,7 +213,7 @@ class Pairing {
         ORDER BY p.created_at DESC
       `;
 
-      const rows = await this.allAsync(query, [userId, userId]);
+      const rows = await this.query(query, [userId, userId]);
       return rows;
     } catch (err) {
       throw new Error('Failed to fetch pending pairings');
@@ -317,7 +234,7 @@ class Pairing {
         ORDER BY p.created_at DESC
       `;
 
-      const rows = await this.allAsync(query, [userId, userId]);
+      const rows = await this.query(query, [userId, userId]);
       return rows;
     } catch (err) {
       throw new Error('Failed to fetch accepted pairings');
@@ -332,7 +249,7 @@ class Pairing {
         WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?)) AND deleted_at IS NULL
       `;
 
-      const row = await this.getAsync(query, [user1Id, user2Id, user2Id, user1Id]);
+      const row = await this.queryOne(query, [user1Id, user2Id, user2Id, user1Id]);
       return row;
     } catch (err) {
       throw new Error('Failed to check existing pairing');
@@ -352,7 +269,7 @@ class Pairing {
         WHERE p.id = ? AND p.deleted_at IS NULL
       `;
 
-      const row = await this.getAsync(query, [pairingId]);
+      const row = await this.queryOne(query, [pairingId]);
       if (!row) {
         throw new Error('Pairing not found');
       }
@@ -361,8 +278,6 @@ class Pairing {
       throw new Error('Failed to fetch pairing');
     }
   }
-
-
 
   // Get pending pairing by partner code (new flow)
   async getPendingPairingByPartnerCode(partnerCode) {
@@ -375,7 +290,7 @@ class Pairing {
         WHERE p.partner_code = ? AND p.status = 'pending' AND p.deleted_at IS NULL AND p.user2_id IS NULL
       `;
 
-      const row = await this.getAsync(query, [partnerCode]);
+      const row = await this.queryOne(query, [partnerCode]);
       return row; // Returns null if not found, which is fine
     } catch (err) {
       throw new Error('Failed to fetch pairing by partner code');
@@ -387,12 +302,12 @@ class Pairing {
     try {
       const updatePairing = `
         UPDATE pairings 
-        SET user2_id = ?, status = 'accepted', updated_at = CURRENT_TIMESTAMP 
+        SET user2_id = ?, status = 'accepted', updated_at = NOW()
         WHERE partner_code = ? AND status = 'pending' AND user2_id IS NULL AND deleted_at IS NULL
       `;
 
-      const result = await this.runAsync(updatePairing, [acceptingUserId, partnerCode]);
-      if (result.changes === 0) {
+      const result = await this.query(updatePairing, [acceptingUserId, partnerCode]);
+      if (result.affectedRows === 0) {
         throw new Error('Pairing not found or already processed');
       }
       return { message: 'Pairing accepted successfully' };
@@ -410,7 +325,7 @@ class Pairing {
         WHERE (user1_id = ? OR user2_id = ?) AND status = 'accepted' AND deleted_at IS NULL
       `;
 
-      const row = await this.getAsync(query, [userId, userId]);
+      const row = await this.queryOne(query, [userId, userId]);
       return row.count;
     } catch (err) {
       throw new Error('Failed to count pairings');
@@ -422,12 +337,12 @@ class Pairing {
     try {
       const updateQuery = `
         UPDATE pairings 
-        SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+        SET deleted_at = NOW(), updated_at = NOW()
         WHERE id = ? AND deleted_at IS NULL
       `;
 
-      const result = await this.runAsync(updateQuery, [pairingId]);
-      if (result.changes === 0) {
+      const result = await this.query(updateQuery, [pairingId]);
+      if (result.affectedRows === 0) {
         throw new Error('Pairing not found or already deleted');
       }
       return { message: 'Pairing deleted successfully', deleted_at: new Date().toISOString() };
@@ -441,14 +356,14 @@ class Pairing {
     try {
       const updateQuery = `
         UPDATE pairings 
-        SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+        SET deleted_at = NOW(), updated_at = NOW()
         WHERE (user1_id = ? OR user2_id = ?) AND deleted_at IS NULL
       `;
 
-      const result = await this.runAsync(updateQuery, [userId, userId]);
+      const result = await this.query(updateQuery, [userId, userId]);
       return { 
         message: 'User pairings deleted successfully', 
-        deleted_count: result.changes,
+        deleted_count: result.affectedRows,
         deleted_at: new Date().toISOString() 
       };
     } catch (err) {
@@ -461,12 +376,12 @@ class Pairing {
     try {
       const updateQuery = `
         UPDATE pairings 
-        SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP 
+        SET deleted_at = NULL, updated_at = NOW()
         WHERE id = ? AND deleted_at IS NOT NULL
       `;
 
-      const result = await this.runAsync(updateQuery, [pairingId]);
-      if (result.changes === 0) {
+      const result = await this.query(updateQuery, [pairingId]);
+      if (result.affectedRows === 0) {
         throw new Error('Pairing not found or not deleted');
       }
       return { message: 'Pairing restored successfully' };
@@ -488,7 +403,7 @@ class Pairing {
         WHERE p.id = ?
       `;
 
-      const row = await this.getAsync(query, [pairingId]);
+      const row = await this.queryOne(query, [pairingId]);
       if (!row) {
         throw new Error('Pairing not found');
       }
@@ -512,7 +427,7 @@ class Pairing {
         ORDER BY p.deleted_at DESC
       `;
       
-      const rows = await this.allAsync(query);
+      const rows = await this.query(query);
       return rows;
     } catch (err) {
       throw new Error('Failed to fetch deleted pairings');
