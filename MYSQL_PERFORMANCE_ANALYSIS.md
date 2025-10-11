@@ -337,7 +337,7 @@ acquireTimeout: 30000  // Add timeout
 - ✅ **Production-grade reliability** with proper monitoring
 
 **The MySQL migration provides:**
-- ✅ **10x better concurrency** than SQLite
+- ✅ **10x better concurrency**
 - ✅ **Unlimited data growth** potential
 - ✅ **ACID compliance** for data integrity
 - ✅ **Easy horizontal scaling** when needed

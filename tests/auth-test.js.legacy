@@ -1,0 +1,648 @@
+const axios = require('axios');
+const assert = require('assert');
+const { generateTestEmail, validateTestEmailDomain } = require('./test-helpers');
+
+/**
+ * Comprehensive Authentication Test Suite
+ * Tests all authentication functionality against the MySQL-backed server
+ * 
+ * ✅ MySQL Compatible - Tests via HTTP API (no direct DB access)
+ * 🔄 Merged from auth-test.js + mysql-integration-test.js
+ * 
+ * Coverage:
+ * - User registration & duplicate prevention
+ * - Login & logout flows
+ * - Token management (refresh, expiry, invalidation)
+ * - Password validation & security
+ * - Protected endpoint access control
+ * - Profile authentication
+ * 
+ * Run with: node tests/auth-test.js or npm run test:auth
+ */
+
+class AuthTest {
+  constructor() {
+    this.testResults = [];
+    this.BASE_URL = process.env.BASE_URL || 'http://localhost:9000';
+    this.testData = {};
+    this.stats = {
+      total: 0,
+      passed: 0,
+      failed: 0
+    };
+  }
+
+  log(message, type = 'info') {
+    const timestamp = new Date().toISOString();
+    const prefix = {
+      error: '❌',
+      success: '✅',
+      section: '📋',
+      info: 'ℹ️'
+    }[type] || 'ℹ️';
+    console.log(`${prefix} [${timestamp}] ${message}`);
+  }
+
+  recordResult(testName, success, error = null) {
+    this.stats.total++;
+    if (success) {
+      this.stats.passed++;
+      this.testResults.push({ name: testName, status: 'passed' });
+      this.log(`✓ ${testName}`, 'success');
+    } else {
+      this.stats.failed++;
+      this.testResults.push({ name: testName, status: 'failed', error });
+      this.log(`✗ ${testName}: ${error}`, 'error');
+    }
+  }
+
+  async checkServer() {
+    try {
+      const response = await axios.get(`${this.BASE_URL}/health`, { timeout: 2000 });
+      if (response.status === 200) {
+        this.log('Server is running', 'success');
+        return true;
+      }
+    } catch (error) {
+      this.log('Server is not running. Please start the server before running tests.', 'error');
+      return false;
+    }
+    return false;
+  }
+
+  async sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // ================================================================================
+  // TEST 1: Health Check
+  // ================================================================================
+  async testHealthCheck() {
+    this.log('Testing health check endpoint...', 'section');
+    
+    try {
+      const response = await axios.get(`${this.BASE_URL}/health`, { timeout: 5000 });
+      assert.strictEqual(response.status, 200, 'Health check should return 200');
+      assert.ok(response.data.status === 'OK', 'Status should be OK');
+      
+      this.recordResult('Health Check', true);
+      return { success: true };
+    } catch (error) {
+      this.recordResult('Health Check', false, error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 2: User Registration
+  // ================================================================================
+  async testUserRegistration() {
+    this.log('Testing user registration...', 'section');
+    
+    try {
+      const userData = {
+        email: generateTestEmail('auth'),
+        password: 'MyVerySecureP@ssw0rd2024!'
+      };
+      validateTestEmailDomain(userData.email);
+
+      const response = await axios.post(`${this.BASE_URL}/api/users`, userData);
+
+      assert.ok([200, 201].includes(response.status), 'Registration should return 200 or 201');
+      assert.ok(response.data.message.includes('created'), 'Registration message should indicate success');
+      assert.ok(response.data.access_token, 'Access token not provided');
+      assert.ok(response.data.refresh_token, 'Refresh token not provided');
+      assert.ok(response.data.user, 'User object not provided');
+      assert.ok(response.data.user.id, 'User ID not provided');
+      assert.strictEqual(response.data.user.email, userData.email, 'User email mismatch');
+      assert.ok(!response.data.user.password, 'Password should not be returned');
+      assert.ok(!response.data.user.password_hash, 'Password hash should not be returned');
+
+      this.testData.registrationUser = {
+        ...userData,
+        ...response.data
+      };
+      
+      this.recordResult('User Registration', true);
+      return { success: true, userData, tokens: response.data };
+    } catch (error) {
+      this.recordResult('User Registration', false, error.response?.data?.error || error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 3: Duplicate Email Registration
+  // ================================================================================
+  async testDuplicateEmailRegistration() {
+    this.log('Testing duplicate email registration prevention...', 'section');
+    
+    try {
+      const userData = {
+        email: generateTestEmail('duplicate'),
+        password: 'SecurePassword123!'
+      };
+
+      // Delay to avoid rate limiting
+      await this.sleep(250);
+
+      // First registration should succeed
+      const firstResponse = await axios.post(`${this.BASE_URL}/api/users`, userData);
+      assert.ok(firstResponse.status === 200 || firstResponse.status === 201, 'First registration should succeed');
+
+      // Second registration with same email should fail
+      try {
+        await axios.post(`${this.BASE_URL}/api/users`, userData);
+        this.recordResult('Duplicate Email Registration', false, 'Should have rejected duplicate email');
+        return { success: false, error: 'Did not reject duplicate email' };
+      } catch (error) {
+        if (error.response?.status === 409 || error.response?.data?.error?.includes('already exists')) {
+          this.recordResult('Duplicate Email Registration', true);
+          return { success: true };
+        }
+        // If it's a different error, log it properly
+        const errorMsg = `Unexpected error: ${error.response?.status} - ${error.response?.data?.error || error.message}`;
+        this.recordResult('Duplicate Email Registration', false, errorMsg);
+        return { success: false, error: errorMsg };
+      }
+    } catch (error) {
+      const errorMsg = `First registration failed: ${error.response?.status} - ${error.response?.data?.error || error.message}`;
+      this.recordResult('Duplicate Email Registration', false, errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  }
+
+  // ================================================================================
+  // TEST 4: User Login
+  // ================================================================================
+  async testUserLogin() {
+    this.log('Testing user login...', 'section');
+    
+    try {
+      // First register a user
+      const userData = {
+        email: generateTestEmail('login-test'),
+        password: 'MyVerySecureP@ssw0rd2024!'
+      };
+
+      await axios.post(`${this.BASE_URL}/api/users`, userData);
+
+      // Now test login
+      const loginResponse = await axios.post(`${this.BASE_URL}/api/login`, {
+        email: userData.email,
+        password: userData.password
+      });
+
+      assert.strictEqual(loginResponse.status, 200, 'Login should return 200');
+      assert.strictEqual(loginResponse.data.message, 'Login successful', 'Login message incorrect');
+      assert.ok(loginResponse.data.data.access_token, 'Access token not provided');
+      assert.ok(loginResponse.data.data.refresh_token, 'Refresh token not provided');
+      assert.strictEqual(loginResponse.data.data.user.email, userData.email, 'User email mismatch');
+      assert.ok(!loginResponse.data.data.user.password, 'Password should not be returned');
+
+      this.testData.loginUser = {
+        ...userData,
+        ...loginResponse.data.data
+      };
+      
+      this.recordResult('User Login', true);
+      return { success: true, userData, tokens: loginResponse.data.data };
+    } catch (error) {
+      this.recordResult('User Login', false, error.response?.data?.error || error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 5: Invalid Login Scenarios
+  // ================================================================================
+  async testInvalidLogin() {
+    this.log('Testing invalid login scenarios...', 'section');
+    
+    try {
+      // Test with non-existent user
+      try {
+        await axios.post(`${this.BASE_URL}/api/login`, {
+          email: 'nonexistent@example.com',
+          password: 'wrongpassword'
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 401, 'Non-existent user should return 401');
+      }
+
+      // Register a user first
+      const userData = {
+        email: generateTestEmail('invalid-test'),
+        password: 'MyVerySecureP@ssw0rd2024!'
+      };
+
+      await axios.post(`${this.BASE_URL}/api/users`, userData);
+
+      // Test with wrong password
+      try {
+        await axios.post(`${this.BASE_URL}/api/login`, {
+          email: userData.email,
+          password: 'WrongPassword123!'
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 401, 'Wrong password should return 401');
+      }
+
+      // Test with missing password
+      try {
+        await axios.post(`${this.BASE_URL}/api/login`, {
+          email: userData.email
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 400, 'Missing password should return 400');
+      }
+
+      // Test with missing email
+      try {
+        await axios.post(`${this.BASE_URL}/api/login`, {
+          password: 'SomePassword123!'
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.strictEqual(error.response?.status, 400, 'Missing email should return 400');
+      }
+
+      this.recordResult('Invalid Login Scenarios', true);
+      return { success: true };
+    } catch (error) {
+      this.recordResult('Invalid Login Scenarios', false, error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 6: Password Validation
+  // ================================================================================
+  async testPasswordValidation() {
+    this.log('Testing password validation...', 'section');
+    
+    try {
+      const weakEmail = generateTestEmail('weakpass');
+      
+      // Test weak password
+      try {
+        await axios.post(`${this.BASE_URL}/api/users`, {
+          email: weakEmail,
+          password: 'weak'
+        });
+        this.recordResult('Password Validation', false, 'Should reject weak password');
+        return { success: false, error: 'Did not reject weak password' };
+      } catch (error) {
+        if (error.response?.status === 400 && error.response?.data?.error?.includes('Password')) {
+          this.recordResult('Password Validation', true);
+          return { success: true };
+        }
+        throw error;
+      }
+    } catch (error) {
+      this.recordResult('Password Validation', false, error.response?.data?.error || error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 7: Token Refresh
+  // ================================================================================
+  async testTokenRefresh() {
+    this.log('Testing token refresh...', 'section');
+    
+    try {
+      // First register and login a user
+      const userData = {
+        email: generateTestEmail('refresh-test'),
+        password: 'MyVerySecureP@ssw0rd2024!'
+      };
+
+      const registerResponse = await axios.post(`${this.BASE_URL}/api/users`, userData);
+
+      const refreshToken = registerResponse.data.refresh_token;
+      const originalAccessToken = registerResponse.data.access_token;
+
+      // Wait a moment to ensure token timestamp changes
+      await this.sleep(1000);
+
+      // Test token refresh
+      const refreshResponse = await axios.post(`${this.BASE_URL}/api/refresh`, {
+        refresh_token: refreshToken
+      });
+
+      assert.strictEqual(refreshResponse.status, 200, 'Refresh should return 200');
+      assert.ok(refreshResponse.data.access_token, 'New access token not provided');
+      assert.ok(refreshResponse.data.message.includes('refreshed'), 'Refresh message incorrect');
+
+      // Verify new token is different (at least in timestamp)
+      assert.ok(refreshResponse.data.access_token, 'New access token should exist');
+
+      this.recordResult('Token Refresh', true);
+      return { success: true };
+    } catch (error) {
+      this.recordResult('Token Refresh', false, error.response?.data?.error || error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 8: Invalid Token Refresh Scenarios
+  // ================================================================================
+  async testInvalidTokenRefresh() {
+    this.log('Testing invalid token refresh scenarios...', 'section');
+    
+    try {
+      // Test with invalid refresh token
+      try {
+        await axios.post(`${this.BASE_URL}/api/refresh`, {
+          refresh_token: 'invalid-token-string'
+        });
+        throw new Error('Should have failed');
+      } catch (error) {
+        assert.ok(error.response?.status === 403 || error.response?.status === 401, 
+          'Invalid token should return 401 or 403');
+      }
+
+      this.recordResult('Invalid Token Refresh Scenarios', true);
+      return { success: true };
+    } catch (error) {
+      this.recordResult('Invalid Token Refresh Scenarios', false, error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 9: Access Protected Endpoint (Profile)
+  // ================================================================================
+  async testProtectedEndpoint() {
+    this.log('Testing protected endpoint access...', 'section');
+    
+    try {
+      // Delay to avoid rate limiting
+      await this.sleep(250);
+      
+      // Register and get token
+      const userData = {
+        email: generateTestEmail('protected'),
+        password: 'SecurePassword123!'
+      };
+
+      const registerResponse = await axios.post(`${this.BASE_URL}/api/users`, userData);
+      const accessToken = registerResponse.data.access_token;
+
+      // Test with valid token
+      const response = await axios.get(`${this.BASE_URL}/api/profile`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 5000
+      });
+
+      assert.strictEqual(response.status, 200, 'Should return 200 with valid token');
+      assert.strictEqual(response.data.profile.email, userData.email, 'Should return correct user email');
+      assert.ok(response.data.profile.pairings !== undefined, 'Should include pairings');
+
+      this.recordResult('Access Protected Endpoint', true);
+      return { success: true };
+    } catch (error) {
+      this.recordResult('Access Protected Endpoint', false, error.response?.data?.error || error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 10: Protected Endpoint Without Token
+  // ================================================================================
+  async testProtectedEndpointWithoutToken() {
+    this.log('Testing protected endpoint without token...', 'section');
+    
+    try {
+      // Test without token (should fail)
+      try {
+        await axios.get(`${this.BASE_URL}/api/profile`, { timeout: 5000 });
+        this.recordResult('Protected Endpoint Without Token', false, 'Should require authentication');
+        return { success: false, error: 'Did not reject unauthenticated request' };
+      } catch (error) {
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          this.recordResult('Protected Endpoint Without Token', true);
+          return { success: true };
+        }
+        throw error;
+      }
+    } catch (error) {
+      this.recordResult('Protected Endpoint Without Token', false, error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 11: User Logout
+  // ================================================================================
+  async testLogout() {
+    this.log('Testing user logout...', 'section');
+    
+    try {
+      // Register a user and get tokens
+      const userData = {
+        email: generateTestEmail('logout-test'),
+        password: 'MyVerySecureP@ssw0rd2024!'
+      };
+
+      const registerResponse = await axios.post(`${this.BASE_URL}/api/users`, userData);
+
+      const refreshToken = registerResponse.data.refresh_token;
+      const accessToken = registerResponse.data.access_token;
+
+      // Logout
+      const logoutResponse = await axios.post(`${this.BASE_URL}/api/logout`, {
+        refresh_token: refreshToken
+      });
+
+      assert.strictEqual(logoutResponse.status, 200, 'Logout should return 200');
+      assert.ok(logoutResponse.data.message.includes('Logged out'), 'Logout message incorrect');
+
+      this.recordResult('User Logout', true);
+      return { success: true, accessToken, refreshToken };
+    } catch (error) {
+      this.recordResult('User Logout', false, error.response?.data?.error || error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 12: Use Refresh Token After Logout
+  // ================================================================================
+  async testTokenAfterLogout() {
+    this.log('Testing token usage after logout...', 'section');
+    
+    try {
+      // Delay to avoid rate limiting
+      await this.sleep(250);
+      
+      // Register and logout
+      const userData = {
+        email: generateTestEmail('postlogout'),
+        password: 'SecurePassword123!'
+      };
+
+      const registerResponse = await axios.post(`${this.BASE_URL}/api/users`, userData);
+      const refreshToken = registerResponse.data.refresh_token;
+
+      // Logout
+      await axios.post(`${this.BASE_URL}/api/logout`, {
+        refresh_token: refreshToken
+      });
+
+      // Try to use refresh token after logout (should fail)
+      try {
+        await axios.post(`${this.BASE_URL}/api/refresh`, {
+          refresh_token: refreshToken
+        });
+        this.recordResult('Token After Logout', false, 'Should reject invalidated token');
+        return { success: false, error: 'Did not reject invalidated token' };
+      } catch (error) {
+        if (error.response?.status === 403 || error.response?.status === 401) {
+          this.recordResult('Token After Logout', true);
+          return { success: true };
+        }
+        throw error;
+      }
+    } catch (error) {
+      this.recordResult('Token After Logout', false, error.response?.data?.error || error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // TEST 13: Token Expiry Behavior
+  // ================================================================================
+  async testTokenExpiry() {
+    this.log('Testing token expiry behavior...', 'section');
+    
+    try {
+      const userData = {
+        email: generateTestEmail('expiry-test'),
+        password: 'MyVerySecureP@ssw0rd2024!'
+      };
+
+      const registerResponse = await axios.post(`${this.BASE_URL}/api/users`, userData);
+
+      const accessToken = registerResponse.data.access_token;
+      const refreshToken = registerResponse.data.refresh_token;
+
+      // Validate token structure (JWT should have 3 parts)
+      const tokenParts = accessToken.split('.');
+      assert.strictEqual(tokenParts.length, 3, 'JWT should have 3 parts');
+
+      // Decode token payload (without verification - just checking structure)
+      const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
+      assert.ok(payload.id, 'Token should contain user ID');
+      assert.ok(payload.email, 'Token should contain email');
+      assert.ok(payload.exp, 'Token should contain expiration time');
+      assert.ok(payload.iat, 'Token should contain issued at time');
+
+      // Verify expiration is in the future
+      const now = Math.floor(Date.now() / 1000);
+      assert.ok(payload.exp > now, 'Token expiration should be in the future');
+
+      this.recordResult('Token Expiry Behavior', true);
+      return { success: true };
+    } catch (error) {
+      this.recordResult('Token Expiry Behavior', false, error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ================================================================================
+  // RUN ALL TESTS
+  // ================================================================================
+  async runAllTests() {
+    this.log('🚀 Starting Comprehensive Authentication Test Suite', 'section');
+    this.log(`Testing against: ${this.BASE_URL}`, 'info');
+    console.log('');
+    
+    const serverOk = await this.checkServer();
+    if (!serverOk) {
+      this.log('Cannot proceed without server running', 'error');
+      return false;
+    }
+
+    console.log('');
+
+    const tests = [
+      { name: 'Health Check', method: 'testHealthCheck' },
+      { name: 'User Registration', method: 'testUserRegistration' },
+      { name: 'Duplicate Email Registration', method: 'testDuplicateEmailRegistration' },
+      { name: 'User Login', method: 'testUserLogin' },
+      { name: 'Invalid Login', method: 'testInvalidLogin' },
+      { name: 'Password Validation', method: 'testPasswordValidation' },
+      { name: 'Token Refresh', method: 'testTokenRefresh' },
+      { name: 'Invalid Token Refresh', method: 'testInvalidTokenRefresh' },
+      { name: 'Protected Endpoint Access', method: 'testProtectedEndpoint' },
+      { name: 'Protected Endpoint Without Token', method: 'testProtectedEndpointWithoutToken' },
+      { name: 'User Logout', method: 'testLogout' },
+      { name: 'Token After Logout', method: 'testTokenAfterLogout' },
+      { name: 'Token Expiry', method: 'testTokenExpiry' }
+    ];
+
+    for (const test of tests) {
+      this.log(`Running ${test.name}...`, 'info');
+      try {
+        await this[test.method]();
+      } catch (error) {
+        this.log(`Test ${test.name} threw an error: ${error.message}`, 'error');
+        this.recordResult(test.name, false, error.message);
+      }
+      // Delay between tests to avoid rate limiting
+      await this.sleep(200);
+      console.log(''); // Add spacing between tests
+    }
+
+    this.printSummary();
+    return this.stats.failed === 0;
+  }
+
+  // ================================================================================
+  // PRINT SUMMARY
+  // ================================================================================
+  printSummary() {
+    this.log('📊 Authentication Test Results Summary', 'section');
+    
+    this.testResults.forEach(result => {
+      if (result.status === 'passed') {
+        this.log(`✅ ${result.name}`, 'info');
+      } else {
+        this.log(`❌ ${result.name}${result.error ? ': ' + result.error : ''}`, 'info');
+      }
+    });
+
+    console.log('');
+    const successRate = this.stats.total > 0 
+      ? ((this.stats.passed / this.stats.total) * 100).toFixed(1) 
+      : 0;
+
+    this.log(
+      `\n🎯 Results: ${this.stats.passed}/${this.stats.total} tests passed (${successRate}%)`,
+      this.stats.failed === 0 ? 'success' : 'error'
+    );
+
+    if (this.stats.failed === 0) {
+      this.log('🎉 All authentication tests passed!', 'success');
+    } else {
+      this.log(`⚠️  ${this.stats.failed} test(s) failed`, 'error');
+    }
+  }
+}
+
+// ================================================================================
+// MAIN EXECUTION
+// ================================================================================
+(async () => {
+  const authTest = new AuthTest();
+  const success = await authTest.runAllTests();
+  process.exit(success ? 0 : 1);
+})();
+
+module.exports = AuthTest;

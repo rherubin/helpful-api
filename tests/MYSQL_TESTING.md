@@ -2,7 +2,7 @@
 
 ## Overview
 
-After migrating from SQLite to MySQL, the test suite has been updated to work with the new MySQL backend.
+The test suite has been updated to work with the new MySQL backend.
 
 ## ✅ MySQL-Compatible Tests
 
@@ -26,17 +26,6 @@ After migrating from SQLite to MySQL, the test suite has been updated to work wi
 ### Manual Testing
 
 All API endpoints can be tested directly with the running server using curl or any HTTP client.
-
-## ⚠️ Tests Requiring Updates
-
-The following test files were written for SQLite and need refactoring to work with MySQL:
-
-### Need MySQL Updates:
-- `auth-test.js` - Creates own SQLite DB instance
-- `therapy-response-test.js` - Uses better-sqlite3
-- `therapy-response-integration-test.js` - Uses better-sqlite3
-
-These tests create their own database instances for testing, which doesn't work with the MySQL connection pool architecture.
 
 ### Recommended Approach:
 
@@ -142,12 +131,7 @@ For continuous integration:
 
 ## Migration Notes
 
-**Before (SQLite):**
-- Tests created their own SQLite database
-- Isolated test environment
-- No server needed
-
-**After (MySQL):**
+**After (MySQL) Migration:**
 - Tests connect to running server
 - Uses actual MySQL database
 - More realistic testing

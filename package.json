@@ -12,8 +12,8 @@
     "test:load": "node tests/load-test.js",
     "test:openai": "node tests/openai-test.js",
     "test:therapy": "node tests/run-therapy-tests.js",
+    "test:mysql": "node tests/auth-test.js",
     "test:auth": "node tests/auth-test.js",
-    "test:mysql": "node tests/mysql-integration-test.js",
     "test:ci": "node tests/run-all-tests.js --skip-server-check",
     "test:quick": "node tests/run-all-tests.js --no-load",
     "test:cleanup": "node tests/cleanup-test-data.js"

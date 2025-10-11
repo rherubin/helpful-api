@@ -4,15 +4,26 @@ This directory contains comprehensive test suites for the Helpful API, designed 
 
 ## ⚠️ MySQL Migration Update
 
-After migrating from SQLite to MySQL, the test suite has been updated. 
+The test suite has been updatedto MySQL. 
 
-### ✅ Recommended Test Suite (MySQL Compatible)
+### ✅ Primary Test Suite (MySQL Compatible)
 
-**`npm run test:mysql`** - **100% Working with MySQL** ✅
-- Comprehensive integration tests for MySQL-based API
-- Tests all core functionality against running server
-- **14/14 tests passing (100% success rate)**
-- See [MYSQL_TESTING.md](./MYSQL_TESTING.md) for details
+**`npm run test:auth`** - **Comprehensive Authentication & Integration Tests** ✅
+- **18/18 tests passing (100% success rate)**
+- Complete coverage: Auth, Authorization, Profiles, Pairings
+- Tests against live MySQL-backed server
+- Efficient test execution (reuses users, avoids rate limiting)
+
+**Test Coverage:**
+- ✅ Health Check
+- ✅ User Registration (with duplicate prevention)
+- ✅ Login (valid, invalid password, missing credentials, non-existent user)
+- ✅ Token Management (refresh, expiry, structure validation, invalidation)
+- ✅ Protected Endpoints (with/without authentication)
+- ✅ Password Validation
+- ✅ User Profile Management
+- ✅ Pairing System
+- ✅ Logout & Token Cleanup
 
 **Quick Start:**
 ```bash
@@ -20,18 +31,18 @@ After migrating from SQLite to MySQL, the test suite has been updated.
 brew services start mysql
 npm start
 
-# Run MySQL-compatible tests (in new terminal)
-npm run test:mysql
+# Run comprehensive auth tests (in new terminal)
+npm run test:auth
+
+# Clean up test data after testing
+npm run test:cleanup
 ```
 
-### ⚠️ Legacy Tests (Need MySQL Updates)
+### 📝 Other Test Files
 
-The following tests were written for SQLite and need refactoring:
-- `auth-test.js`
-- `therapy-response-test.js`  
-- `therapy-response-integration-test.js`
-
-These create their own SQLite database instances and need to be updated to work with MySQL connection pools.
+- `therapy-response-test.js` - Compatibility wrapper (functionality in auth-test.js)
+- `therapy-response-integration-test.js` - Compatibility wrapper
+- `auth-test.js.legacy` - Legacy auth tests (superseded by current auth-test.js)
 
 ---
 

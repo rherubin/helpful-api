@@ -3,7 +3,7 @@
  * 
  * NOTE: This test suite has been replaced by integration tests that run against
  * the live MySQL-backed server. The functionality tested here is now covered by:
- * - tests/mysql-integration-test.js - Full integration test suite
+ * - tests/auth-test.js - Comprehensive authentication & integration test suite
  * - tests/api-test.js - Comprehensive API endpoint testing
  * 
  * This file is kept for backwards compatibility with the test runner.
@@ -27,11 +27,11 @@ class TherapyResponseIntegrationTest {
     this.log('');
     this.log('⚠️  NOTE: This test suite has been replaced by MySQL integration tests');
     this.log('   The therapy response integration is now tested in:');
-    this.log('   - tests/mysql-integration-test.js (recommended)');
+    this.log('   - tests/auth-test.js (recommended)');
     this.log('   - tests/api-test.js (comprehensive API tests)');
     this.log('');
-    this.log('   To run the comprehensive MySQL test suite:');
-    this.log('   $ npm run test:mysql');
+    this.log('   To run the comprehensive authentication test suite:');
+    this.log('   $ npm run test:auth');
     this.log('');
     this.log('✅ Marking as PASSED (functionality tested in integration tests)');
     

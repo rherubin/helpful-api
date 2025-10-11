@@ -13,6 +13,7 @@ yarn-error.log*
 
 # Database files
 # Note: MySQL database is hosted externally (Railway/cloud)
+*.db
 
 # Logs
 logs
