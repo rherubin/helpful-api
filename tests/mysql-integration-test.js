@@ -1,10 +1,14 @@
 /**
  * MySQL Integration Tests for Helpful API
  * Tests the running server with MySQL backend
+ * 
+ * IMPORTANT: All test users MUST use @example.com email domain
+ * This ensures easy identification and safe cleanup of test data
  */
 
 const axios = require('axios');
 const assert = require('assert');
+const { generateTestEmail, validateTestEmailDomain, TEST_EMAIL_DOMAIN } = require('./test-helpers');
 
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:9000';
 
@@ -18,12 +22,15 @@ const testConfig = {
 let testUser = null;
 let accessToken = null;
 let refreshToken = null;
-let testEmail = `test_${Date.now()}@example.com`;
+let testEmail = generateTestEmail(); // Uses standardized helper
 let testPassword = 'TestPass1!@#';
+let createdUserIds = []; // Track created users for cleanup
 
-// Helper functions
+// Helper functions (using standardized test helpers)
 function generateEmail() {
-  return `test_${Date.now()}_${Math.random().toString(36).substr(2, 5)}@example.com`;
+  const email = generateTestEmail();
+  validateTestEmailDomain(email); // Ensure @example.com domain
+  return email;
 }
 
 async function sleep(ms) {
@@ -73,6 +80,7 @@ async function runTests() {
     testUser = response.data.user;
     accessToken = response.data.access_token;
     refreshToken = response.data.refresh_token;
+    createdUserIds.push(testUser.id); // Track for cleanup
     
     console.log('✅ PASS - User created with tokens\n');
     passedTests++;
@@ -365,10 +373,10 @@ async function runTests() {
 
   if (failedTests > 0) {
     console.log('⚠️  Some tests failed. Check the output above for details.');
-    process.exit(1);
+    return { success: false, failedTests };
   } else {
     console.log('🎉 All tests passed! MySQL integration is working perfectly.');
-    process.exit(0);
+    return { success: true, passedTests };
   }
 }
 
@@ -380,6 +388,21 @@ async function checkServer() {
   } catch (error) {
     return false;
   }
+}
+
+// Cleanup test data
+async function showCleanupInstructions() {
+  if (createdUserIds.length === 0) {
+    return;
+  }
+  
+  console.log('\n📝 Test Data Cleanup');
+  console.log('====================');
+  console.log(`Created ${createdUserIds.length} test user(s) during this test run.\n`);
+  console.log('To clean up ALL test data from your database, run:');
+  console.log('  npm run cleanup:test-data\n');
+  console.log('Or use the cleanup script directly:');
+  console.log('  node tests/cleanup-test-data.js\n');
 }
 
 // Main execution
@@ -394,6 +417,20 @@ async function checkServer() {
   }
   
   console.log('✅ Server is running\n');
-  await runTests();
+  
+  let testResult;
+  try {
+    testResult = await runTests();
+  } finally {
+    // Show cleanup instructions
+    await showCleanupInstructions();
+  }
+  
+  // Exit with appropriate code
+  if (testResult && testResult.success) {
+    process.exit(0);
+  } else {
+    process.exit(1);
+  }
 })();
 

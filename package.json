@@ -15,7 +15,8 @@
     "test:auth": "node tests/auth-test.js",
     "test:mysql": "node tests/mysql-integration-test.js",
     "test:ci": "node tests/run-all-tests.js --skip-server-check",
-    "test:quick": "node tests/run-all-tests.js --no-load"
+    "test:quick": "node tests/run-all-tests.js --no-load",
+    "test:cleanup": "node tests/cleanup-test-data.js"
   },
   "keywords": [
     "api",
