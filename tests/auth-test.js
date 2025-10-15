@@ -204,7 +204,7 @@ async function runTests() {
       console.log('❌ FAIL - Should require authentication\n');
       failedTests++;
     } catch (error) {
-      if (error.response?.status === 401 || error.response?.status === 403) {
+      if (error.response?.status === 401) {
         console.log('✅ PASS - Correctly requires authentication\n');
         passedTests++;
       } else {
@@ -364,7 +364,7 @@ async function runTests() {
       console.log('❌ FAIL - Should reject invalidated token\n');
       failedTests++;
     } catch (error) {
-      if (error.response?.status === 403 || error.response?.status === 401) {
+      if (error.response?.status === 401) {
         console.log('✅ PASS - Invalidated token rejected\n');
         passedTests++;
       } else {
@@ -387,7 +387,7 @@ async function runTests() {
       console.log('❌ FAIL - Should reject invalid token\n');
       failedTests++;
     } catch (error) {
-      if (error.response?.status === 403 || error.response?.status === 401) {
+      if (error.response?.status === 401) {
         console.log('✅ PASS - Invalid token rejected\n');
         passedTests++;
       } else {

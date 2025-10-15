@@ -14,7 +14,12 @@ function authenticateToken(req, res, next) {
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
+      // Check if it's specifically a token expiry error
+      if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({ error: 'Token expired' });
+      }
+      // For other JWT errors (invalid signature, malformed, etc.)
+      return res.status(401).json({ error: 'Invalid token' });
     }
     req.user = user;
     next();

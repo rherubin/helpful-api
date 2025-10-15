@@ -84,7 +84,7 @@ function createAuthRoutes(authService, userModel, pairingService) {
     } catch (error) {
       if (error.message.includes('Invalid or expired refresh token') || 
           error.message.includes('Refresh token not found or expired')) {
-        return res.status(403).json({ error: error.message });
+        return res.status(401).json({ error: error.message });
       } else {
         return res.status(500).json({ error: 'Failed to refresh token' });
       }
