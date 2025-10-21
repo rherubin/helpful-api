@@ -222,10 +222,27 @@ class ChatGPTService {
     return this.queueOpenAIRequest({ type: 'program', userName, partnerName, userInput });
   }
 
+  // Public interface for next program generation - queue the request
+  async generateNextCouplesProgram(userName, partnerName, previousConversationStarters, userInput) {
+    if (!this.openai) {
+      throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
+    }
+
+    return this.queueOpenAIRequest({ 
+      type: 'next_program', 
+      userName, 
+      partnerName, 
+      previousConversationStarters,
+      userInput 
+    });
+  }
+
   // Process OpenAI request based on type
   async processOpenAIRequest(requestData, retryCount = 0) {
     if (requestData.type === 'therapy_response') {
       return this.generateCouplesTherapyResponseInternal(requestData, retryCount);
+    } else if (requestData.type === 'next_program') {
+      return this.generateNextCouplesProgramInternal(requestData, retryCount);
     } else {
       return this.generateCouplesProgramInternal(requestData, retryCount);
     }
@@ -369,6 +386,168 @@ Please format your response as a JSON object with the following structure:
       }
       
       throw new Error('Failed to generate couples therapy program');
+    }
+  }
+
+  // Internal method for generating next program based on previous conversation starters
+  async generateNextCouplesProgramInternal({ userName, partnerName, previousConversationStarters, userInput }, retryCount = 0) {
+    const MAX_RETRIES = 2;
+    const BASE_DELAY = 1000; // 1 second
+    
+    try {
+      // Sanitize all inputs
+      const sanitizedUserName = this.sanitizePromptInput(userName);
+      const sanitizedPartnerName = this.sanitizePromptInput(partnerName);
+      const sanitizedUserInput = this.sanitizePromptInput(userInput);
+      
+      // Sanitize conversation starters array
+      const sanitizedConversationStarters = Array.isArray(previousConversationStarters)
+        ? previousConversationStarters.map(starter => this.sanitizePromptInput(starter))
+        : [];
+
+      // Validate input safety
+      if (!this.validateInputSafety(sanitizedUserInput) || 
+          !this.validateInputSafety(sanitizedUserName) || 
+          !this.validateInputSafety(sanitizedPartnerName)) {
+        throw new Error('Input contains potentially unsafe content');
+      }
+
+      // Additional validation - ensure names are reasonable
+      if (sanitizedUserName.length < 1 || sanitizedUserName.length > 50) {
+        throw new Error('User name must be between 1 and 50 characters');
+      }
+      if (sanitizedPartnerName.length < 1 || sanitizedPartnerName.length > 50) {
+        throw new Error('Partner name must be between 1 and 50 characters');
+      }
+      if (sanitizedUserInput.length < 10 || sanitizedUserInput.length > 2000) {
+        throw new Error('User input must be between 10 and 2000 characters');
+      }
+
+      // Build the list of previous questions
+      let previousQuestionsText = '';
+      if (sanitizedConversationStarters.length > 0) {
+        previousQuestionsText = sanitizedConversationStarters
+          .map((starter, index) => `${index + 1}. "${starter}"`)
+          .join('\n');
+      }
+
+      const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
+
+Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
+
+You've been working with a couple, whose names are ${sanitizedUserName} and ${sanitizedPartnerName}.
+
+${sanitizedUserName} and ${sanitizedPartnerName} have answered the following questions in your therapy room already:
+
+${previousQuestionsText}
+
+Having completed those questions together, they are ready to make more progress together with you as their therapist.
+
+${sanitizedUserName} says the following to you:
+
+"${sanitizedUserInput}"
+
+Your goal, as their couples therapist, is to help them talk every day for 14 consecutive days in order to solve their primary issue and enable them to experience greater emotional connection together.
+
+Specifically, your task is to provide 1 conversation-starter per day for 14 consecutive days. Each conversation starter should have the following attributes:
+
+- Each conversation should build upon the one before it. They should all move towards a unified goal of helping the couple experience emotional connection together.  
+- Each conversation-starter should have a theme, which I'd like you to specifically identify as a separate data element.
+- Each conversation-starter should help each person unpack what they're feeling; they should be designed so that each person is able to articulate their perspective. We should never have a scenario where one person is talking more than the other.
+- Each conversation-starter should be designed so that it brings the couple closer together during that day and makes them feel like more of a team.
+- The conversation-starters should use both of their names, when appropriate.
+- The conversation-starters should reference details from their relationship, when appropriate. This is optional.
+- The conversation-starters should feel a little lighter, not as serious. Make them very conversational in tone, as if you were a friend to the couple.
+
+Together, all of the conversation-starters make up a two-week program, which should feel comprehensive.
+
+You should not use any of the conversation-starters that they've already answered.
+
+Now, craft me the 14 conversation-starters, provide a theme for each one, and explain the science and research behind each question. Note that when you explain the science and research, act like you're talking directly to the couple and say it in a very accessible way. Label this science and research section: "The Science Behind It"
+
+Note: Don't ever reference Emotionally Focused Therapy or Gottman Couples Therapy. Instead of that, you can refer to it as a research-based couples therapy approach, or a therapy method that is scientifically backed.
+
+Please format your response as a JSON object with the following structure:
+{
+  "program": {
+    "title": "14-Day Emotional Connection Program for ${sanitizedUserName} and ${sanitizedPartnerName}",
+    "overview": "Brief description of the program goals",
+    "days": [
+      {
+        "day": 1,
+        "theme": "Theme name",
+        "conversation_starter": "The conversation starter text",
+        "science_behind_it": "Explanation of the research and science"
+      }
+    ]
+  }
+}`;
+
+      const completion = await this.openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content: "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        max_tokens: 4000,
+        temperature: 0.7
+      });
+
+      const response = completion.choices[0].message.content;
+      
+      // Validate and sanitize the AI response
+      if (!this.validateAIResponse(response)) {
+        console.warn('SECURITY: AI response failed validation checks');
+        throw new Error('AI response contains potentially unsafe content');
+      }
+      
+      // Try to parse JSON response, fallback to raw text if parsing fails
+      try {
+        const parsedResponse = JSON.parse(response);
+        
+        // Validate the structure and content of the parsed response
+        if (!this.validateProgramStructure(parsedResponse)) {
+          throw new Error('AI response does not match expected program structure');
+        }
+        
+        return parsedResponse;
+      } catch (parseError) {
+        console.warn('Failed to parse ChatGPT JSON response, returning raw text:', parseError.message);
+        return response;
+      }
+    } catch (error) {
+      // Implement exponential backoff for rate limiting
+      if (error.status === 429 && retryCount < MAX_RETRIES) {
+        const delay = BASE_DELAY * Math.pow(2, retryCount);
+        console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.generateNextCouplesProgramInternal({ userName, partnerName, previousConversationStarters, userInput }, retryCount + 1);
+      }
+
+      // Enhanced error logging for security monitoring
+      if (error.message.includes('unsafe content') || error.message.includes('validation')) {
+        console.error('SECURITY ERROR in ChatGPT service:', error.message);
+      } else {
+        // Log error without exposing sensitive information
+        if (error.status === 401) {
+          console.error('ChatGPT API Error: Invalid API key - check your OPENAI_API_KEY configuration');
+        } else if (error.status === 429) {
+          console.error(`ChatGPT API Error: Rate limit exceeded (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+        } else if (error.status === 403) {
+          console.error('ChatGPT API Error: Access forbidden - check API key permissions');
+        } else {
+          console.error('ChatGPT API Error:', error.message || 'Unknown error');
+        }
+      }
+      
+      throw new Error('Failed to generate next couples therapy program');
     }
   }
 

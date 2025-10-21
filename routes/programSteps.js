@@ -213,6 +213,15 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       // Add the user message
       const message = await messageModel.addUserMessage(id, userId, content.trim());
 
+      // Check and update unlock status for the program
+      setTimeout(async () => {
+        try {
+          await programModel.checkAndUpdateUnlockStatus(step.program_id);
+        } catch (unlockError) {
+          console.error('Error checking unlock status:', unlockError.message);
+        }
+      }, 500);
+
       // Check if we should trigger a background therapy response
       setTimeout(() => {
         checkAndTriggerTherapyResponse(id, userId);
@@ -270,86 +279,6 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       }
       console.error('Error updating message:', error.message);
       return res.status(500).json({ error: 'Failed to update message' });
-    }
-  });
-
-  // Get program step for a specific day
-  router.get('/programs/:programId/programSteps/day/:day', authenticateToken, async (req, res) => {
-    try {
-      const { programId, day } = req.params;
-      const userId = req.user.id;
-
-      // Check if user has access to this program
-      const hasAccess = await programStepModel.checkStepAccess(userId, programId);
-      if (!hasAccess) {
-        return res.status(403).json({ error: 'Not authorized to access this program' });
-      }
-
-      // Get the program step for this specific day
-      const step = await programStepModel.getDayStep(programId, parseInt(day));
-      
-      // Get messages for this step
-      const messages = await messageModel.getStepMessages(step.id);
-
-      res.status(200).json({
-        message: 'Program step retrieved successfully',
-        step: {
-          ...step,
-          messages: messages
-        }
-      });
-    } catch (error) {
-      if (error.message === 'Program step not found') {
-        return res.status(404).json({ error: error.message });
-      }
-      console.error('Error fetching day step:', error.message);
-      return res.status(500).json({ error: 'Failed to fetch program step for day' });
-    }
-  });
-
-  // Add a message to a specific day's program step
-  router.post('/programs/:programId/programSteps/day/:day', authenticateToken, async (req, res) => {
-    try {
-      const { programId, day } = req.params;
-      const { content } = req.body;
-      const userId = req.user.id;
-
-      if (!content || content.trim() === '') {
-        return res.status(400).json({ error: 'Message content is required' });
-      }
-
-      // Check if user has access to this program
-      const hasAccess = await programStepModel.checkStepAccess(userId, programId);
-      if (!hasAccess) {
-        return res.status(403).json({ error: 'Not authorized to access this program' });
-      }
-
-      // Get the program step for this specific day
-      const step = await programStepModel.getDayStep(programId, parseInt(day));
-      
-      // Add the user message
-      const message = await messageModel.addUserMessage(step.id, userId, content.trim());
-
-      // Check if we should trigger a background therapy response
-      setTimeout(() => {
-        checkAndTriggerTherapyResponse(step.id, userId);
-      }, 1000); // Small delay to ensure message is saved
-
-      res.status(201).json({
-        message: 'Message added to program step successfully',
-        data: {
-          step_id: step.id,
-          day: step.day,
-          theme: step.theme,
-          message: message
-        }
-      });
-    } catch (error) {
-      if (error.message === 'Program step not found') {
-        return res.status(404).json({ error: error.message });
-      }
-      console.error('Error adding message to day step:', error.message);
-      return res.status(500).json({ error: 'Failed to add message to program step' });
     }
   });
 

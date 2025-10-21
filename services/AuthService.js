@@ -185,7 +185,7 @@ class AuthService {
     }
   }
 
-  // Refresh access token
+  // Refresh access token and rotate refresh token
   async refreshToken(refreshToken) {
     try {
       // Verify refresh token
@@ -200,10 +200,19 @@ class AuthService {
       // Generate new access token
       const newAccessToken = this.generateAccessToken(user);
       
+      // Generate new refresh token with extended expiration (refresh token rotation)
+      const newRefreshToken = this.generateRefreshToken(user.id);
+      const expiresAt = new Date(Date.now() + this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN) * 1000);
+      
+      // Update the refresh token in database
+      await this.refreshTokenModel.updateRefreshToken(refreshToken, newRefreshToken, expiresAt);
+      
       return {
         message: 'Token refreshed successfully',
         access_token: newAccessToken,
-        expires_in: this.JWT_EXPIRES_IN
+        refresh_token: newRefreshToken,
+        expires_in: this.JWT_EXPIRES_IN,
+        refresh_expires_in: this.JWT_REFRESH_EXPIRES_IN
       };
     } catch (error) {
       console.error('Refresh token error:', error.message);

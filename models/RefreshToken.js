@@ -103,6 +103,25 @@ class RefreshToken {
     }
   }
 
+  // Update refresh token (for rotation)
+  async updateRefreshToken(oldToken, newToken, expiresAt) {
+    try {
+      const result = await this.query(
+        'UPDATE refresh_tokens SET token = ?, expires_at = ? WHERE token = ?',
+        [newToken, expiresAt, oldToken]
+      );
+      if (result.affectedRows === 0) {
+        throw new Error('Refresh token not found');
+      }
+      return true;
+    } catch (err) {
+      if (err.message === 'Refresh token not found') {
+        throw err;
+      }
+      throw new Error('Failed to update refresh token');
+    }
+  }
+
   // Clean up expired tokens
   async cleanupExpiredTokens() {
     try {

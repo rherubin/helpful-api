@@ -4,11 +4,12 @@
  * 
  * ✅ COMPLETE COVERAGE: Authentication, Authorization, Profiles, Pairings
  * 
- * Test Coverage (18 tests):
+ * Test Coverage (19 tests):
  * - Health Check
  * - User Registration (with duplicate prevention)
  * - Login (valid, invalid password, missing credentials, non-existent user)
- * - Token Management (refresh, expiry, structure validation, invalidation)
+ * - Token Management (refresh with rotation, expiry, structure validation, invalidation)
+ * - Refresh Token Rotation (new tokens issued, old tokens invalidated)
  * - Protected Endpoints (with/without authentication)
  * - Password Validation
  * - User Profile Management
@@ -216,27 +217,58 @@ async function runTests() {
     failedTests++;
   }
 
-  // Test 8: Refresh Access Token
+  // Test 8: Refresh Access Token with Token Rotation
+  let oldRefreshToken;
   try {
     totalTests++;
-    console.log('Test 8: Refresh Access Token');
+    console.log('Test 8: Refresh Access Token with Token Rotation');
     await sleep(1000); // Wait 1 second to ensure new timestamp in token
+    oldRefreshToken = refreshToken;
     const response = await axios.post(`${BASE_URL}/api/refresh`, {
       refresh_token: refreshToken
     }, testConfig);
     
     assert.strictEqual(response.status, 200);
     assert.ok(response.data.access_token);
+    assert.ok(response.data.refresh_token);
     assert.ok(response.data.message.includes('refreshed'));
     
+    // Verify new tokens are different from old ones
     const newAccessToken = response.data.access_token;
-    // Token should be different (has new timestamp)
-    accessToken = newAccessToken;
+    const newRefreshToken = response.data.refresh_token;
+    assert.notStrictEqual(newRefreshToken, oldRefreshToken, 'Refresh token should be rotated');
     
-    console.log('✅ PASS - Token refreshed successfully\n');
+    // Update tokens for subsequent tests
+    accessToken = newAccessToken;
+    refreshToken = newRefreshToken;
+    
+    console.log('✅ PASS - Tokens refreshed and rotated successfully\n');
     passedTests++;
   } catch (error) {
     console.log(`❌ FAIL - ${error.response?.data?.error || error.message}\n`);
+    failedTests++;
+  }
+
+  // Test 8b: Old Refresh Token Should Be Invalidated After Rotation
+  try {
+    totalTests++;
+    console.log('Test 8b: Old Refresh Token Should Be Invalidated (Should Fail)');
+    try {
+      await axios.post(`${BASE_URL}/api/refresh`, {
+        refresh_token: oldRefreshToken
+      }, testConfig);
+      console.log('❌ FAIL - Old refresh token should be invalidated after rotation\n');
+      failedTests++;
+    } catch (error) {
+      if (error.response?.status === 401) {
+        console.log('✅ PASS - Old refresh token correctly invalidated\n');
+        passedTests++;
+      } else {
+        throw error;
+      }
+    }
+  } catch (error) {
+    console.log(`❌ FAIL - ${error.message}\n`);
     failedTests++;
   }
 

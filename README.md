@@ -18,7 +18,8 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 - **Comprehensive Testing**: 95+ tests across multiple test suites with 98%+ success rates
 - **Complete Pairing System**: Full end-to-end pairing workflow with acceptance, rejection, and profile integration
 - **Password Security**: Bcrypt hashing with strict password requirements (uppercase, lowercase, number, special char)
-- **Token Management**: Short-lived access tokens (15min) with long-lived refresh tokens (7 days)
+- **Token Management**: Short-lived access tokens (1h) with refresh token rotation for enhanced security
+- **Refresh Token Rotation**: Automatic token rotation with sliding expiration window (7 days)
 - **Database Integrity**: MySQL with automatic schema creation and proper JOIN handling
 - **RESTful Design**: Clean, consistent API with comprehensive error handling and status codes
 - **Railway Deployment**: Optimized for Railway platform with MySQL database service
@@ -226,6 +227,7 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 
 #### Refresh Token
 - **POST** `/api/refresh`
+- **Description:** Refreshes the access token and rotates the refresh token for enhanced security. The old refresh token is invalidated and a new one is issued.
 - **Body:**
   ```json
   {
@@ -237,9 +239,16 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
   {
     "message": "Token refreshed successfully",
     "access_token": "new_jwt_token",
-    "expires_in": "1h"
+    "refresh_token": "new_refresh_jwt_token",
+    "expires_in": "1h",
+    "refresh_expires_in": "7d"
   }
   ```
+- **Security Note:** 
+  - The old refresh token is immediately invalidated after use
+  - A new refresh token is issued with extended expiration (sliding window)
+  - This prevents refresh token reuse and enhances security
+  - Always store the new refresh token for subsequent refresh requests
 
 #### Logout
 - **POST** `/api/logout`
@@ -560,10 +569,14 @@ Programs are AI-generated couples therapy programs that can be created with or w
   ```json
   {
     "user_input": "I feel less and less connected with my wife. I want a plan that will help us have what we used to. We would laugh and joke all the time and now things feel disconnected and distant",
-    "pairing_id": "pairing_id"
+    "pairing_id": "pairing_id",
+    "steps_required_for_unlock": 7
   }
   ```
-  **Note**: `pairing_id` is optional. Programs can be created independently without a pairing. User names and relationship details are now managed through the user profile (PUT /users/:id).
+  **Note**: 
+  - `pairing_id` is optional. Programs can be created independently without a pairing.
+  - `steps_required_for_unlock` is optional (default: 7). This sets how many program steps need at least one message before unlocking the next program.
+  - User names and relationship details are now managed through the user profile (PUT /users/:id).
 - **Response:**
   ```json
   {
@@ -573,6 +586,8 @@ Programs are AI-generated couples therapy programs that can be created with or w
       "user_id": "user_id",
       "user_input": "I feel less and less connected with my wife...",
       "pairing_id": "pairing_id",
+      "steps_required_for_unlock": 7,
+      "next_program_unlocked": false,
       "created_at": "2024-01-01T00:00:00.000Z"
     }
   }
@@ -592,6 +607,8 @@ Programs are AI-generated couples therapy programs that can be created with or w
         "user_id": "user_id",
         "user_input": "I feel less and less connected with my wife...",
         "pairing_id": "pairing_id",
+        "steps_required_for_unlock": 7,
+        "next_program_unlocked": false,
         "created_at": "2024-01-01T00:00:00.000Z",
         "updated_at": "2024-01-01T00:00:00.000Z",
         "program_steps": [
@@ -623,6 +640,8 @@ Programs are AI-generated couples therapy programs that can be created with or w
       "user_id": "user_id",
       "user_input": "I feel less and less connected with my wife...",
       "pairing_id": "pairing_id",
+      "steps_required_for_unlock": 7,
+      "next_program_unlocked": false,
       "created_at": "2024-01-01T00:00:00.000Z",
       "updated_at": "2024-01-01T00:00:00.000Z",
       "program_steps": [
@@ -640,6 +659,50 @@ Programs are AI-generated couples therapy programs that can be created with or w
   }
   ```
 
+#### Create Next Program
+- **POST** `/api/programs/:id/next_program`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Creates a follow-up therapy program based on the previous program's conversation starters. The previous program must be unlocked (`next_program_unlocked: true`) before a next program can be created.
+- **Body:**
+  ```json
+  {
+    "user_input": "We've made great progress on communication. Now we want to work on spending more quality time together and being more present.",
+    "steps_required_for_unlock": 7
+  }
+  ```
+  **Note**: 
+  - `user_input` is required. This describes what the couple wants to work on next.
+  - `steps_required_for_unlock` is optional (default: 7).
+  - The new program automatically inherits the `pairing_id` from the previous program.
+  - User names are automatically pulled from the user profile and pairing.
+  - The AI prompt includes all conversation starters from the previous program that have user messages.
+- **Response:**
+  ```json
+  {
+    "message": "Next program created successfully",
+    "program": {
+      "id": "new_program_id",
+      "user_id": "user_id",
+      "user_input": "We've made great progress on communication...",
+      "pairing_id": "pairing_id",
+      "previous_program_id": "previous_program_id",
+      "steps_required_for_unlock": 7,
+      "next_program_unlocked": false,
+      "created_at": "2024-01-15T00:00:00.000Z"
+    }
+  }
+  ```
+- **Validation Errors:**
+  - `400`: Missing `user_input` field
+  - `403`: Previous program not unlocked or user doesn't have access
+  - `404`: Previous program not found
+
+**How It Works:**
+1. The system retrieves all conversation starters from the previous program where users have posted messages
+2. These conversation starters are included in the AI prompt to provide context
+3. The AI generates 14 new conversation starters that build upon the previous work
+4. The new program is linked to the previous program via `previous_program_id`
+
 #### Delete Program
 - **DELETE** `/api/programs/:id`
 - **Headers:** `Authorization: Bearer {access_token}`
@@ -650,6 +713,54 @@ Programs are AI-generated couples therapy programs that can be created with or w
     "deleted_at": "2024-01-01T00:00:00.000Z"
   }
   ```
+
+### Program Unlock Feature
+
+The program unlock feature tracks user engagement and automatically unlocks access to the next program when a configurable threshold is met. This encourages consistent participation and ensures users complete enough of the current program before moving forward.
+
+**How It Works:**
+1. Each program has a `steps_required_for_unlock` threshold (default: 7)
+2. When users add messages to program steps, the system tracks which steps have at least one message
+3. Once the threshold is met (e.g., 7 steps have messages), `next_program_unlocked` automatically changes to `true`
+4. The unlock status is checked automatically whenever a message is added to any program step
+5. For paired programs, messages from either user count toward the unlock threshold
+
+**Key Features:**
+- **Automatic Tracking**: No manual intervention needed - unlocks happen automatically when messages are added
+- **Configurable Threshold**: Set different unlock requirements per program (default: 7 steps)
+- **Shared Progress**: In paired programs, both users' contributions count toward unlocking
+- **Real-Time Updates**: Unlock status is checked immediately after each message is posted
+- **Persistent State**: Once unlocked, the status remains true even if messages are deleted
+
+**Example Usage:**
+```javascript
+// Create a program with custom unlock threshold
+POST /api/programs
+{
+  "user_input": "Help us reconnect",
+  "steps_required_for_unlock": 5  // Unlock after 5 steps have messages
+}
+
+// Add messages to program steps
+POST /api/programSteps/{step_id}/messages
+{
+  "content": "We tried the exercise today..."
+}
+
+// Check unlock status
+GET /api/programs/{program_id}
+// Response includes:
+{
+  "steps_required_for_unlock": 5,
+  "next_program_unlocked": true  // Unlocked after 5 steps had messages
+}
+```
+
+**Use Cases:**
+- **Progress Gates**: Require users to complete X exercises before accessing advanced content
+- **Engagement Tracking**: Ensure consistent participation before program progression
+- **Pairing Coordination**: Track combined progress of both users in a relationship
+- **Flexible Requirements**: Different programs can have different unlock thresholds based on complexity
 
 ### Program Steps
 
@@ -664,6 +775,7 @@ The program steps system allows users to engage with each day of their therapy p
 - **Message Management**: Users can add, edit, and view their own messages
 - **Progress Tracking**: Messages can include metadata to track exercise completion and engagement
 - **Access Control**: Only program owners and paired users can access program steps
+- **Unlock Integration**: Adding messages to steps automatically updates program unlock status
 
 **Database Structure:**
 - **Program Steps Table**: Stores day-level metadata (theme, conversation starter, science explanation)
@@ -978,17 +1090,28 @@ CREATE TABLE programs (
   user_id VARCHAR(50) NOT NULL,
   user_input TEXT NOT NULL,
   pairing_id VARCHAR(50) DEFAULT NULL,
+  previous_program_id VARCHAR(50) DEFAULT NULL,
   therapy_response LONGTEXT DEFAULT NULL,
+  steps_required_for_unlock INT DEFAULT 7,
+  next_program_unlocked BOOLEAN DEFAULT FALSE,
   deleted_at DATETIME DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_user_id (user_id),
   INDEX idx_pairing_id (pairing_id),
+  INDEX idx_previous_program_id (previous_program_id),
   INDEX idx_deleted_at (deleted_at),
+  INDEX idx_next_program_unlocked (next_program_unlocked),
   FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
-  FOREIGN KEY (pairing_id) REFERENCES pairings (id) ON DELETE CASCADE
+  FOREIGN KEY (pairing_id) REFERENCES pairings (id) ON DELETE CASCADE,
+  FOREIGN KEY (previous_program_id) REFERENCES programs (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
+
+**Program Unlock Feature:**
+- `steps_required_for_unlock`: Number of program steps that need at least one message before unlocking the next program (default: 7)
+- `next_program_unlocked`: Boolean flag indicating if the unlock threshold has been met (automatically updated when messages are added)
+- `previous_program_id`: References the previous program in a sequence, enabling continuity across multiple therapy programs
 
 ### Program Steps Table
 ```sql
@@ -1053,11 +1176,26 @@ Partner codes are temporarily generated when users request pairings:
 
 ## Authentication
 
-The API uses JWT (JSON Web Tokens) for authentication:
+The API uses JWT (JSON Web Tokens) for authentication with automatic refresh token rotation:
 
 - **Access Tokens**: Short-lived (1 hour) for API requests
-- **Refresh Tokens**: Long-lived (7 days) for obtaining new access tokens
+- **Refresh Tokens**: Long-lived (7 days) with automatic rotation and sliding expiration
 - **Bearer Token**: Include `Authorization: Bearer {token}` in request headers
+
+### Refresh Token Rotation
+
+For enhanced security, the API implements automatic refresh token rotation:
+
+1. **Sliding Expiration**: Each time you refresh, the expiration window extends by 7 days
+2. **Token Invalidation**: Old refresh tokens are immediately invalidated after use
+3. **Reuse Prevention**: Attempting to reuse an old refresh token will fail with 401 error
+4. **Active Session Management**: Users stay logged in as long as they refresh within the expiration window
+
+**Best Practices:**
+- Always store the new `refresh_token` returned from the `/api/refresh` endpoint
+- Refresh tokens before they expire to maintain uninterrupted access
+- Implement automatic refresh logic in your client application
+- Handle 401 errors by redirecting to login when refresh fails
 
 ## Error Handling
 
@@ -1130,14 +1268,27 @@ Tests the background therapy response system including:
 ```bash
 npm run test:auth
 ```
-Comprehensive authentication system tests including:
+Comprehensive authentication system tests (19 tests) including:
 - User registration with password validation
 - Login and logout functionality
-- Token refresh mechanisms
+- Token refresh with automatic rotation
+- Refresh token rotation verification (new tokens issued, old tokens invalidated)
 - Invalid credential handling
 - Profile endpoint access control
 - JWT token structure validation
 - Error scenarios and edge cases
+
+#### Refresh Token Rotation Tests
+```bash
+node tests/refresh-token-rotation-test.js
+```
+Dedicated test suite for refresh token rotation functionality:
+- New access and refresh tokens are issued on refresh
+- Old refresh tokens are immediately invalidated
+- New refresh tokens work for subsequent refreshes
+- Token expiration is extended (sliding window)
+- Database records are properly updated
+- New access tokens work for protected routes
 
 #### User Profile Tests
 ```bash

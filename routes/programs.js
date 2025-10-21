@@ -1,8 +1,139 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 
-function createProgramRoutes(programModel, chatGPTService, programStepModel = null) {
+function createProgramRoutes(programModel, chatGPTService, programStepModel = null, userModel = null, pairingModel = null) {
   const router = express.Router();
+
+  // Create next program based on previous program
+  router.post('/:id/next_program', authenticateToken, async (req, res) => {
+    try {
+      const { id: previousProgramId } = req.params;
+      const { user_input, steps_required_for_unlock } = req.body;
+      const userId = req.user.id;
+
+      // Validation
+      if (!user_input) {
+        return res.status(400).json({ 
+          error: 'Field user_input is required' 
+        });
+      }
+
+      // Check if user has access to the previous program
+      const hasAccess = await programModel.checkProgramAccess(userId, previousProgramId);
+      if (!hasAccess) {
+        return res.status(403).json({ 
+          error: 'Not authorized to access this program' 
+        });
+      }
+
+      // Get the previous program
+      const previousProgram = await programModel.getProgramById(previousProgramId);
+
+      // Check if the previous program is unlocked
+      if (!previousProgram.next_program_unlocked) {
+        return res.status(403).json({ 
+          error: 'Previous program must be unlocked before generating next program',
+          current_unlock_status: {
+            next_program_unlocked: false,
+            steps_required_for_unlock: previousProgram.steps_required_for_unlock
+          }
+        });
+      }
+
+      // Get user names for the prompt
+      let userName = 'User';
+      let partnerName = 'Partner';
+
+      if (userModel) {
+        try {
+          const user = await userModel.getUserById(previousProgram.user_id);
+          userName = user.user_name || userName;
+          partnerName = user.partner_name || partnerName;
+
+          // If pairing exists and partner_name is not set, try to get partner's user_name
+          if (previousProgram.pairing_id && pairingModel && !user.partner_name) {
+            try {
+              const pairing = await pairingModel.getPairingById(previousProgram.pairing_id);
+              const partnerId = pairing.user1_id === previousProgram.user_id ? pairing.user2_id : pairing.user1_id;
+              if (partnerId) {
+                const partner = await userModel.getUserById(partnerId);
+                partnerName = partner.user_name || partnerName;
+              }
+            } catch (pairingError) {
+              console.log('Could not fetch partner name from pairing:', pairingError.message);
+            }
+          }
+        } catch (userError) {
+          console.log('Could not fetch user names, using defaults:', userError.message);
+        }
+      }
+
+      // Get conversation starters from previous program that have messages
+      let previousConversationStarters = [];
+      try {
+        previousConversationStarters = await programModel.getConversationStartersWithMessages(previousProgramId);
+      } catch (startersError) {
+        console.log('Could not fetch conversation starters:', startersError.message);
+      }
+
+      // Create the new program
+      const newProgram = await programModel.createProgram(previousProgram.user_id, {
+        user_input,
+        pairing_id: previousProgram.pairing_id,
+        previous_program_id: previousProgramId,
+        steps_required_for_unlock: steps_required_for_unlock || 7
+      });
+
+      // Return immediate response
+      res.status(201).json({
+        message: 'Next program created successfully',
+        program: newProgram
+      });
+
+      // Generate ChatGPT response asynchronously in the background
+      if (chatGPTService && chatGPTService.isConfigured()) {
+        // Don't await this - let it run in the background
+        (async () => {
+          try {
+            console.log('Generating next program ChatGPT response for program:', newProgram.id);
+            const therapyResponse = await chatGPTService.generateNextCouplesProgram(
+              userName, 
+              partnerName, 
+              previousConversationStarters,
+              user_input
+            );
+            
+            // Convert response to string if it's an object
+            const therapyResponseString = typeof therapyResponse === 'object' 
+              ? JSON.stringify(therapyResponse) 
+              : therapyResponse;
+            
+            // Update the program with the therapy response (for backward compatibility)
+            await programModel.updateTherapyResponse(newProgram.id, therapyResponseString);
+            
+            // Also save to program_steps table if available (create program steps)
+            if (programStepModel) {
+              await programStepModel.createProgramSteps(newProgram.id, therapyResponseString);
+              console.log('Program steps created for next program:', newProgram.id);
+            }
+            
+            console.log('ChatGPT response generated and saved for next program:', newProgram.id);
+          } catch (chatGPTError) {
+            console.error('Failed to generate ChatGPT response for next program', newProgram.id, ':', chatGPTError.message);
+            // Don't fail the entire request if ChatGPT fails
+          }
+        })();
+      } else {
+        console.log('ChatGPT service not configured, skipping therapy response generation');
+      }
+    } catch (error) {
+      console.error('Error creating next program:', error.message);
+      if (error.message === 'Program not found') {
+        return res.status(404).json({ error: 'Previous program not found' });
+      }
+      return res.status(500).json({ error: 'Failed to create next program' });
+    }
+  });
 
   // Create a program
   router.post('/', authenticateToken, async (req, res) => {

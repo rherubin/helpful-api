@@ -23,12 +23,15 @@ class Program {
         user_input TEXT NOT NULL,
         pairing_id VARCHAR(50) DEFAULT NULL,
         therapy_response LONGTEXT DEFAULT NULL,
+        steps_required_for_unlock INT DEFAULT 7,
+        next_program_unlocked BOOLEAN DEFAULT FALSE,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_user_id (user_id),
         INDEX idx_pairing_id (pairing_id),
         INDEX idx_deleted_at (deleted_at),
+        INDEX idx_next_program_unlocked (next_program_unlocked),
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
         FOREIGN KEY (pairing_id) REFERENCES pairings (id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -37,9 +40,81 @@ class Program {
     try {
       await this.query(createProgramsTable);
       console.log('Programs table initialized successfully.');
+      
+      // Add migration support for existing databases
+      await this.migrateUnlockFields();
     } catch (err) {
       console.error('Error creating programs table:', err.message);
       throw err;
+    }
+  }
+
+  // Migration method to add unlock fields to existing databases
+  async migrateUnlockFields() {
+    try {
+      // Check if columns exist
+      const checkColumns = `
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'programs' 
+        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id')
+      `;
+      
+      const existingColumns = await this.query(checkColumns);
+      const columnNames = existingColumns.map(col => col.COLUMN_NAME);
+      
+      // Add steps_required_for_unlock if it doesn't exist
+      if (!columnNames.includes('steps_required_for_unlock')) {
+        await this.query(`
+          ALTER TABLE programs 
+          ADD COLUMN steps_required_for_unlock INT DEFAULT 7 
+          AFTER therapy_response
+        `);
+        console.log('Added steps_required_for_unlock column to programs table.');
+      }
+      
+      // Add next_program_unlocked if it doesn't exist
+      if (!columnNames.includes('next_program_unlocked')) {
+        await this.query(`
+          ALTER TABLE programs 
+          ADD COLUMN next_program_unlocked BOOLEAN DEFAULT FALSE 
+          AFTER steps_required_for_unlock
+        `);
+        await this.query(`
+          CREATE INDEX idx_next_program_unlocked 
+          ON programs (next_program_unlocked)
+        `);
+        console.log('Added next_program_unlocked column to programs table.');
+      }
+      
+      // Add previous_program_id if it doesn't exist
+      if (!columnNames.includes('previous_program_id')) {
+        await this.query(`
+          ALTER TABLE programs 
+          ADD COLUMN previous_program_id VARCHAR(50) DEFAULT NULL 
+          AFTER pairing_id
+        `);
+        await this.query(`
+          CREATE INDEX idx_previous_program_id 
+          ON programs (previous_program_id)
+        `);
+        // Add foreign key constraint
+        try {
+          await this.query(`
+            ALTER TABLE programs 
+            ADD CONSTRAINT fk_previous_program 
+            FOREIGN KEY (previous_program_id) REFERENCES programs (id) ON DELETE SET NULL
+          `);
+        } catch (fkErr) {
+          // Ignore if foreign key already exists
+          console.log('Foreign key constraint may already exist.');
+        }
+        console.log('Added previous_program_id column to programs table.');
+      }
+    } catch (err) {
+      // Ignore errors if columns already exist or other migration issues
+      console.log('Migration check completed (columns may already exist).');
     }
   }
 
@@ -62,23 +137,34 @@ class Program {
 
   // Create a program
   async createProgram(userId, programData) {
-    const { user_input, pairing_id } = programData;
+    const { user_input, pairing_id, previous_program_id, steps_required_for_unlock = 7 } = programData;
     const programId = this.generateUniqueId();
 
     try {
       const insertProgram = `
-        INSERT INTO programs (id, user_id, user_input, pairing_id, therapy_response, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+        INSERT INTO programs (id, user_id, user_input, pairing_id, previous_program_id, therapy_response, steps_required_for_unlock, next_program_unlocked, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, NOW(), NOW())
       `;
 
-      await this.query(insertProgram, [programId, userId, user_input, pairing_id || null, programData.therapy_response || null]);
+      await this.query(insertProgram, [
+        programId, 
+        userId, 
+        user_input, 
+        pairing_id || null,
+        previous_program_id || null,
+        programData.therapy_response || null,
+        steps_required_for_unlock
+      ]);
       
       return {
         id: programId,
         user_id: userId,
         user_input,
         pairing_id,
+        previous_program_id,
         therapy_response: programData.therapy_response || null,
+        steps_required_for_unlock,
+        next_program_unlocked: false,
         created_at: new Date().toISOString()
       };
     } catch (err) {
@@ -92,6 +178,7 @@ class Program {
     try {
       const query = `
         SELECT p.id, p.user_id, p.user_input, p.pairing_id,
+               p.steps_required_for_unlock, p.next_program_unlocked,
                p.created_at, p.updated_at,
                pair.user1_id, pair.user2_id 
         FROM programs p
@@ -140,6 +227,7 @@ class Program {
     try {
       const query = `
         SELECT id, user_id, user_input, pairing_id, 
+               steps_required_for_unlock, next_program_unlocked,
                created_at, updated_at
         FROM programs 
         WHERE id = ? AND deleted_at IS NULL
@@ -192,6 +280,98 @@ class Program {
       return { message: 'Program deleted successfully', deleted_at: new Date().toISOString() };
     } catch (err) {
       throw new Error('Failed to delete program');
+    }
+  }
+
+  // Get count of program steps that have at least one message
+  async getStepsWithMessages(programId) {
+    try {
+      const query = `
+        SELECT COUNT(DISTINCT ps.id) as count
+        FROM program_steps ps
+        INNER JOIN messages m ON ps.id = m.step_id
+        WHERE ps.program_id = ?
+      `;
+
+      const result = await this.queryOne(query, [programId]);
+      return result.count || 0;
+    } catch (err) {
+      console.error('Error getting steps with messages:', err.message);
+      throw new Error('Failed to get steps with messages');
+    }
+  }
+
+  // Check if unlock threshold is met and update status
+  async checkAndUpdateUnlockStatus(programId) {
+    try {
+      // Get the program to check current status and threshold
+      const program = await this.getProgramById(programId);
+      
+      // If already unlocked, no need to check again
+      if (program.next_program_unlocked) {
+        return {
+          already_unlocked: true,
+          next_program_unlocked: true,
+          steps_with_messages: null,
+          steps_required: program.steps_required_for_unlock
+        };
+      }
+
+      // Get count of steps with at least one message
+      const stepsWithMessages = await this.getStepsWithMessages(programId);
+      
+      // Check if threshold is met
+      const thresholdMet = stepsWithMessages >= program.steps_required_for_unlock;
+      
+      if (thresholdMet) {
+        // Update the unlock status
+        const updateQuery = `
+          UPDATE programs 
+          SET next_program_unlocked = TRUE, updated_at = NOW()
+          WHERE id = ? AND deleted_at IS NULL
+        `;
+        
+        await this.query(updateQuery, [programId]);
+        
+        console.log(`Program ${programId} unlocked! ${stepsWithMessages}/${program.steps_required_for_unlock} steps completed.`);
+        
+        return {
+          unlocked: true,
+          next_program_unlocked: true,
+          steps_with_messages: stepsWithMessages,
+          steps_required: program.steps_required_for_unlock
+        };
+      }
+      
+      return {
+        unlocked: false,
+        next_program_unlocked: false,
+        steps_with_messages: stepsWithMessages,
+        steps_required: program.steps_required_for_unlock
+      };
+    } catch (err) {
+      console.error('Error checking unlock status:', err.message);
+      throw new Error('Failed to check unlock status');
+    }
+  }
+
+  // Get conversation starters from program steps that have at least one user message
+  async getConversationStartersWithMessages(programId) {
+    try {
+      const query = `
+        SELECT DISTINCT ps.conversation_starter
+        FROM program_steps ps
+        INNER JOIN messages m ON ps.id = m.step_id
+        WHERE ps.program_id = ?
+          AND m.message_type = 'user_message'
+        ORDER BY ps.day ASC
+      `;
+
+      const results = await this.query(query, [programId]);
+      return results.map(row => row.conversation_starter).filter(starter => starter);
+    } catch (err) {
+      console.error('Error getting conversation starters with messages:', err.message);
+      throw new Error('Failed to get conversation starters with messages');
     }
   }
 }

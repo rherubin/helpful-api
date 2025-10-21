@@ -119,7 +119,7 @@ function setupRoutes() {
 
   // Setup program routes
   if (programModel && chatGPTService) {
-    app.use('/api/programs', createProgramRoutes(programModel, chatGPTService, programStepModel));
+    app.use('/api/programs', createProgramRoutes(programModel, chatGPTService, programStepModel, userModel, pairingModel));
   }
 
   // Setup conversation routes
