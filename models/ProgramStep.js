@@ -24,11 +24,13 @@ class ProgramStep {
         theme VARCHAR(255) NOT NULL,
         conversation_starter TEXT DEFAULT NULL,
         science_behind_it TEXT DEFAULT NULL,
+        started BOOLEAN DEFAULT FALSE,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_program_id (program_id),
         INDEX idx_day (day),
         INDEX idx_program_day (program_id, day),
+        INDEX idx_started (started),
         FOREIGN KEY (program_id) REFERENCES programs (id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
@@ -36,9 +38,56 @@ class ProgramStep {
     try {
       await this.query(createProgramStepsTable);
       console.log('Program steps table initialized successfully.');
+      
+      // Add migration support for existing databases
+      await this.migrateStartedField();
     } catch (err) {
       console.error('Error creating program_steps table:', err.message);
       throw err;
+    }
+  }
+
+  // Migration method to add started field to existing databases
+  async migrateStartedField() {
+    try {
+      // Check if column exists
+      const checkColumn = `
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'program_steps' 
+        AND COLUMN_NAME = 'started'
+      `;
+      
+      const existingColumns = await this.query(checkColumn);
+      
+      // Add started if it doesn't exist
+      if (existingColumns.length === 0) {
+        await this.query(`
+          ALTER TABLE program_steps 
+          ADD COLUMN started BOOLEAN DEFAULT FALSE 
+          AFTER science_behind_it
+        `);
+        await this.query(`
+          CREATE INDEX idx_started 
+          ON program_steps (started)
+        `);
+        console.log('Added started column to program_steps table.');
+        
+        // Update existing steps that have messages to set started = TRUE
+        await this.query(`
+          UPDATE program_steps ps
+          SET started = TRUE
+          WHERE EXISTS (
+            SELECT 1 FROM messages m 
+            WHERE m.step_id = ps.id
+          )
+        `);
+        console.log('Updated existing program steps with messages to started = TRUE.');
+      }
+    } catch (err) {
+      // Ignore errors if column already exists
+      console.log('Migration check completed (started column may already exist).');
     }
   }
 
@@ -201,7 +250,7 @@ class ProgramStep {
     try {
       const query = `
         SELECT s.id, s.program_id, s.day, s.theme, s.conversation_starter, 
-               s.science_behind_it, s.created_at, s.updated_at
+               s.science_behind_it, s.started, s.created_at, s.updated_at
         FROM program_steps s
         WHERE s.id = ?
       `;
@@ -218,6 +267,24 @@ class ProgramStep {
       }
       console.error('Error fetching program step:', err.message);
       throw new Error('Failed to fetch program step');
+    }
+  }
+
+  // Mark a program step as started
+  async markStepAsStarted(stepId) {
+    try {
+      const updateQuery = `
+        UPDATE program_steps 
+        SET started = TRUE, updated_at = NOW()
+        WHERE id = ? AND started = FALSE
+      `;
+
+      await this.query(updateQuery, [stepId]);
+      console.log(`Program step ${stepId} marked as started.`);
+      return true;
+    } catch (err) {
+      console.error('Error marking step as started:', err.message);
+      throw new Error('Failed to mark step as started');
     }
   }
 

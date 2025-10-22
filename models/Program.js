@@ -283,7 +283,24 @@ class Program {
     }
   }
 
-  // Get count of program steps that have at least one message
+  // Get count of program steps that have been started
+  async getStartedStepsCount(programId) {
+    try {
+      const query = `
+        SELECT COUNT(*) as count
+        FROM program_steps
+        WHERE program_id = ? AND started = TRUE
+      `;
+
+      const result = await this.queryOne(query, [programId]);
+      return result.count || 0;
+    } catch (err) {
+      console.error('Error getting started steps count:', err.message);
+      throw new Error('Failed to get started steps count');
+    }
+  }
+
+  // Get count of program steps that have at least one message (legacy method for backward compatibility)
   async getStepsWithMessages(programId) {
     try {
       const query = `
@@ -312,16 +329,16 @@ class Program {
         return {
           already_unlocked: true,
           next_program_unlocked: true,
-          steps_with_messages: null,
+          started_steps: null,
           steps_required: program.steps_required_for_unlock
         };
       }
 
-      // Get count of steps with at least one message
-      const stepsWithMessages = await this.getStepsWithMessages(programId);
+      // Get count of started steps
+      const startedSteps = await this.getStartedStepsCount(programId);
       
       // Check if threshold is met
-      const thresholdMet = stepsWithMessages >= program.steps_required_for_unlock;
+      const thresholdMet = startedSteps >= program.steps_required_for_unlock;
       
       if (thresholdMet) {
         // Update the unlock status
@@ -333,12 +350,12 @@ class Program {
         
         await this.query(updateQuery, [programId]);
         
-        console.log(`Program ${programId} unlocked! ${stepsWithMessages}/${program.steps_required_for_unlock} steps completed.`);
+        console.log(`Program ${programId} unlocked! ${startedSteps}/${program.steps_required_for_unlock} steps started.`);
         
         return {
           unlocked: true,
           next_program_unlocked: true,
-          steps_with_messages: stepsWithMessages,
+          started_steps: startedSteps,
           steps_required: program.steps_required_for_unlock
         };
       }
@@ -346,7 +363,7 @@ class Program {
       return {
         unlocked: false,
         next_program_unlocked: false,
-        steps_with_messages: stepsWithMessages,
+        started_steps: startedSteps,
         steps_required: program.steps_required_for_unlock
       };
     } catch (err) {

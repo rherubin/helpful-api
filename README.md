@@ -1122,14 +1122,21 @@ CREATE TABLE program_steps (
   theme VARCHAR(255) NOT NULL,
   conversation_starter TEXT DEFAULT NULL,
   science_behind_it TEXT DEFAULT NULL,
+  started BOOLEAN DEFAULT FALSE,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_program_id (program_id),
   INDEX idx_day (day),
   INDEX idx_program_day (program_id, day),
+  INDEX idx_started (started),
   FOREIGN KEY (program_id) REFERENCES programs (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
+
+**Program Step Status:**
+- `started`: Boolean flag indicating if any message has been added to this step
+- Automatically set to TRUE when the first message is added
+- Used by the program unlock logic to track engagement
 
 ### Messages Table
 ```sql

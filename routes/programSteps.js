@@ -210,6 +210,9 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         return res.status(403).json({ error: 'Not authorized to access this program step' });
       }
 
+      // Mark the step as started (if not already started)
+      await programStepModel.markStepAsStarted(id);
+
       // Add the user message
       const message = await messageModel.addUserMessage(id, userId, content.trim());
 
