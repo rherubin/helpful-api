@@ -577,6 +577,7 @@ Programs are AI-generated couples therapy programs that can be created with or w
   - `pairing_id` is optional. Programs can be created independently without a pairing.
   - `steps_required_for_unlock` is optional (default: 7). This sets how many program steps need at least one message before unlocking the next program.
   - User names and relationship details are now managed through the user profile (PUT /users/:id).
+  - Therapy response generation happens automatically in the background. If it fails, use the manual endpoint below.
 - **Response:**
   ```json
   {
@@ -592,6 +593,39 @@ Programs are AI-generated couples therapy programs that can be created with or w
     }
   }
   ```
+
+#### Generate Therapy Response Manually
+- **POST** `/api/programs/:program_id/therapy_response`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Manually trigger therapy response generation for a program. Use this if automatic generation failed or if program steps are missing.
+- **Response (202 Accepted):**
+  ```json
+  {
+    "message": "Therapy response generation started",
+    "program_id": "program_id",
+    "status": "processing"
+  }
+  ```
+- **Error Responses:**
+  
+  **409 Conflict** - Program already has therapy response:
+  ```json
+  {
+    "error": "Therapy response already exists for this program",
+    "details": "This program already has program steps. Delete the program and create a new one if you need to regenerate.",
+    "existing_steps_count": 14
+  }
+  ```
+  
+  **503 Service Unavailable** - OpenAI API key not configured:
+  ```json
+  {
+    "error": "ChatGPT service is not configured. Please set OPENAI_API_KEY environment variable.",
+    "details": "The OpenAI API key is required to generate therapy responses."
+  }
+  ```
+  
+  **Note**: The therapy response is generated asynchronously. Check the program steps after a few seconds to see if they were created. This endpoint can only be used once per program - if program steps already exist, you'll receive a 409 Conflict error.
 
 #### Get User's Programs
 - **GET** `/api/programs`
@@ -618,6 +652,7 @@ Programs are AI-generated couples therapy programs that can be created with or w
             "theme": "Reflecting on Happy Memories",
             "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
             "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
+            "started": false,
             "created_at": "2024-01-01T00:00:00.000Z",
             "updated_at": "2024-01-01T00:00:00.000Z"
           }
@@ -898,6 +933,7 @@ Without this configuration, the system will log warnings but continue normal ope
         "theme": "Reflecting on Happy Memories",
         "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
         "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
+        "started": true,
         "created_at": "2024-01-01T00:00:00.000Z",
         "updated_at": "2024-01-01T00:00:00.000Z"
       },
@@ -907,6 +943,7 @@ Without this configuration, the system will log warnings but continue normal ope
         "theme": "Appreciating Each Other",
         "conversation_starter": "Share three things you appreciate about your partner today...",
         "science_behind_it": "Expressing appreciation strengthens positive emotions...",
+        "started": false,
         "created_at": "2024-01-01T00:00:00.000Z",
         "updated_at": "2024-01-01T00:00:00.000Z"
       }
@@ -928,6 +965,7 @@ Without this configuration, the system will log warnings but continue normal ope
       "theme": "Reflecting on Happy Memories",
       "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
       "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
+      "started": true,
       "created_at": "2024-01-01T00:00:00.000Z",
       "updated_at": "2024-01-01T00:00:00.000Z"
     }
@@ -1134,9 +1172,10 @@ CREATE TABLE program_steps (
 ```
 
 **Program Step Status:**
-- `started`: Boolean flag indicating if any message has been added to this step
-- Automatically set to TRUE when the first message is added
+- `started`: Boolean field (returns `true`/`false`) indicating if any message has been added to this step
+- Automatically set to `true` when the first message is added
 - Used by the program unlock logic to track engagement
+- API responses return JavaScript boolean values (`true`/`false`) instead of numeric values (0/1)
 
 ### Messages Table
 ```sql

@@ -135,6 +135,112 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
     }
   });
 
+  // Manually generate therapy response for a program
+  router.post('/:program_id/therapy_response', authenticateToken, async (req, res) => {
+    try {
+      const { program_id } = req.params;
+      const userId = req.user.id;
+
+      // Check if user has access to this program
+      const hasAccess = await programModel.checkProgramAccess(userId, program_id);
+      if (!hasAccess) {
+        return res.status(403).json({ 
+          error: 'Not authorized to access this program' 
+        });
+      }
+
+      // Get the program
+      const program = await programModel.getProgramById(program_id);
+
+      // Check if program already has program steps
+      if (programStepModel) {
+        const existingSteps = await programStepModel.getProgramSteps(program_id);
+        if (existingSteps && existingSteps.length > 0) {
+          return res.status(409).json({
+            error: 'Therapy response already exists for this program',
+            details: 'This program already has program steps. Delete the program and create a new one if you need to regenerate.',
+            existing_steps_count: existingSteps.length
+          });
+        }
+      }
+
+      // Check if ChatGPT service is configured
+      if (!chatGPTService || !chatGPTService.isConfigured()) {
+        return res.status(503).json({ 
+          error: 'ChatGPT service is not configured. Please set OPENAI_API_KEY environment variable.',
+          details: 'The OpenAI API key is required to generate therapy responses.'
+        });
+      }
+
+      // Get user names for the prompt
+      let userName = 'User';
+      let partnerName = 'Partner';
+
+      if (userModel) {
+        try {
+          const user = await userModel.getUserById(program.user_id);
+          userName = user.user_name || userName;
+          partnerName = user.partner_name || partnerName;
+
+          // If pairing exists and partner_name is not set, try to get partner's user_name
+          if (program.pairing_id && pairingModel && !user.partner_name) {
+            try {
+              const pairing = await pairingModel.getPairingById(program.pairing_id);
+              const partnerId = pairing.user1_id === program.user_id ? pairing.user2_id : pairing.user1_id;
+              if (partnerId) {
+                const partner = await userModel.getUserById(partnerId);
+                partnerName = partner.user_name || partnerName;
+              }
+            } catch (pairingError) {
+              console.log('Could not fetch partner name from pairing:', pairingError.message);
+            }
+          }
+        } catch (userError) {
+          console.log('Could not fetch user names, using defaults:', userError.message);
+        }
+      }
+
+      // Return immediate response
+      res.status(202).json({
+        message: 'Therapy response generation started',
+        program_id: program_id,
+        status: 'processing'
+      });
+
+      // Generate ChatGPT response asynchronously in the background
+      (async () => {
+        try {
+          console.log('Manually generating ChatGPT response for program:', program_id);
+          const therapyResponse = await chatGPTService.generateCouplesProgram(userName, partnerName, program.user_input);
+          
+          // Convert response to string if it's an object
+          const therapyResponseString = typeof therapyResponse === 'object' 
+            ? JSON.stringify(therapyResponse) 
+            : therapyResponse;
+          
+          // Update the program with the therapy response (for backward compatibility)
+          await programModel.updateTherapyResponse(program_id, therapyResponseString);
+          
+          // Also save to program_steps table if available (create program steps)
+          if (programStepModel) {
+            await programStepModel.createProgramSteps(program_id, therapyResponseString);
+            console.log('Program steps created for program:', program_id);
+          }
+          
+          console.log('ChatGPT response generated and saved for program:', program_id);
+        } catch (chatGPTError) {
+          console.error('Failed to generate ChatGPT response for program', program_id, ':', chatGPTError.message);
+        }
+      })();
+    } catch (error) {
+      console.error('Error in manual therapy response generation:', error.message);
+      if (error.message === 'Program not found') {
+        return res.status(404).json({ error: 'Program not found' });
+      }
+      return res.status(500).json({ error: 'Failed to generate therapy response' });
+    }
+  });
+
   // Create a program
   router.post('/', authenticateToken, async (req, res) => {
     try {

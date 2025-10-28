@@ -4,6 +4,8 @@
 
 Added a boolean `started` field to the `program_steps` table that automatically gets set to `TRUE` when any message is added to a program step. This provides a clear indicator of which steps users have engaged with and improves the program unlock tracking logic.
 
+**API Response Format:** The `started` field is returned as a JavaScript boolean (`true`/`false`) in all API responses, not as numeric values (0/1). This conversion happens automatically in the model layer.
+
 ## Changes Made
 
 ### 1. Database Schema Update
@@ -61,6 +63,7 @@ async markStepAsStarted(stepId) {
 #### Updated `getStepById(stepId)`
 - Now includes `started` field in the SELECT query
 - Returns the started status with step data
+- Converts `started` from 0/1 to boolean `true`/`false` for API responses
 
 ### 3. Updated Program Unlock Logic
 
@@ -141,6 +144,7 @@ const message = await messageModel.addUserMessage(id, userId, content.trim());
 
 ### 1. Automatic Status Tracking
 - Step is marked as started when ANY message is added
+- API returns boolean values (`true`/`false`) instead of numeric (0/1)
 - No manual intervention required
 - Works for all message types (user messages, system messages, etc.)
 

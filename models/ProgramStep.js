@@ -182,14 +182,19 @@ class ProgramStep {
     try {
       const query = `
         SELECT s.id, s.program_id, s.day, s.theme, s.conversation_starter, 
-               s.science_behind_it, s.created_at, s.updated_at
+               s.science_behind_it, s.started, s.created_at, s.updated_at
         FROM program_steps s
         WHERE s.program_id = ?
         ORDER BY s.day ASC
       `;
 
       const programSteps = await this.query(query, [programId]);
-      return programSteps;
+      
+      // Convert started field from 0/1 to true/false boolean
+      return programSteps.map(step => ({
+        ...step,
+        started: Boolean(step.started)
+      }));
     } catch (err) {
       console.error('Error fetching program steps:', err.message);
       throw new Error('Failed to fetch program steps');
@@ -201,7 +206,7 @@ class ProgramStep {
     try {
       const query = `
         SELECT s.id, s.program_id, s.day, s.theme, s.conversation_starter, 
-               s.science_behind_it, s.created_at, s.updated_at
+               s.science_behind_it, s.started, s.created_at, s.updated_at
         FROM program_steps s
         WHERE s.program_id = ? AND s.day = ?
       `;
@@ -211,7 +216,11 @@ class ProgramStep {
         throw new Error('Program step not found');
       }
       
-      return step;
+      // Convert started field from 0/1 to true/false boolean
+      return {
+        ...step,
+        started: Boolean(step.started)
+      };
     } catch (err) {
       if (err.message === 'Program step not found') {
         throw err;
@@ -225,7 +234,7 @@ class ProgramStep {
   async getProgramDays(programId) {
     try {
       const query = `
-        SELECT s.day, s.theme, s.created_at, s.id as step_id
+        SELECT s.day, s.theme, s.started, s.created_at, s.id as step_id
         FROM program_steps s
         WHERE s.program_id = ? 
         ORDER BY s.day ASC
@@ -237,6 +246,7 @@ class ProgramStep {
         day: day.day,
         theme: day.theme,
         step_id: day.step_id,
+        started: Boolean(day.started),
         created_at: day.created_at
       }));
     } catch (err) {
@@ -260,7 +270,11 @@ class ProgramStep {
         throw new Error('Program step not found');
       }
       
-      return step;
+      // Convert started field from 0/1 to true/false boolean
+      return {
+        ...step,
+        started: Boolean(step.started)
+      };
     } catch (err) {
       if (err.message === 'Program step not found') {
         throw err;

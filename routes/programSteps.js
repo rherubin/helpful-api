@@ -114,6 +114,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         theme: step.theme,
         conversation_starter: step.conversation_starter,
         science_behind_it: step.science_behind_it,
+        started: step.started,
         created_at: step.created_at,
         updated_at: step.updated_at
       }));
