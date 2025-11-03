@@ -137,13 +137,15 @@ async function runTest() {
 
     // Verify program is unlocked
     console.log('🔍 Step 4: Verifying program unlock status...');
-    const [programData] = await pool.execute(
-      'SELECT next_program_unlocked FROM programs WHERE id = ?',
-      [firstProgramId]
+    const programDetailsResponse = await axios.get(
+      `${API_URL}/api/programs/${firstProgramId}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      }
     );
 
-    if (!programData[0].next_program_unlocked) {
-      throw new Error('Program was not unlocked after adding messages');
+    if (programDetailsResponse.data.program.next_program_unlocked !== true) {
+      throw new Error(`Program was not unlocked after adding messages, got: ${programDetailsResponse.data.program.next_program_unlocked}`);
     }
 
     console.log('✅ Program is unlocked\n');

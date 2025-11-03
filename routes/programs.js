@@ -314,6 +314,7 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
           const programSteps = programStepModel ? await programStepModel.getProgramSteps(program.id) : [];
           return {
             ...program,
+            next_program_unlocked: Boolean(program.next_program_unlocked),
             program_steps: programSteps
           };
         })
@@ -344,6 +345,7 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       const programSteps = programStepModel ? await programStepModel.getProgramSteps(id) : [];
       const programWithSteps = {
         ...program,
+        next_program_unlocked: Boolean(program.next_program_unlocked),
         program_steps: programSteps
       };
 

@@ -21,7 +21,7 @@ async function createTestUser(userName = 'Test User') {
   const password = 'Test123!';
 
   try {
-    const response = await axios.post(`${BASE_URL}/register`, {
+    const response = await axios.post(`${BASE_URL}/users`, {
       user_name: userName,
       email,
       password,
@@ -94,10 +94,10 @@ async function testDefaultUnlockThreshold() {
       throw new Error(`Expected default threshold 7, got ${program.steps_required_for_unlock}`);
     }
 
-    if (program.next_program_unlocked === false || program.next_program_unlocked === 0) {
+    if (program.next_program_unlocked === false) {
       console.log('✓ Program starts as locked (next_program_unlocked = false)');
     } else {
-      throw new Error('Program should start as locked');
+      throw new Error(`Program should start as locked, got: ${program.next_program_unlocked}`);
     }
 
     testProgramSteps = program.program_steps || [];
@@ -220,10 +220,10 @@ async function testUnlockStatusProgression() {
 
     let program = programDetails.data.program;
     
-    if (program.next_program_unlocked === false || program.next_program_unlocked === 0) {
+    if (program.next_program_unlocked === false) {
       console.log('✓ Program still locked after 6 messages (threshold not met)');
     } else {
-      throw new Error('Program should still be locked with 6 messages');
+      throw new Error(`Program should still be locked with 6 messages, got: ${program.next_program_unlocked}`);
     }
 
     // Add message to 7th step (meets threshold)
@@ -251,10 +251,10 @@ async function testUnlockStatusProgression() {
 
     program = programDetails.data.program;
     
-    if (program.next_program_unlocked === true || program.next_program_unlocked === 1) {
+    if (program.next_program_unlocked === true) {
       console.log('✓ Program unlocked after 7 messages (threshold met)');
     } else {
-      throw new Error('Program should be unlocked after 7 messages');
+      throw new Error(`Program should be unlocked after 7 messages, got: ${program.next_program_unlocked}`);
     }
 
     console.log('✓ Test 3 PASSED');
@@ -391,10 +391,10 @@ async function testPairingUnlock() {
 
     const finalProgram = finalProgramDetails.data.program;
     
-    if (finalProgram.next_program_unlocked === true || finalProgram.next_program_unlocked === 1) {
+    if (finalProgram.next_program_unlocked === true) {
       console.log('✓ Program unlocked with contributions from both users');
     } else {
-      throw new Error('Program should be unlocked after 3 steps with messages');
+      throw new Error(`Program should be unlocked after 3 steps with messages, got: ${finalProgram.next_program_unlocked}`);
     }
 
     // Clean up
@@ -444,11 +444,10 @@ async function testEdgeCases() {
     );
 
     // With threshold 0, it should be unlocked immediately
-    if (zeroProgramDetails.data.program.next_program_unlocked === true || 
-        zeroProgramDetails.data.program.next_program_unlocked === 1) {
+    if (zeroProgramDetails.data.program.next_program_unlocked === true) {
       console.log('✓ Program with threshold 0 unlocks immediately');
     } else {
-      console.log('⚠ Program with threshold 0 did not unlock immediately (may need manual check)');
+      console.log(`⚠ Program with threshold 0 did not unlock immediately (got: ${zeroProgramDetails.data.program.next_program_unlocked})`);
     }
 
     await axios.delete(

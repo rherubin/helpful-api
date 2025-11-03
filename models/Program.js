@@ -130,6 +130,16 @@ class Program {
     }
   }
 
+  // Convert MySQL BOOLEAN (0/1) to JavaScript boolean
+  convertToBoolean(value) {
+    // Handle null/undefined
+    if (value === null || value === undefined) {
+      return false;
+    }
+    // Convert to boolean - handles 0, 1, true, false, "0", "1"
+    return Boolean(value) && value !== 0 && value !== '0';
+  }
+
   // Generate unique ID
   generateUniqueId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
@@ -193,8 +203,11 @@ class Program {
 
       const programs = await this.query(query, [userId, userId, userId]);
       
-      // Return programs without therapy_response
-      return programs;
+      // Convert next_program_unlocked to boolean
+      return programs.map(program => ({
+        ...program,
+        next_program_unlocked: this.convertToBoolean(program.next_program_unlocked)
+      }));
     } catch (err) {
       throw new Error('Failed to fetch programs');
     }
@@ -237,6 +250,9 @@ class Program {
       if (!program) {
         throw new Error('Program not found');
       }
+      
+      // Convert next_program_unlocked to boolean
+      program.next_program_unlocked = this.convertToBoolean(program.next_program_unlocked);
       
       // Return program without therapy_response
       return program;
@@ -324,7 +340,7 @@ class Program {
       // Get the program to check current status and threshold
       const program = await this.getProgramById(programId);
       
-      // If already unlocked, no need to check again
+      // If already unlocked, no need to check again (program.next_program_unlocked is already a boolean from getProgramById)
       if (program.next_program_unlocked) {
         return {
           already_unlocked: true,

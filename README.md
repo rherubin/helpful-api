@@ -1148,7 +1148,7 @@ CREATE TABLE programs (
 
 **Program Unlock Feature:**
 - `steps_required_for_unlock`: Number of program steps that need at least one message before unlocking the next program (default: 7)
-- `next_program_unlocked`: Boolean flag indicating if the unlock threshold has been met (automatically updated when messages are added)
+- `next_program_unlocked`: Boolean flag indicating if the unlock threshold has been met (automatically updated when messages are added). API responses return JavaScript boolean values (`true`/`false`) instead of numeric values (0/1)
 - `previous_program_id`: References the previous program in a sequence, enabling continuity across multiple therapy programs
 
 ### Program Steps Table
