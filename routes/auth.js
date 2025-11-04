@@ -1,5 +1,5 @@
 const express = require('express');
-const { authenticateToken } = require('../middleware/auth');
+const { createAuthenticateToken } = require('../middleware/auth');
 const { 
   loginLimiter, 
   isAccountLocked, 
@@ -11,6 +11,7 @@ const {
 
 function createAuthRoutes(authService, userModel, pairingService) {
   const router = express.Router();
+  const authenticateToken = createAuthenticateToken(authService);
 
   // Apply security logging to all auth routes
   router.use(securityLogger);

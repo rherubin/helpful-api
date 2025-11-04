@@ -122,6 +122,20 @@ class RefreshToken {
     }
   }
 
+  // Reset refresh token expiration to 14 days from now for a user
+  async resetRefreshTokenExpiration(userId) {
+    try {
+      const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 days from now
+      const result = await this.query(
+        'UPDATE refresh_tokens SET expires_at = ? WHERE user_id = ? AND expires_at > NOW()',
+        [expiresAt, userId]
+      );
+      return result.affectedRows > 0;
+    } catch (err) {
+      throw new Error('Failed to reset refresh token expiration');
+    }
+  }
+
   // Clean up expired tokens
   async cleanupExpiredTokens() {
     try {

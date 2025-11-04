@@ -19,7 +19,8 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 - **Complete Pairing System**: Full end-to-end pairing workflow with acceptance, rejection, and profile integration
 - **Password Security**: Bcrypt hashing with strict password requirements (uppercase, lowercase, number, special char)
 - **Token Management**: Short-lived access tokens (1h) with refresh token rotation for enhanced security
-- **Refresh Token Rotation**: Automatic token rotation with sliding expiration window (7 days)
+- **Refresh Token Rotation**: Automatic token rotation with sliding expiration window (14 days)
+- **Automatic Refresh Token Extension**: Refresh tokens automatically reset to 14-day expiration on every authenticated API call
 - **Database Integrity**: MySQL with automatic schema creation and proper JOIN handling
 - **RESTful Design**: Clean, consistent API with comprehensive error handling and status codes
 - **Railway Deployment**: Optimized for Railway platform with MySQL database service
@@ -51,7 +52,7 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
    JWT_SECRET=your-secret-key-change-in-production
    JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
    JWT_EXPIRES_IN=1h
-   JWT_REFRESH_EXPIRES_IN=7d
+   JWT_REFRESH_EXPIRES_IN=14d
    
    # OpenAI API
    OPENAI_API_KEY=your-openai-api-key-for-therapy-content
@@ -221,7 +222,7 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
     "access_token": "jwt_token",
     "refresh_token": "refresh_jwt_token",
     "expires_in": "1h",
-    "refresh_expires_in": "7d"
+    "refresh_expires_in": "14d"
   }
   ```
 
@@ -241,14 +242,20 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
     "access_token": "new_jwt_token",
     "refresh_token": "new_refresh_jwt_token",
     "expires_in": "1h",
-    "refresh_expires_in": "7d"
+    "refresh_expires_in": "14d"
   }
   ```
-- **Security Note:** 
+- **Security Note:**
   - The old refresh token is immediately invalidated after use
   - A new refresh token is issued with extended expiration (sliding window)
   - This prevents refresh token reuse and enhances security
   - Always store the new refresh token for subsequent refresh requests
+
+#### Automatic Refresh Token Extension
+- **Automatic**: Every time a valid access token is used for any authenticated API call, the associated refresh token expiration is automatically reset to 14 days from that moment
+- **Non-blocking**: The token extension happens asynchronously in the background and does not slow down API responses
+- **User Experience**: Active users effectively have "infinite" session duration as long as they use the API regularly
+- **Security**: Inactive users' refresh tokens still expire normally, preventing abandoned sessions
 
 #### Logout
 - **POST** `/api/logout`
@@ -1225,23 +1232,30 @@ Partner codes are temporarily generated when users request pairings:
 The API uses JWT (JSON Web Tokens) for authentication with automatic refresh token rotation:
 
 - **Access Tokens**: Short-lived (1 hour) for API requests
-- **Refresh Tokens**: Long-lived (7 days) with automatic rotation and sliding expiration
+- **Refresh Tokens**: Long-lived (14 days) with automatic rotation and sliding expiration
 - **Bearer Token**: Include `Authorization: Bearer {token}` in request headers
 
-### Refresh Token Rotation
+### Refresh Token Rotation & Automatic Extension
 
-For enhanced security, the API implements automatic refresh token rotation:
+For enhanced security and user experience, the API implements automatic refresh token rotation with activity-based extension:
 
 1. **Sliding Expiration**: Each time you refresh, the expiration window extends by 7 days
 2. **Token Invalidation**: Old refresh tokens are immediately invalidated after use
 3. **Reuse Prevention**: Attempting to reuse an old refresh token will fail with 401 error
-4. **Active Session Management**: Users stay logged in as long as they refresh within the expiration window
+4. **Automatic Extension**: Every authenticated API call resets refresh token expiration to 14 days
+5. **Active Session Management**: Users stay logged in as long as they use the API regularly
+
+**How It Works:**
+- **Initial Login**: Refresh tokens expire in 14 days
+- **Token Refresh**: Extends expiration to 14 days from refresh time
+- **API Activity**: Every authenticated request resets expiration to 14 days from that moment
+- **Inactive Sessions**: Tokens still expire normally if user becomes inactive
 
 **Best Practices:**
 - Always store the new `refresh_token` returned from the `/api/refresh` endpoint
-- Refresh tokens before they expire to maintain uninterrupted access
 - Implement automatic refresh logic in your client application
 - Handle 401 errors by redirecting to login when refresh fails
+- Active users enjoy extended sessions without manual intervention
 
 ## Error Handling
 
@@ -1335,6 +1349,19 @@ Dedicated test suite for refresh token rotation functionality:
 - Token expiration is extended (sliding window)
 - Database records are properly updated
 - New access tokens work for protected routes
+
+#### Refresh Token Reset Tests
+```bash
+node tests/refresh-token-reset-test.js
+```
+Comprehensive test suite for automatic refresh token expiration reset:
+- Refresh tokens reset to 14 days on every authenticated API call
+- Non-blocking behavior (API responses not delayed by reset)
+- Proper database updates with new expiration timestamps
+- Error handling (reset failures don't break API calls)
+- Concurrent API calls work correctly
+- Cross-endpoint functionality verification
+- Token rotation still works with reset functionality
 
 #### User Profile Tests
 ```bash

@@ -1,8 +1,9 @@
 const express = require('express');
-const { authenticateToken } = require('../middleware/auth');
+const { createAuthenticateToken } = require('../middleware/auth');
 
 function createUserRoutes(userModel, authService, pairingService) {
   const router = express.Router();
+  const authenticateToken = createAuthenticateToken(authService);
 
   // Create user
   router.post('/', async (req, res) => {

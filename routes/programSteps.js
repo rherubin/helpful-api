@@ -1,8 +1,9 @@
 const express = require('express');
-const { authenticateToken } = require('../middleware/auth');
+const { createAuthenticateToken } = require('../middleware/auth');
 
-function createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService) {
+function createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService, authService) {
   const router = express.Router();
+  const authenticateToken = createAuthenticateToken(authService);
 
   // Helper function to check if we should trigger background therapy response
   async function checkAndTriggerTherapyResponse(stepId, currentUserId) {

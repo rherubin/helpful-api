@@ -1,8 +1,9 @@
 const express = require('express');
-const { authenticateToken } = require('../middleware/auth');
+const { createAuthenticateToken } = require('../middleware/auth');
 
-function createProgramRoutes(programModel, chatGPTService, programStepModel = null, userModel = null, pairingModel = null) {
+function createProgramRoutes(programModel, chatGPTService, programStepModel = null, userModel = null, pairingModel = null, authService = null) {
   const router = express.Router();
+  const authenticateToken = createAuthenticateToken(authService);
 
   // Create next program based on previous program
   router.post('/:id/next_program', authenticateToken, async (req, res) => {

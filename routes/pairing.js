@@ -1,8 +1,9 @@
 const express = require('express');
-const { authenticateToken } = require('../middleware/auth');
+const { createAuthenticateToken } = require('../middleware/auth');
 
-function createPairingRoutes(pairingService) {
+function createPairingRoutes(pairingService, authService) {
   const router = express.Router();
+  const authenticateToken = createAuthenticateToken(authService);
 
   // Request a pairing (generates partner code)
   router.post('/request', authenticateToken, async (req, res) => {

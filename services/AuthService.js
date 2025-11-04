@@ -9,14 +9,14 @@ class AuthService {
     this.JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
     this.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
     this.JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h'; // Short-lived access token
-    this.JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '7d'; // Long-lived refresh token
+    this.JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '14d'; // Long-lived refresh token
   }
 
   // Generate and persist tokens for a user, returning token payload plus user data
   async issueTokensForUser(user) {
     const accessToken = this.generateAccessToken(user);
     const refreshToken = this.generateRefreshToken(user.id);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     await this.refreshTokenModel.createRefreshToken(user.id, refreshToken, expiresAt);
     const { password_hash, ...userData } = user;
     return {
@@ -165,7 +165,7 @@ class AuthService {
       }
 
       // Store refresh token in database
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
+      const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 days from now
       await this.refreshTokenModel.createRefreshToken(user.id, refreshToken, expiresAt);
 
       // Return user data (excluding password hash) and tokens
@@ -232,12 +232,25 @@ class AuthService {
     }
   }
 
+  // Reset refresh token expiration to 14 days for a user
+  async resetRefreshTokenExpiration(userId) {
+    try {
+      await this.refreshTokenModel.resetRefreshTokenExpiration(userId);
+      return {
+        message: 'Refresh token expiration reset successfully'
+      };
+    } catch (error) {
+      console.error('Error resetting refresh token expiration:', error.message);
+      throw error;
+    }
+  }
+
   // Get user profile from token
   async getProfileFromToken(accessToken) {
     try {
       const decoded = await this.verifyAccessToken(accessToken);
       const user = await this.userModel.getUserById(decoded.id);
-      
+
       // Return user data (excluding password hash)
       const { password_hash, ...userData } = user;
       return {

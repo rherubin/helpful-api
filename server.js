@@ -106,30 +106,32 @@ function setupRoutes() {
   if (userModel && authService && pairingService) {
     app.use('/api/users', createUserRoutes(userModel, authService, pairingService));
   }
-  
+
   // Setup auth routes
   if (authService && userModel && pairingService) {
     app.use('/api', createAuthRoutes(authService, userModel, pairingService));
   }
-  
+
   // Setup pairing routes
-  if (pairingService) {
-    app.use('/api/pairing', createPairingRoutes(pairingService));
+  if (pairingService && authService) {
+    app.use('/api/pairing', createPairingRoutes(pairingService, authService));
   }
 
   // Setup program routes
-  if (programModel && chatGPTService) {
-    app.use('/api/programs', createProgramRoutes(programModel, chatGPTService, programStepModel, userModel, pairingModel));
+  if (programModel && chatGPTService && authService) {
+    app.use('/api/programs', createProgramRoutes(programModel, chatGPTService, programStepModel, userModel, pairingModel, authService));
   }
 
   // Setup conversation routes
-  if (programStepModel && messageModel && programModel && pairingModel && userModel && chatGPTService) {
-    app.use('/api', createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService));
+  if (programStepModel && messageModel && programModel && pairingModel && userModel && chatGPTService && authService) {
+    app.use('/api', createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService, authService));
   }
 }
 
 // Get all user's pairings endpoint
-app.get('/api/pairings', require('./middleware/auth').authenticateToken, async (req, res) => {
+const { createAuthenticateToken } = require('./middleware/auth');
+const authenticateToken = createAuthenticateToken(authService);
+app.get('/api/pairings', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const result = await pairingService.getUserPairings(userId);
