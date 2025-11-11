@@ -367,31 +367,68 @@ function showCleanupInstructions() {
   console.log('  node tests/cleanup-test-data.js\n');
 }
 
-// Main execution
-(async () => {
-  console.log('Checking if server is running...');
-  const serverRunning = await checkServer();
+class RefreshTokenResetTestRunner {
+  constructor(options = {}) {
+    this.baseURL = options.baseURL || BASE_URL;
+    this.timeout = options.timeout || 15000;
+    this.testResults = {
+      passed: 0,
+      failed: 0,
+      total: 0
+    };
+  }
 
-  if (!serverRunning) {
-    console.error('❌ Server is not running on', BASE_URL);
-    console.error('Please start the server with: npm start');
+  async checkServer() {
+    try {
+      const axios = require('axios');
+      await axios.get(`${this.baseURL}/health`, { timeout: 5000 });
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async runAllTests() {
+    console.log('🔄 Refresh Token Expiration Reset Test Suite');
+    console.log('=============================================\n');
+
+    // Check server
+    const serverRunning = await this.checkServer();
+    if (!serverRunning) {
+      console.log('❌ Server is not running\n');
+      return false;
+    }
+
+    let testResult;
+    try {
+      testResult = await runTests();
+      this.testResults.passed = testResult.passedTests || 0;
+      this.testResults.failed = testResult.failedTests || 0;
+      this.testResults.total = (testResult.passedTests || 0) + (testResult.failedTests || 0);
+    } catch (error) {
+      console.log(`❌ Test execution failed: ${error.message}\n`);
+      this.testResults.failed = 1;
+      this.testResults.total = 1;
+      return false;
+    } finally {
+      // Show cleanup instructions without exiting
+      showCleanupInstructions();
+    }
+
+    return testResult && testResult.success;
+  }
+}
+
+// Export for integration with main test runner
+module.exports = RefreshTokenResetTestRunner;
+
+// Main execution (only runs if called directly)
+if (require.main === module) {
+  const runner = new RefreshTokenResetTestRunner();
+  runner.runAllTests().then(success => {
+    process.exit(success ? 0 : 1);
+  }).catch(error => {
+    console.error('Test runner failed:', error);
     process.exit(1);
-  }
-
-  console.log('✅ Server is running\n');
-
-  let testResult;
-  try {
-    testResult = await runTests();
-  } finally {
-    // Show cleanup instructions
-    showCleanupInstructions();
-  }
-
-  // Exit with appropriate code
-  if (testResult && testResult.success) {
-    process.exit(0);
-  } else {
-    process.exit(1);
-  }
-})();
+  });
+}

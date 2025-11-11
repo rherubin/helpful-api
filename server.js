@@ -29,8 +29,34 @@ const PORT = process.env.PORT || 9000;
 // Import security middleware
 const { apiLimiter } = require('./middleware/security');
 
+// Security headers middleware
+function securityHeaders(req, res, next) {
+  // Prevent MIME type sniffing attacks
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  // Prevent clickjacking attacks
+  res.setHeader('X-Frame-Options', 'DENY');
+
+  // Enable XSS protection
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+
+  // Control referrer information leakage
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  // Restrict access to sensitive browser features
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+
+  // Enforce HTTPS in production (only set if connection is secure)
+  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
+
+  next();
+}
+
 // Middleware
 app.use(cors());
+app.use(securityHeaders); // Apply security headers to all responses
 app.use(express.json());
 app.use(apiLimiter); // Apply rate limiting to all API endpoints
 
@@ -81,6 +107,24 @@ async function initializeApp() {
     programStepModel = programStepModelInstance;
     messageModel = messageModelInstance;
     
+    // Validate JWT secrets in production
+    if (process.env.NODE_ENV === 'production') {
+      const jwtSecret = process.env.JWT_SECRET;
+      const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET;
+
+      if (!jwtSecret || jwtSecret === 'your-secret-key-change-in-production') {
+        console.error('SECURITY ERROR: JWT_SECRET must be set to a secure value in production');
+        throw new Error('JWT_SECRET not properly configured for production');
+      }
+
+      if (!jwtRefreshSecret || jwtRefreshSecret === 'your-refresh-secret-key-change-in-production') {
+        console.error('SECURITY ERROR: JWT_REFRESH_SECRET must be set to a secure value in production');
+        throw new Error('JWT_REFRESH_SECRET not properly configured for production');
+      }
+
+      console.log('✅ JWT secrets validated for production environment');
+    }
+
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel);
     pairingService = new PairingService(userModel, pairingModel);

@@ -1,3 +1,5 @@
+const bcrypt = require('bcrypt');
+
 class RefreshToken {
   constructor(db) {
     this.db = db; // MySQL pool
@@ -44,17 +46,38 @@ class RefreshToken {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 
+  // Hash a token for secure storage
+  async hashToken(token) {
+    try {
+      return await bcrypt.hash(token, 12); // Use cost factor of 12 for security
+    } catch (err) {
+      throw new Error('Failed to hash refresh token');
+    }
+  }
+
+  // Verify a token against its hash
+  async verifyToken(token, hashedToken) {
+    try {
+      return await bcrypt.compare(token, hashedToken);
+    } catch (err) {
+      return false;
+    }
+  }
+
   // Create refresh token
   async createRefreshToken(userId, token, expiresAt) {
     const tokenId = this.generateUniqueId();
 
     try {
+      // Hash the token for secure storage
+      const hashedToken = await this.hashToken(token);
+
       const insertToken = `
         INSERT INTO refresh_tokens (id, user_id, token, expires_at)
         VALUES (?, ?, ?, ?)
       `;
 
-      await this.query(insertToken, [tokenId, userId, token, expiresAt]);
+      await this.query(insertToken, [tokenId, userId, hashedToken, expiresAt]);
       return tokenId;
     } catch (err) {
       console.error('Error creating refresh token:', err);
@@ -65,14 +88,20 @@ class RefreshToken {
   // Get refresh token by token value
   async getRefreshToken(token) {
     try {
-      const row = await this.queryOne(
-        "SELECT * FROM refresh_tokens WHERE token = ? AND expires_at > NOW()", 
-        [token]
+      // Get all non-expired tokens and verify against the provided token
+      const rows = await this.query(
+        "SELECT * FROM refresh_tokens WHERE expires_at > NOW()"
       );
-      if (!row) {
-        throw new Error('Refresh token not found or expired');
+
+      // Find the token that matches by comparing hashes
+      for (const row of rows) {
+        const isValid = await this.verifyToken(token, row.token);
+        if (isValid) {
+          return row;
+        }
       }
-      return row;
+
+      throw new Error('Refresh token not found or expired');
     } catch (err) {
       // If it's our specific error message, preserve it
       if (err.message === 'Refresh token not found or expired') {
@@ -86,8 +115,22 @@ class RefreshToken {
   // Delete refresh token (logout)
   async deleteRefreshToken(token) {
     try {
-      const result = await this.query('DELETE FROM refresh_tokens WHERE token = ?', [token]);
-      return result.affectedRows > 0;
+      // Get all non-expired tokens to find the one that matches
+      const rows = await this.query(
+        "SELECT id, token FROM refresh_tokens WHERE expires_at > NOW()"
+      );
+
+      // Find the token that matches by comparing hashes
+      for (const row of rows) {
+        const isValid = await this.verifyToken(token, row.token);
+        if (isValid) {
+          // Delete the matching token
+          const result = await this.query('DELETE FROM refresh_tokens WHERE id = ?', [row.id]);
+          return result.affectedRows > 0;
+        }
+      }
+
+      return false; // Token not found
     } catch (err) {
       throw new Error('Failed to delete refresh token');
     }
@@ -106,14 +149,31 @@ class RefreshToken {
   // Update refresh token (for rotation)
   async updateRefreshToken(oldToken, newToken, expiresAt) {
     try {
-      const result = await this.query(
-        'UPDATE refresh_tokens SET token = ?, expires_at = ? WHERE token = ?',
-        [newToken, expiresAt, oldToken]
+      // Get all non-expired tokens to find the one that matches the old token
+      const rows = await this.query(
+        "SELECT id, token FROM refresh_tokens WHERE expires_at > NOW()"
       );
-      if (result.affectedRows === 0) {
-        throw new Error('Refresh token not found');
+
+      // Find the token that matches the old token by comparing hashes
+      for (const row of rows) {
+        const isValid = await this.verifyToken(oldToken, row.token);
+        if (isValid) {
+          // Hash the new token
+          const hashedNewToken = await this.hashToken(newToken);
+
+          // Update with the new hashed token
+          const result = await this.query(
+            'UPDATE refresh_tokens SET token = ?, expires_at = ? WHERE id = ?',
+            [hashedNewToken, expiresAt, row.id]
+          );
+          if (result.affectedRows === 0) {
+            throw new Error('Refresh token not found');
+          }
+          return true;
+        }
       }
-      return true;
+
+      throw new Error('Refresh token not found');
     } catch (err) {
       if (err.message === 'Refresh token not found') {
         throw err;

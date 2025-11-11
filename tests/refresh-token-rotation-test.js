@@ -12,7 +12,7 @@ require('dotenv').config();
 const axios = require('axios');
 const { getPool } = require('../config/database');
 
-const API_URL = process.env.TEST_BASE_URL || process.env.API_URL || 'http://localhost:9000';
+const API_URL = process.env.TEST_BASE_URL || 'http://localhost:9000';
 
 // Generate unique test email
 const testEmail = `refresh-rotation-test_${Date.now()}_${Math.random().toString(36).substr(2, 5)}@example.com`;
@@ -31,20 +31,18 @@ async function runTest() {
   try {
     // Setup: Create a test user
     console.log('📝 Step 1: Creating test user...');
-    const registerResponse = await axios.post(`${API_URL}/auth/register`, {
+    const registerResponse = await axios.post(`${API_URL}/api/users`, {
       email: testEmail,
-      password: testPassword,
-      first_name: 'Refresh',
-      last_name: 'Test'
+      password: testPassword
     });
 
     if (registerResponse.status !== 201) {
       throw new Error(`Registration failed with status ${registerResponse.status}`);
     }
 
-    userId = registerResponse.data.data.user.id;
-    originalRefreshToken = registerResponse.data.data.refresh_token;
-    originalAccessToken = registerResponse.data.data.access_token;
+    userId = registerResponse.data.user.id;
+    originalRefreshToken = registerResponse.data.refresh_token;
+    originalAccessToken = registerResponse.data.access_token;
 
     console.log('✅ User created successfully');
     console.log(`   User ID: ${userId}`);
@@ -67,7 +65,7 @@ async function runTest() {
 
     // Test: Call /refresh endpoint
     console.log('🔄 Step 2: Calling /refresh endpoint...');
-    const refreshResponse = await axios.post(`${API_URL}/auth/refresh`, {
+    const refreshResponse = await axios.post(`${API_URL}/api/refresh`, {
       refresh_token: originalRefreshToken
     });
 
@@ -109,7 +107,7 @@ async function runTest() {
     // Verify: Old refresh token should no longer work
     console.log('🔒 Step 4: Verifying old token is invalidated...');
     try {
-      await axios.post(`${API_URL}/auth/refresh`, {
+      await axios.post(`${API_URL}/api/refresh`, {
         refresh_token: originalRefreshToken
       });
       throw new Error('Old refresh token should have been invalidated but still works!');
@@ -123,7 +121,7 @@ async function runTest() {
 
     // Verify: New refresh token should work
     console.log('✅ Step 5: Verifying new token works...');
-    const secondRefreshResponse = await axios.post(`${API_URL}/auth/refresh`, {
+    const secondRefreshResponse = await axios.post(`${API_URL}/api/refresh`, {
       refresh_token: newRefreshToken
     });
 
@@ -160,6 +158,8 @@ async function runTest() {
     console.log('- ✅ New refresh token works for subsequent refreshes');
     console.log('- ✅ New access token works for protected routes');
 
+    return { success: true, passed: 7, failed: 0 };
+
   } catch (error) {
     console.error('\n❌ TEST FAILED');
     if (error.response) {
@@ -168,7 +168,7 @@ async function runTest() {
     } else {
       console.error('Error:', error.message);
     }
-    process.exit(1);
+    return { success: false, passed: 0, failed: 1 };
   } finally {
     // Cleanup: Delete test user
     if (userId && pool) {
@@ -188,6 +188,67 @@ async function runTest() {
   }
 }
 
-// Run the test
-runTest();
+class RefreshTokenRotationTestRunner {
+  constructor(options = {}) {
+    this.baseURL = options.baseURL || API_URL;
+    this.timeout = options.timeout || 15000;
+    this.testResults = {
+      passed: 0,
+      failed: 0,
+      total: 0
+    };
+  }
+
+  async checkServer() {
+    try {
+      const axios = require('axios');
+      await axios.get(`${this.baseURL}/health`, { timeout: 5000 });
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async runAllTests() {
+    console.log('🔄 Refresh Token Rotation Test Suite');
+    console.log('=====================================\n');
+
+    // Check server
+    const serverRunning = await this.checkServer();
+    if (!serverRunning) {
+      console.log('❌ Server is not running\n');
+      return false;
+    }
+
+    let success = false;
+    try {
+      const result = await runTest();
+      success = result.success;
+      this.testResults.passed = result.passed || 0;
+      this.testResults.failed = result.failed || 0;
+      this.testResults.total = (result.passed || 0) + (result.failed || 0);
+    } catch (error) {
+      console.log(`❌ Test execution failed: ${error.message}\n`);
+      this.testResults.failed = 1;
+      this.testResults.total = 1;
+      return false;
+    }
+
+    return success;
+  }
+}
+
+// Export for integration with main test runner
+module.exports = RefreshTokenRotationTestRunner;
+
+// Main execution (only runs if called directly)
+if (require.main === module) {
+  const runner = new RefreshTokenRotationTestRunner();
+  runner.runAllTests().then(success => {
+    process.exit(success ? 0 : 1);
+  }).catch(error => {
+    console.error('Test runner failed:', error);
+    process.exit(1);
+  });
+}
 
