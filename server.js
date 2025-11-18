@@ -26,6 +26,14 @@ const createProgramStepRoutes = require('./routes/programSteps');
 const app = express();
 const PORT = process.env.PORT || 9000;
 
+// Railway-specific: Ensure PORT is always used if provided
+if (!process.env.PORT) {
+  console.log('⚠️  WARNING: PORT environment variable not set by Railway');
+  console.log('   Using default port 9000 - this may cause issues');
+} else {
+  console.log(`✅ Railway PORT detected: ${process.env.PORT}`);
+}
+
 // Import security middleware
 const { apiLimiter } = require('./middleware/security');
 
