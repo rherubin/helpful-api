@@ -29,6 +29,16 @@ const PORT = process.env.PORT || 9000;
 // Import security middleware
 const { apiLimiter } = require('./middleware/security');
 
+// Health check endpoints (available immediately, before database initialization)
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Alternative health check for Railway
+app.get('/', (req, res) => {
+  res.json({ status: 'OK', message: 'Helpful API is running', timestamp: new Date().toISOString() });
+});
+
 // Security headers middleware
 function securityHeaders(req, res, next) {
   // Prevent MIME type sniffing attacks
@@ -183,16 +193,6 @@ app.get('/api/pairings', authenticateToken, async (req, res) => {
   } catch (error) {
     return res.status(500).json({ error: 'Failed to fetch pairings' });
   }
-});
-
-// Health check endpoints
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
-
-// Alternative health check for Railway
-app.get('/', (req, res) => {
-  res.json({ status: 'OK', message: 'Helpful API is running', timestamp: new Date().toISOString() });
 });
 
 // Start server
