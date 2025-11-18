@@ -40,6 +40,14 @@ console.log(`✅ Railway PORT detected: ${PORT}`);
 console.log(`✅ HOST will be: ${HOST} (from env: ${process.env.HOST || 'default 0.0.0.0'})`);
 console.log(`✅ Will bind to: ${HOST}:${PORT}`);
 
+// Railway-specific: Ensure PORT is always used if provided
+if (!process.env.PORT) {
+  console.log('⚠️  WARNING: PORT environment variable not set by Railway');
+  console.log('   Using default port 9000 - this may cause issues');
+} else {
+  console.log(`✅ Railway PORT detected: ${process.env.PORT}`);
+}
+
 // Import security middleware
 const { apiLimiter } = require('./middleware/security');
 
