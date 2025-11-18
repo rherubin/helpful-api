@@ -44,13 +44,16 @@ console.log(`✅ Will bind to: ${HOST}:${PORT}`);
 const { apiLimiter } = require('./middleware/security');
 
 // Health check endpoints (available immediately, before database initialization)
+// Railway typically expects plain text responses for health checks
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.set('Content-Type', 'text/plain');
+  res.status(200).send('OK');
 });
 
-// Alternative health check for Railway
+// Root endpoint for Railway health checks
 app.get('/', (req, res) => {
-  res.json({ status: 'OK', message: 'Helpful API is running', timestamp: new Date().toISOString() });
+  res.set('Content-Type', 'text/plain');
+  res.status(200).send('Helpful API is running');
 });
 
 // Security headers middleware
