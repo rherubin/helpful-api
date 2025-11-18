@@ -34,8 +34,11 @@ if (!PORT) {
   process.exit(1);
 }
 
+const HOST = process.env.HOST || '0.0.0.0';
+
 console.log(`✅ Railway PORT detected: ${PORT}`);
-console.log(`✅ Will bind to Railway's port: ${PORT}`);
+console.log(`✅ HOST will be: ${HOST} (from env: ${process.env.HOST || 'default 0.0.0.0'})`);
+console.log(`✅ Will bind to: ${HOST}:${PORT}`);
 
 // Import security middleware
 const { apiLimiter } = require('./middleware/security');
