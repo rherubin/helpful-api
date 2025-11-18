@@ -24,15 +24,18 @@ const createProgramRoutes = require('./routes/programs');
 const createProgramStepRoutes = require('./routes/programSteps');
 
 const app = express();
-const PORT = process.env.PORT || 9000;
 
-// Railway-specific: Ensure PORT is always used if provided
-if (!process.env.PORT) {
-  console.log('⚠️  WARNING: PORT environment variable not set by Railway');
-  console.log('   Using default port 9000 - this may cause issues');
-} else {
-  console.log(`✅ Railway PORT detected: ${process.env.PORT}`);
+// Railway CRITICAL: Must use Railway's PORT environment variable
+const PORT = process.env.PORT;
+if (!PORT) {
+  console.error('❌ CRITICAL ERROR: PORT environment variable not set by Railway!');
+  console.error('   Railway requires the app to bind to the PORT it provides');
+  console.error('   This is why the container is being stopped!');
+  process.exit(1);
 }
+
+console.log(`✅ Railway PORT detected: ${PORT}`);
+console.log(`✅ Will bind to Railway's port: ${PORT}`);
 
 // Import security middleware
 const { apiLimiter } = require('./middleware/security');
