@@ -195,10 +195,38 @@ app.get('/api/pairings', authenticateToken, async (req, res) => {
   }
 });
 
+// Log environment info for debugging
+console.log('Environment check:');
+console.log(`- PORT: ${PORT} (from env: ${process.env.PORT})`);
+console.log(`- HOST: ${HOST} (from env: ${process.env.HOST})`);
+console.log(`- NODE_ENV: ${process.env.NODE_ENV}`);
+
 // Start server
-const HOST = process.env.HOST || '0.0.0.0';
-app.listen(PORT, HOST, () => {
-  console.log(`Server running on ${HOST}:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  console.log(`✅ Server successfully started and listening on ${HOST}:${PORT}`);
+  console.log(`✅ Health check available at: http://${HOST}:${PORT}/health`);
+
+  // Keep-alive ping every 30 seconds to show server is still running
+  setInterval(() => {
+    console.log(`🔄 Server still running at ${new Date().toISOString()}`);
+  }, 30000);
+});
+
+// Handle server startup errors
+server.on('error', (error) => {
+  console.error('Server failed to start:', error);
+  process.exit(1);
+});
+
+// Handle uncaught exceptions to prevent silent exits
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 // Graceful shutdown
