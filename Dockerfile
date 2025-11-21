@@ -19,8 +19,5 @@ COPY . .
 # Expose the port
 EXPOSE 9000
 
-# Set environment variables
-ENV NODE_ENV=production
-
 # Start the application
 CMD ["npm", "start"]

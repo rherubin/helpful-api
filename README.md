@@ -35,7 +35,6 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 2. Create a `.env` file in the root directory:
    ```
    PORT=9000
-   NODE_ENV=development
    HOST=0.0.0.0
    
    # MySQL Database Configuration

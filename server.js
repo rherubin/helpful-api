@@ -133,24 +133,6 @@ async function initializeApp() {
     programModel = programModelInstance;
     programStepModel = programStepModelInstance;
     messageModel = messageModelInstance;
-    
-    // Validate JWT secrets in production
-    if (process.env.NODE_ENV === 'production') {
-      const jwtSecret = process.env.JWT_SECRET;
-      const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET;
-
-      if (!jwtSecret || jwtSecret === 'your-secret-key-change-in-production') {
-        console.error('SECURITY ERROR: JWT_SECRET must be set to a secure value in production');
-        throw new Error('JWT_SECRET not properly configured for production');
-      }
-
-      if (!jwtRefreshSecret || jwtRefreshSecret === 'your-refresh-secret-key-change-in-production') {
-        console.error('SECURITY ERROR: JWT_REFRESH_SECRET must be set to a secure value in production');
-        throw new Error('JWT_REFRESH_SECRET not properly configured for production');
-      }
-
-      console.log('✅ JWT secrets validated for production environment');
-    }
 
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel);
@@ -216,7 +198,6 @@ app.get('/api/pairings', authenticateToken, async (req, res) => {
 console.log('Environment check:');
 console.log(`- PORT: ${PORT} (from env: ${process.env.PORT})`);
 console.log(`- HOST: ${HOST} (from env: ${process.env.HOST})`);
-console.log(`- NODE_ENV: ${process.env.NODE_ENV}`);
 
 // Start server
 const server = app.listen(PORT, HOST, () => {

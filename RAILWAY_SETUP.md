@@ -39,9 +39,6 @@ JWT_REFRESH_SECRET=your-super-secure-refresh-secret-min-32-characters
 
 # OpenAI API Key
 OPENAI_API_KEY=sk-your-actual-openai-api-key
-
-# Node Environment
-NODE_ENV=production
 ```
 
 #### Optional Variables (Railway sets these automatically):
