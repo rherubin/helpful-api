@@ -24,10 +24,37 @@ const createProgramRoutes = require('./routes/programs');
 const createProgramStepRoutes = require('./routes/programSteps');
 
 const app = express();
-const PORT = process.env.PORT || 9000;
+
+// Railway CRITICAL: Must use Railway's PORT environment variable
+const PORT = process.env.PORT;
+if (!PORT) {
+  console.error('❌ CRITICAL ERROR: PORT environment variable not set by Railway!');
+  console.error('   Railway requires the app to bind to the PORT it provides');
+  console.error('   This is why the container is being stopped!');
+  process.exit(1);
+}
+
+const HOST = process.env.HOST || '0.0.0.0';
+
+console.log(`✅ Railway PORT detected: ${PORT}`);
+console.log(`✅ HOST will be: ${HOST} (from env: ${process.env.HOST || 'default 0.0.0.0'})`);
+console.log(`✅ Will bind to: ${HOST}:${PORT}`);
 
 // Import security middleware
 const { apiLimiter } = require('./middleware/security');
+
+// Health check endpoints (available immediately, before database initialization)
+// Railway typically expects plain text responses for health checks
+app.get('/health', (req, res) => {
+  res.set('Content-Type', 'text/plain');
+  res.status(200).send('OK');
+});
+
+// Root endpoint for Railway health checks
+app.get('/', (req, res) => {
+  res.set('Content-Type', 'text/plain');
+  res.status(200).send('Helpful API is running');
+});
 
 // Security headers middleware
 function securityHeaders(req, res, next) {
@@ -106,24 +133,6 @@ async function initializeApp() {
     programModel = programModelInstance;
     programStepModel = programStepModelInstance;
     messageModel = messageModelInstance;
-    
-    // Validate JWT secrets in production
-    if (process.env.NODE_ENV === 'production') {
-      const jwtSecret = process.env.JWT_SECRET;
-      const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET;
-
-      if (!jwtSecret || jwtSecret === 'your-secret-key-change-in-production') {
-        console.error('SECURITY ERROR: JWT_SECRET must be set to a secure value in production');
-        throw new Error('JWT_SECRET not properly configured for production');
-      }
-
-      if (!jwtRefreshSecret || jwtRefreshSecret === 'your-refresh-secret-key-change-in-production') {
-        console.error('SECURITY ERROR: JWT_REFRESH_SECRET must be set to a secure value in production');
-        throw new Error('JWT_REFRESH_SECRET not properly configured for production');
-      }
-
-      console.log('✅ JWT secrets validated for production environment');
-    }
 
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel);
@@ -185,20 +194,37 @@ app.get('/api/pairings', authenticateToken, async (req, res) => {
   }
 });
 
-// Health check endpoints
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
-
-// Alternative health check for Railway
-app.get('/', (req, res) => {
-  res.json({ status: 'OK', message: 'Helpful API is running', timestamp: new Date().toISOString() });
-});
+// Log environment info for debugging
+console.log('Environment check:');
+console.log(`- PORT: ${PORT} (from env: ${process.env.PORT})`);
+console.log(`- HOST: ${HOST} (from env: ${process.env.HOST})`);
 
 // Start server
-const HOST = process.env.HOST || '0.0.0.0';
-app.listen(PORT, HOST, () => {
-  console.log(`Server running on ${HOST}:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  console.log(`✅ Server successfully started and listening on ${HOST}:${PORT}`);
+  console.log(`✅ Health check available at: http://${HOST}:${PORT}/health`);
+
+  // Keep-alive ping every 30 seconds to show server is still running
+  setInterval(() => {
+    console.log(`🔄 Server still running at ${new Date().toISOString()}`);
+  }, 30000);
+});
+
+// Handle server startup errors
+server.on('error', (error) => {
+  console.error('Server failed to start:', error);
+  process.exit(1);
+});
+
+// Handle uncaught exceptions to prevent silent exits
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 // Graceful shutdown

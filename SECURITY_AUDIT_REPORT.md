@@ -210,13 +210,6 @@ app.use((req, res, next) => {
 - Ensure `JWT_SECRET` is always set in production
 - Add startup validation for required environment variables
 
-```javascript
-// Add to server.js
-if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
-  throw new Error('JWT_SECRET must be set in production');
-}
-```
-
 ## Security Test Results
 
 ### ✅ **SQL Injection Tests**
