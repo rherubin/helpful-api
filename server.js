@@ -212,10 +212,10 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`✅ Server successfully started and listening on ${HOST}:${PORT}`);
   console.log(`✅ Health check available at: http://${HOST}:${PORT}/health`);
 
-  // Keep-alive ping every 30 seconds to show server is still running
+  // Keep-alive ping every 5 seconds to show server is still running
   setInterval(() => {
     console.log(`🔄 Server still running at ${new Date().toISOString()}`);
-  }, 30000);
+  }, 5000);
 });
 
 // Handle server startup errors
