@@ -270,37 +270,29 @@ class ChatGPTService {
       }
 
       const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
-
 Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
-
 A couple comes into your therapy room. Their names are ${sanitizedUserName} and ${sanitizedPartnerName}.
-
-${sanitizedUserName} says the following to you: 
-
+${sanitizedUserName} says the following to you:
 "${sanitizedUserInput}"
-
 Your goal, as their couples therapist, is to help them talk every day for 14 consecutive days in order to solve their primary issue and enable them to experience greater emotional connection together.
+Specifically, your task is to provide 1 conversation-starter per day for 14 consecutive days. Each conversation starter should have the following attributes:
+- Each conversation should build upon the one before it. They should all move towards a unified goal of helping the couple experience emotional connection together.
+- Each conversation-starter should have a theme, which I'd like you to specifically identify as a separate data element.
+- Each conversation-starter should help each person unpack what they're feeling; they should be designed so that each person is able to articulate their perspective.
+- Each conversation-starter should feel very personalized. Please mention specifics about the couple throughout the program.
+- The conversation-starters should use both of their names, when appropriate.
+- The conversation-starters should feel like they're coming from a therapist. Ask the questions like a friendly therapist would ask them to their couples therapy clients.
 
-Specifically, your task is to provide 1 conversation-starter per day for 14 consecutive days. Each conversation starter should have the following attributes: 
-
-- Each conversation should build upon the one before it. They should all move towards a unified goal of helping the couple experience emotional connection together.  
-- Each conversation-starter should have a theme, which I'd like you to specifically identify as a separate data element. 
-- Each conversation-starter should help each person unpack what they're feeling; they should be designed so that each person is able to articulate their perspective. We should never have a scenario where one person is talking more than the other.
-- Each conversation-starter should be designed so that it brings the couple closer together during that day and makes them feel like more of a team. 
-- The conversation-starters should use both of their names, when appropriate. 
-- The conversation-starters should reference details from their relationship, when appropriate. This is optional.
-- The conversation-starters should feel a little lighter, not as serious. Make them very conversational in tone, as if you were a friend to the couple.
-
+- Stylistically, have the entire conversation-starter in one line, with no paragraph breaks.
 Together, all of the conversation-starters make up a two-week program, which should feel comprehensive.
-
 Now, craft me the 14 conversation-starters, provide a theme for each one, and explain the science and research behind each question. Note that when you explain the science and research, act like you're talking directly to the couple and say it in a very accessible way. Label this science and research section: "The Science Behind It"
-
+Lastly, give the entire two-week program a name as well.
 Note: Don't ever reference Emotionally Focused Therapy or Gottman Couples Therapy. Instead of that, you can refer to it as a research-based couples therapy approach, or a therapy method that is scientifically backed.
 
 Please format your response as a JSON object with the following structure:
 {
   "program": {
-    "title": "14-Day Emotional Connection Program for [UserName] and [PartnerName]",
+    "title": "14-Day Emotional Connection Program for ${sanitizedUserName} and ${sanitizedPartnerName}",
     "overview": "Brief description of the program goals",
     "days": [
       {
