@@ -56,7 +56,7 @@ function createUserRoutes(userModel, authService, pairingService) {
       }
       
       // Filter out sensitive fields for the response
-      const { max_pairings, created_at, updated_at, deleted_at, ...filteredUser } = tokenPayload.user;
+      const { password_hash, max_pairings, created_at, updated_at, deleted_at, ...filteredUser } = user;
       
       const response = {
         message: 'Account created successfully',

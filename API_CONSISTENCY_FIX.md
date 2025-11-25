@@ -12,11 +12,15 @@ The authentication endpoints were returning inconsistent data types for `expires
 1. **`issueTokensForUser()` method** (used by registration):
    ```json
    {
+     "access_token": "...",
+     "refresh_token": "...",
      "expires_in": 86400,
      "refresh_expires_in": 1209600
    }
    ```
    ✅ Returns **numbers** (seconds)
+   
+   Note: This method returns only token data (no user object). Callers are responsible for constructing the user response.
 
 2. **`login()` method**:
    ```json

@@ -20,15 +20,13 @@ class AuthService {
     });
   }
 
-  // Generate and persist tokens for a user, returning token payload plus user data
+  // Generate and persist tokens for a user, returning token payload (without user data)
   async issueTokensForUser(user) {
     const accessToken = this.generateAccessToken(user);
     const refreshToken = this.generateRefreshToken(user.id);
     const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     await this.refreshTokenModel.createRefreshToken(user.id, refreshToken, expiresAt);
-    const { password_hash, ...userData } = user;
     return {
-      user: userData,
       access_token: accessToken,
       refresh_token: refreshToken,
       expires_in: this.parseExpirationToSeconds(this.JWT_EXPIRES_IN),
