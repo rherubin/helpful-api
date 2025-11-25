@@ -29,8 +29,8 @@ async function testTokenExpiry() {
 
     const { access_token, expires_in, refresh_expires_in } = loginResponse.data.data;
     log(`✓ Login successful`, 'green');
-    log(`  Access token expires in: ${expires_in}`, 'yellow');
-    log(`  Refresh token expires in: ${refresh_expires_in}`, 'yellow');
+    log(`  Access token expires in: ${expires_in} seconds (${Math.floor(expires_in / 60)} minutes)`, 'yellow');
+    log(`  Refresh token expires in: ${refresh_expires_in} seconds (${Math.floor(refresh_expires_in / 60 / 60 / 24)} days)`, 'yellow');
 
     // Test 2: Check token info
     log('\nTest 2: Check token information', 'blue');

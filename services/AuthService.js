@@ -184,8 +184,8 @@ class AuthService {
           user: userData,
           access_token: accessToken,
           refresh_token: refreshToken,
-          expires_in: this.JWT_EXPIRES_IN,
-          refresh_expires_in: this.JWT_REFRESH_EXPIRES_IN
+          expires_in: this.parseExpirationToSeconds(this.JWT_EXPIRES_IN),
+          refresh_expires_in: this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN)
         }
       };
     } catch (error) {
@@ -219,8 +219,8 @@ class AuthService {
         message: 'Token refreshed successfully',
         access_token: newAccessToken,
         refresh_token: newRefreshToken,
-        expires_in: this.JWT_EXPIRES_IN,
-        refresh_expires_in: this.JWT_REFRESH_EXPIRES_IN
+        expires_in: this.parseExpirationToSeconds(this.JWT_EXPIRES_IN),
+        refresh_expires_in: this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN)
       };
     } catch (error) {
       console.error('Refresh token error:', error.message);
