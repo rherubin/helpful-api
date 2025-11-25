@@ -123,27 +123,40 @@ function createAuthRoutes(authService, userModel, pairingService) {
       const jwt = require('jsonwebtoken');
       const decoded = jwt.decode(access_token, { complete: true });
       
-      if (!decoded) {
+      if (!decoded || !decoded.payload) {
         return res.status(400).json({ error: 'Invalid token format' });
       }
 
+      // Validate required JWT claims exist
+      const { iat, exp, id, email } = decoded.payload;
+      
+      if (typeof iat !== 'number' || typeof exp !== 'number') {
+        return res.status(400).json({ 
+          error: 'Malformed token: missing or invalid required claims (iat, exp)' 
+        });
+      }
+
+      if (!id || !email) {
+        return res.status(400).json({ 
+          error: 'Malformed token: missing required user claims (id, email)' 
+        });
+      }
+
       const now = Math.floor(Date.now() / 1000);
-      const issuedAt = decoded.payload.iat;
-      const expiresAt = decoded.payload.exp;
-      const timeUntilExpiry = expiresAt - now;
-      const tokenAge = now - issuedAt;
+      const timeUntilExpiry = exp - now;
+      const tokenAge = now - iat;
 
       res.status(200).json({
-        issued_at: new Date(issuedAt * 1000).toISOString(),
-        expires_at: new Date(expiresAt * 1000).toISOString(),
+        issued_at: new Date(iat * 1000).toISOString(),
+        expires_at: new Date(exp * 1000).toISOString(),
         current_time: new Date(now * 1000).toISOString(),
         token_age_seconds: tokenAge,
         token_age_minutes: Math.floor(tokenAge / 60),
         time_until_expiry_seconds: timeUntilExpiry,
         time_until_expiry_minutes: Math.floor(timeUntilExpiry / 60),
         is_expired: timeUntilExpiry <= 0,
-        user_id: decoded.payload.id,
-        user_email: decoded.payload.email
+        user_id: id,
+        user_email: email
       });
     } catch (error) {
       console.error('Token info error:', error);
