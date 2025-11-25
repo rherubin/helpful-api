@@ -18,10 +18,19 @@ function createAuthenticateToken(authService) {
       if (err) {
         // Check if it's specifically a token expiry error
         if (err.name === 'TokenExpiredError') {
+          console.log('Token expired:', {
+            expiredAt: err.expiredAt,
+            now: new Date(),
+            timeSinceExpiry: Date.now() - new Date(err.expiredAt).getTime()
+          });
           res.setHeader('WWW-Authenticate', 'Bearer realm="API", error="invalid_token", error_description="The access token expired"');
-          return res.status(401).json({ error: 'Token expired' });
+          return res.status(401).json({ 
+            error: 'Token expired',
+            expiredAt: err.expiredAt
+          });
         }
         // For other JWT errors (invalid signature, malformed, etc.)
+        console.log('Token validation error:', err.name, err.message);
         res.setHeader('WWW-Authenticate', 'Bearer realm="API", error="invalid_token", error_description="The access token is invalid"');
         return res.status(401).json({ error: 'Invalid token' });
       }

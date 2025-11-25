@@ -8,8 +8,16 @@ class AuthService {
     // JWT Configuration
     this.JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
     this.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
-    this.JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h'; // Short-lived access token
+    this.JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h'; // Access token - increased to 24 hours for better UX
     this.JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '14d'; // Long-lived refresh token
+    
+    // Log token configuration on startup (without exposing secrets)
+    console.log('JWT Configuration:', {
+      accessTokenExpiry: this.JWT_EXPIRES_IN,
+      refreshTokenExpiry: this.JWT_REFRESH_EXPIRES_IN,
+      accessTokenSeconds: this.parseExpirationToSeconds(this.JWT_EXPIRES_IN),
+      refreshTokenSeconds: this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN)
+    });
   }
 
   // Generate and persist tokens for a user, returning token payload plus user data

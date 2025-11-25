@@ -110,6 +110,47 @@ function createAuthRoutes(authService, userModel, pairingService) {
     }
   });
 
+  // Debug endpoint to check token info (without validation)
+  router.post('/token-info', async (req, res) => {
+    try {
+      const { access_token } = req.body;
+      
+      if (!access_token) {
+        return res.status(400).json({ error: 'Access token is required' });
+      }
+
+      // Decode without verification to get token info
+      const jwt = require('jsonwebtoken');
+      const decoded = jwt.decode(access_token, { complete: true });
+      
+      if (!decoded) {
+        return res.status(400).json({ error: 'Invalid token format' });
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const issuedAt = decoded.payload.iat;
+      const expiresAt = decoded.payload.exp;
+      const timeUntilExpiry = expiresAt - now;
+      const tokenAge = now - issuedAt;
+
+      res.status(200).json({
+        issued_at: new Date(issuedAt * 1000).toISOString(),
+        expires_at: new Date(expiresAt * 1000).toISOString(),
+        current_time: new Date(now * 1000).toISOString(),
+        token_age_seconds: tokenAge,
+        token_age_minutes: Math.floor(tokenAge / 60),
+        time_until_expiry_seconds: timeUntilExpiry,
+        time_until_expiry_minutes: Math.floor(timeUntilExpiry / 60),
+        is_expired: timeUntilExpiry <= 0,
+        user_id: decoded.payload.id,
+        user_email: decoded.payload.email
+      });
+    } catch (error) {
+      console.error('Token info error:', error);
+      return res.status(500).json({ error: 'Failed to decode token' });
+    }
+  });
+
   // Get user profile with pairings
   router.get('/profile', authenticateToken, async (req, res) => {
     try {

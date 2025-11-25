@@ -50,8 +50,8 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
    # JWT Configuration
    JWT_SECRET=your-secret-key-change-in-production
    JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
-   JWT_EXPIRES_IN=1h
-   JWT_REFRESH_EXPIRES_IN=14d
+   JWT_EXPIRES_IN=24h  # Access token expiry (default: 24h for better UX)
+   JWT_REFRESH_EXPIRES_IN=14d  # Refresh token expiry (default: 14 days)
    
    # OpenAI API
    OPENAI_API_KEY=your-openai-api-key-for-therapy-content
