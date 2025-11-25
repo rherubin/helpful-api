@@ -170,15 +170,25 @@ class OpenAITestRunner {
         // Check if it's a proper 14-day program
         const therapyData = testResponse.therapy_response || testResponse.program || testResponse;
         if (therapyData && typeof therapyData === 'object') {
-          const days = Object.keys(therapyData).filter(key => key.startsWith('day') || !isNaN(parseInt(key)));
-          if (days.length > 0) {
+          // Check for days array (new structure)
+          if (Array.isArray(therapyData.days)) {
             this.assert(
-              days.length === 14,
+              therapyData.days.length === 14,
               'Response contains 14-day program',
-              `Days: ${days.length}`
+              `Days: ${therapyData.days.length}`
             );
           } else {
-            this.log('Response structure does not contain day-based program', 'info');
+            // Check for day1, day2, etc. keys (old structure)
+            const days = Object.keys(therapyData).filter(key => key.startsWith('day') || !isNaN(parseInt(key)));
+            if (days.length > 0) {
+              this.assert(
+                days.length === 14,
+                'Response contains 14-day program',
+                `Days: ${days.length}`
+              );
+            } else {
+              this.log('Response structure does not contain day-based program', 'info');
+            }
           }
         }
       }

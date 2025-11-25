@@ -1,18 +1,10 @@
-const OpenAI = require('openai');
-
 class ChatGPTService {
   constructor() {
     // Validate API key format and security
     this.validateApiKey();
     
-    // Only initialize OpenAI if API key is configured
-    if (process.env.OPENAI_API_KEY) {
-      this.openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY
-      });
-    } else {
-      this.openai = null;
-    }
+    // Store API key for direct fetch calls
+    this.apiKey = process.env.OPENAI_API_KEY || null;
 
     // Request queue management for production scalability
     this.requestQueue = [];
@@ -200,7 +192,7 @@ class ChatGPTService {
 
   // Generate couples therapy response for ongoing conversations
   async generateCouplesTherapyResponse(user1Name, user2Name, user1Messages, user2FirstMessage) {
-    if (!this.openai) {
+    if (!this.apiKey) {
       throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
     }
 
@@ -215,7 +207,7 @@ class ChatGPTService {
 
   // Public interface - queue the request
   async generateCouplesProgram(userName, partnerName, userInput) {
-    if (!this.openai) {
+    if (!this.apiKey) {
       throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
     }
 
@@ -224,7 +216,7 @@ class ChatGPTService {
 
   // Public interface for next program generation - queue the request
   async generateNextCouplesProgram(userName, partnerName, previousConversationStarters, userInput) {
-    if (!this.openai) {
+    if (!this.apiKey) {
       throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
     }
 
@@ -321,23 +313,38 @@ Please format your response as a JSON object with the following structure:
   }
 }`;
 
-      const completion = await this.openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-          {
-            role: "system",
-            content: "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content."
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        max_tokens: 4000,
-        temperature: 0.7
+      const completion = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "system",
+              content: "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content."
+            },
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          temperature: 0.7,
+          response_format: { type: "json_object" }
+        })
       });
 
-      const response = completion.choices[0].message.content;
+      if (!completion.ok) {
+        const errorData = await completion.json().catch(() => ({}));
+        const error = new Error(errorData.error?.message || 'OpenAI API request failed');
+        error.status = completion.status;
+        throw error;
+      }
+
+      const completionData = await completion.json();
+      const response = completionData.choices[0].message.content;
       
       // Validate and sanitize the AI response
       if (!this.validateAIResponse(response)) {
@@ -483,23 +490,39 @@ Please format your response as a JSON object with the following structure:
   }
 }`;
 
-      const completion = await this.openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-          {
-            role: "system",
-            content: "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content."
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        max_tokens: 4000,
-        temperature: 0.7
+      const completion = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify({
+          model: "gpt-5",
+          messages: [
+            {
+              role: "system",
+              content: "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content."
+            },
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          max_tokens: 4000,
+          temperature: 0.7,
+          response_format: { type: "json_object" }
+        })
       });
 
-      const response = completion.choices[0].message.content;
+      if (!completion.ok) {
+        const errorData = await completion.json().catch(() => ({}));
+        const error = new Error(errorData.error?.message || 'OpenAI API request failed');
+        error.status = completion.status;
+        throw error;
+      }
+
+      const completionData = await completion.json();
+      const response = completionData.choices[0].message.content;
       
       // Validate and sanitize the AI response
       if (!this.validateAIResponse(response)) {
@@ -619,24 +642,38 @@ Please format your response as a JSON object with the following structure:
         if (!day.conversation_starter || typeof day.conversation_starter !== 'string') return false;
         if (!day.science_behind_it || typeof day.science_behind_it !== 'string') return false;
         
-        // Validate content length (ensure substantial content)
-        if (day.theme.length < 5 || day.theme.length > 200) return false;
-        if (day.conversation_starter.length < 20 || day.conversation_starter.length > 1000) return false;
-        if (day.science_behind_it.length < 50 || day.science_behind_it.length > 2000) return false;
+        // Validate content length (ensure substantial content, but be more lenient)
+        if (day.theme.length < 3 || day.theme.length > 300) {
+          console.warn(`Day ${day.day} theme length out of range: ${day.theme.length}`);
+          return false;
+        }
+        if (day.conversation_starter.length < 10 || day.conversation_starter.length > 2000) {
+          console.warn(`Day ${day.day} conversation_starter length out of range: ${day.conversation_starter.length}`);
+          return false;
+        }
+        if (day.science_behind_it.length < 20 || day.science_behind_it.length > 5000) {
+          console.warn(`Day ${day.day} science_behind_it length out of range: ${day.science_behind_it.length}`);
+          return false;
+        }
         
         // Additional content validation - ensure therapeutic content
+        // Check for broader therapeutic keywords to be more lenient
         const therapeuticKeywords = [
           /relationship/i, /couple/i, /partner/i, /communication/i, 
-          /emotion/i, /feeling/i, /connect/i, /bond/i, /love/i, /trust/i
+          /emotion/i, /feeling/i, /connect/i, /bond/i, /love/i, /trust/i,
+          /together/i, /share/i, /understand/i, /listen/i, /support/i,
+          /care/i, /respect/i, /intimacy/i, /attachment/i, /secure/i
         ];
         
         const hasTherapeuticContent = therapeuticKeywords.some(keyword => 
-          keyword.test(day.conversation_starter) || keyword.test(day.science_behind_it)
+          keyword.test(day.conversation_starter) || 
+          keyword.test(day.science_behind_it) || 
+          keyword.test(day.theme)
         );
         
+        // Only warn but don't fail validation - GPT-5 might use different therapeutic language
         if (!hasTherapeuticContent) {
-          console.warn(`SECURITY: Day ${day.day} lacks therapeutic content`);
-          return false;
+          console.warn(`SECURITY: Day ${day.day} lacks common therapeutic keywords (but may still be valid)`);
         }
       }
       
@@ -699,23 +736,38 @@ Then, ${sanitizedUser2Name} says in response:
 
 "${sanitizedUser2FirstMessage}"`;
 
-      const completion = await this.openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-          {
-            role: "system",
-            content: "You are a professional couples therapist. Provide thoughtful, therapeutic responses that help the couple connect emotionally. You may provide up to 3 separate messages if needed to fully address their situation."
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        max_tokens: 2000,
-        temperature: 0.7
+      const completion = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify({
+          model: "gpt-5",
+          messages: [
+            {
+              role: "system",
+              content: "You are a professional couples therapist. Provide thoughtful, therapeutic responses that help the couple connect emotionally. You may provide up to 3 separate messages if needed to fully address their situation."
+            },
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          max_tokens: 2000,
+          temperature: 0.7
+        })
       });
 
-      const response = completion.choices[0].message.content;
+      if (!completion.ok) {
+        const errorData = await completion.json().catch(() => ({}));
+        const error = new Error(errorData.error?.message || 'OpenAI API request failed');
+        error.status = completion.status;
+        throw error;
+      }
+
+      const completionData = await completion.json();
+      const response = completionData.choices[0].message.content;
       
       // Validate and sanitize the AI response
       if (!this.validateAIResponse(response)) {

@@ -63,6 +63,7 @@ function createAuthRoutes(authService, userModel, pairingService) {
             });
           }
         }
+        res.setHeader('WWW-Authenticate', 'Bearer realm="API"');
         return res.status(401).json({ error: 'Invalid email or password' });
       } else {
         console.error('Login error:', error);
@@ -85,6 +86,7 @@ function createAuthRoutes(authService, userModel, pairingService) {
     } catch (error) {
       if (error.message.includes('Invalid or expired refresh token') || 
           error.message.includes('Refresh token not found or expired')) {
+        res.setHeader('WWW-Authenticate', 'Bearer realm="API", error="invalid_token", error_description="The refresh token is invalid or expired"');
         return res.status(401).json({ error: error.message });
       } else {
         return res.status(500).json({ error: 'Failed to refresh token' });

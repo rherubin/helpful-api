@@ -10,6 +10,7 @@ function createAuthenticateToken(authService) {
     const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
     if (!token) {
+      res.setHeader('WWW-Authenticate', 'Bearer realm="API"');
       return res.status(401).json({ error: 'Access token required' });
     }
 
@@ -17,9 +18,11 @@ function createAuthenticateToken(authService) {
       if (err) {
         // Check if it's specifically a token expiry error
         if (err.name === 'TokenExpiredError') {
+          res.setHeader('WWW-Authenticate', 'Bearer realm="API", error="invalid_token", error_description="The access token expired"');
           return res.status(401).json({ error: 'Token expired' });
         }
         // For other JWT errors (invalid signature, malformed, etc.)
+        res.setHeader('WWW-Authenticate', 'Bearer realm="API", error="invalid_token", error_description="The access token is invalid"');
         return res.status(401).json({ error: 'Invalid token' });
       }
 
