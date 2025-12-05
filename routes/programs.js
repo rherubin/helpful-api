@@ -121,7 +121,12 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
             console.log('ChatGPT response generated and saved for next program:', newProgram.id);
           } catch (chatGPTError) {
             console.error('Failed to generate ChatGPT response for next program', newProgram.id, ':', chatGPTError.message);
-            // Don't fail the entire request if ChatGPT fails
+            // Save the error to the database
+            try {
+              await programModel.updateGenerationError(newProgram.id, chatGPTError.message);
+            } catch (saveError) {
+              console.error('Failed to save generation error:', saveError.message);
+            }
           }
         })();
       } else {
@@ -231,6 +236,12 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
           console.log('ChatGPT response generated and saved for program:', program_id);
         } catch (chatGPTError) {
           console.error('Failed to generate ChatGPT response for program', program_id, ':', chatGPTError.message);
+          // Save the error to the database
+          try {
+            await programModel.updateGenerationError(program_id, chatGPTError.message);
+          } catch (saveError) {
+            console.error('Failed to save generation error:', saveError.message);
+          }
         }
       })();
     } catch (error) {
@@ -255,6 +266,34 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         });
       }
 
+      // Get user names for the prompt
+      let userName = 'User';
+      let partnerName = 'Partner';
+
+      if (userModel) {
+        try {
+          const user = await userModel.getUserById(userId);
+          userName = user.user_name || userName;
+          partnerName = user.partner_name || partnerName;
+
+          // If pairing exists and partner_name is not set, try to get partner's user_name
+          if (pairing_id && pairingModel && !user.partner_name) {
+            try {
+              const pairing = await pairingModel.getPairingById(pairing_id);
+              const partnerId = pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
+              if (partnerId) {
+                const partner = await userModel.getUserById(partnerId);
+                partnerName = partner.user_name || partnerName;
+              }
+            } catch (pairingError) {
+              console.log('Could not fetch partner name from pairing:', pairingError.message);
+            }
+          }
+        } catch (userError) {
+          console.log('Could not fetch user names, using defaults:', userError.message);
+        }
+      }
+
       // Create the program first
       const program = await programModel.createProgram(userId, {
         user_input,
@@ -273,7 +312,7 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         (async () => {
           try {
             console.log('Generating ChatGPT response for program:', program.id);
-            const therapyResponse = await chatGPTService.generateCouplesProgram('User', 'Partner', user_input);
+            const therapyResponse = await chatGPTService.generateCouplesProgram(userName, partnerName, user_input);
             
             // Convert response to string if it's an object
             const therapyResponseString = typeof therapyResponse === 'object' 
@@ -292,7 +331,12 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
             console.log('ChatGPT response generated and saved for program:', program.id);
           } catch (chatGPTError) {
             console.error('Failed to generate ChatGPT response for program', program.id, ':', chatGPTError.message);
-            // Don't fail the entire request if ChatGPT fails
+            // Save the error to the database
+            try {
+              await programModel.updateGenerationError(program.id, chatGPTError.message);
+            } catch (saveError) {
+              console.error('Failed to save generation error:', saveError.message);
+            }
           }
         })();
       } else {

@@ -23,6 +23,7 @@ class Program {
         user_input TEXT NOT NULL,
         pairing_id VARCHAR(50) DEFAULT NULL,
         therapy_response LONGTEXT DEFAULT NULL,
+        generation_error TEXT DEFAULT NULL,
         steps_required_for_unlock INT DEFAULT 7,
         next_program_unlocked BOOLEAN DEFAULT FALSE,
         deleted_at DATETIME DEFAULT NULL,
@@ -58,11 +59,21 @@ class Program {
         FROM INFORMATION_SCHEMA.COLUMNS 
         WHERE TABLE_SCHEMA = DATABASE() 
         AND TABLE_NAME = 'programs' 
-        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id')
+        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id', 'generation_error')
       `;
       
       const existingColumns = await this.query(checkColumns);
       const columnNames = existingColumns.map(col => col.COLUMN_NAME);
+      
+      // Add generation_error if it doesn't exist
+      if (!columnNames.includes('generation_error')) {
+        await this.query(`
+          ALTER TABLE programs 
+          ADD COLUMN generation_error TEXT DEFAULT NULL 
+          AFTER therapy_response
+        `);
+        console.log('Added generation_error column to programs table.');
+      }
       
       // Add steps_required_for_unlock if it doesn't exist
       if (!columnNames.includes('steps_required_for_unlock')) {
@@ -266,7 +277,7 @@ class Program {
     try {
       const updateQuery = `
         UPDATE programs 
-        SET therapy_response = ?, updated_at = NOW()
+        SET therapy_response = ?, generation_error = NULL, updated_at = NOW()
         WHERE id = ? AND deleted_at IS NULL
       `;
 
@@ -277,6 +288,25 @@ class Program {
       return { message: 'Therapy response updated successfully' };
     } catch (err) {
       throw new Error('Failed to update therapy response');
+    }
+  }
+
+  // Update generation error for a program
+  async updateGenerationError(programId, errorMessage) {
+    try {
+      const updateQuery = `
+        UPDATE programs 
+        SET generation_error = ?, updated_at = NOW()
+        WHERE id = ? AND deleted_at IS NULL
+      `;
+
+      const result = await this.query(updateQuery, [errorMessage, programId]);
+      if (result.affectedRows === 0) {
+        throw new Error('Program not found or already deleted');
+      }
+      return { message: 'Generation error updated successfully' };
+    } catch (err) {
+      throw new Error('Failed to update generation error');
     }
   }
 
