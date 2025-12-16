@@ -12,24 +12,24 @@ function createUserRoutes(userModel, authService, pairingService) {
 
       // Validation
       if (!email || !password) {
-        return res.status(400).json({ 
-          error: 'Email and password are required' 
+        return res.status(400).json({
+          error: 'Email and password are required'
         });
       }
 
       // Email validation
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
-        return res.status(400).json({ 
-          error: 'Invalid email format' 
+        return res.status(400).json({
+          error: 'Invalid email format'
         });
       }
 
       const createdUser = await userModel.createUser({ email, password });
-      
+
       // Get the complete user object for token generation
       const user = await userModel.getUserById(createdUser.id);
-      
+
       // Automatically create a pairing request for the new user
       let pairingCode = null;
       try {
@@ -39,12 +39,12 @@ function createUserRoutes(userModel, authService, pairingService) {
         // Log the pairing error but don't fail user creation
         console.warn('Failed to create automatic pairing request for new user:', pairingError.message);
       }
-      
+
       // Issue tokens for the new user
       const tokenPayload = await authService.issueTokensForUser(user);
       // Set Authorization header for convenience
       res.set('Authorization', `Bearer ${tokenPayload.access_token}`);
-      
+
       // Get user's pairings
       let pairings = [];
       try {
@@ -54,10 +54,10 @@ function createUserRoutes(userModel, authService, pairingService) {
         // Log the error but don't fail user creation
         console.warn('Failed to fetch pairings for new user:', pairingError.message);
       }
-      
+
       // Filter out sensitive fields for the response
       const { password_hash, max_pairings, created_at, updated_at, deleted_at, ...filteredUser } = user;
-      
+
       const response = {
         message: 'Account created successfully',
         user: filteredUser,
@@ -67,17 +67,17 @@ function createUserRoutes(userModel, authService, pairingService) {
         refresh_expires_in: tokenPayload.refresh_expires_in,
         pairings: pairings
       };
-      
+
       // Include pairing code in response if it was successfully created
       if (pairingCode) {
         response.pairing_code = pairingCode;
       }
-      
+
       res.status(201).json(response);
     } catch (error) {
       if (error.message === 'Email already exists') {
         return res.status(409).json({ error: error.message });
-      } else if (error.message.includes('Password must')) {
+      } else if (error.message.includes('Password must') || error.message.includes('Password contains')) {
         return res.status(400).json({ error: error.message });
       } else {
         return res.status(500).json({ error: 'Failed to create user' });

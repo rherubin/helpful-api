@@ -23,12 +23,17 @@ async function cleanupTestData() {
     
     const [testUsers] = await connection.query(`
       SELECT COUNT(*) as count FROM users 
-      WHERE email LIKE 'test%@example.com' 
+      WHERE email LIKE 'test%@example.com'
          OR email LIKE 'john.doe.%@example.com'
          OR email LIKE 'jane.doe.%@example.com'
          OR email LIKE 'loadtest-%@example.com'
          OR email LIKE 'pairings.user%@example.com'
          OR email LIKE 'login-test-%@example.com'
+         OR email LIKE 'programs-test-%@example.com'
+         OR email LIKE 'steps-test-%@example.com'
+         OR email LIKE 'messages-test-%@example.com'
+         OR email LIKE 'therapy-trigger-%@example.com'
+         OR email LIKE 'debug-test-%@example.com'
     `);
     
     const [testPairings] = await connection.query(`

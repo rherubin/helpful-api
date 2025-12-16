@@ -16,7 +16,7 @@ const API_URL = process.env.TEST_BASE_URL || 'http://localhost:9000';
 
 // Generate unique test email
 const testEmail = `refresh-rotation-test_${Date.now()}_${Math.random().toString(36).substr(2, 5)}@example.com`;
-const testPassword = 'TestPassword123!';
+const testPassword = 'SecurePass987!';
 
 async function runTest() {
   console.log('🧪 Starting Refresh Token Rotation Test\n');

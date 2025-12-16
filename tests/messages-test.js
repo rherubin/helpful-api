@@ -1,0 +1,784 @@
+/**
+ * Messages Test Suite
+ * Tests all message-related endpoints within program steps
+ * 
+ * Run with: node tests/messages-test.js
+ * 
+ * Environment Variables:
+ * - TEST_BASE_URL: API base URL (default: http://127.0.0.1:9000)
+ * - TEST_MOCK_OPENAI: When 'true', skips waiting for OpenAI-generated steps
+ */
+
+const axios = require('axios');
+const { generateTestEmail } = require('./test-helpers');
+
+const BASE_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
+const MOCK_OPENAI = process.env.TEST_MOCK_OPENAI === 'true';
+
+class MessagesTestRunner {
+  constructor() {
+    this.baseURL = BASE_URL;
+    this.timeout = 15000;
+    this.testResults = {
+      passed: 0,
+      failed: 0,
+      total: 0
+    };
+    this.testData = {
+      user1: null,
+      user2: null,
+      programId: null,
+      stepId: null,
+      messageId: null
+    };
+  }
+
+  log(message, type = 'info') {
+    const timestamp = new Date().toISOString();
+    const prefix = {
+      info: '📝',
+      pass: '✅',
+      fail: '❌',
+      warn: '⚠️',
+      section: '🧪'
+    }[type] || '📝';
+    
+    console.log(`${prefix} [${timestamp}] ${message}`);
+  }
+
+  assert(condition, testName, details = '') {
+    this.testResults.total++;
+    if (condition) {
+      this.testResults.passed++;
+      this.log(`${testName} - PASSED ${details}`, 'pass');
+      return true;
+    } else {
+      this.testResults.failed++;
+      this.log(`${testName} - FAILED ${details}`, 'fail');
+      return false;
+    }
+  }
+
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Poll for program steps to be created (async OpenAI generation)
+   */
+  async pollForSteps(programId, token, maxWait = 15000) {
+    if (MOCK_OPENAI) {
+      this.log('TEST_MOCK_OPENAI=true, skipping step generation wait', 'info');
+      return { found: false, skipped: true, steps: [] };
+    }
+
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+      try {
+        const response = await axios.get(`${this.baseURL}/api/programs/${programId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        });
+        
+        if (response.data.program?.program_steps?.length > 0) {
+          return { found: true, steps: response.data.program.program_steps };
+        }
+      } catch (error) {
+        // Continue polling
+      }
+      await this.sleep(1000);
+    }
+    return { found: false, skipped: false, steps: [] };
+  }
+
+  /**
+   * Setup: Create test users, program, and get a step ID
+   */
+  async setup() {
+    this.log('Setting up test data...', 'section');
+    
+    try {
+      // Create user 1
+      const user1Email = generateTestEmail('messages-test-1');
+      const user1Response = await axios.post(`${this.baseURL}/api/users`, {
+        email: user1Email,
+        password: 'SecurePass987!'
+      }, { timeout: this.timeout });
+      
+      this.testData.user1 = {
+        id: user1Response.data.user.id,
+        email: user1Email,
+        token: user1Response.data.access_token
+      };
+      this.log(`Created test user 1: ${user1Email}`, 'info');
+
+      // Create user 2 (for authorization tests)
+      const user2Email = generateTestEmail('messages-test-2');
+      const user2Response = await axios.post(`${this.baseURL}/api/users`, {
+        email: user2Email,
+        password: 'SecurePass987!'
+      }, { timeout: this.timeout });
+      
+      this.testData.user2 = {
+        id: user2Response.data.user.id,
+        email: user2Email,
+        token: user2Response.data.access_token
+      };
+      this.log(`Created test user 2: ${user2Email}`, 'info');
+
+      // Create a program
+      const programResponse = await axios.post(`${this.baseURL}/api/programs`, {
+        user_input: 'We want to learn better ways to express appreciation and gratitude to each other.'
+      }, {
+        headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+        timeout: this.timeout
+      });
+      
+      this.testData.programId = programResponse.data.program.id;
+      this.log(`Created program: ${this.testData.programId}`, 'info');
+
+      // Wait for program steps to be generated
+      const pollResult = await this.pollForSteps(this.testData.programId, this.testData.user1.token);
+      
+      if (pollResult.found && pollResult.steps.length > 0) {
+        this.testData.stepId = pollResult.steps[0].id;
+        this.log(`Using step ID: ${this.testData.stepId}`, 'info');
+      } else if (pollResult.skipped) {
+        this.log('OpenAI mocked - attempting to get steps anyway...', 'warn');
+        // Try to get steps one more time
+        try {
+          const stepsResponse = await axios.get(
+            `${this.baseURL}/api/programs/${this.testData.programId}/programSteps`,
+            {
+              headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+              timeout: this.timeout
+            }
+          );
+          if (stepsResponse.data.program_steps?.length > 0) {
+            this.testData.stepId = stepsResponse.data.program_steps[0].id;
+            this.log(`Found step ID: ${this.testData.stepId}`, 'info');
+          }
+        } catch (e) {
+          // Ignore
+        }
+      } else {
+        this.log('Program steps not generated within timeout', 'warn');
+      }
+
+      return true;
+    } catch (error) {
+      this.log(`Setup failed: ${error.response?.data?.error || error.message}`, 'fail');
+      return false;
+    }
+  }
+
+  /**
+   * Test GET /api/programSteps/:id/messages - List messages
+   */
+  async testListMessages() {
+    this.log('Testing GET /api/programSteps/:id/messages (List Messages)', 'section');
+    const token = this.testData.user1.token;
+
+    // Skip if no step available
+    if (!this.testData.stepId) {
+      this.log('No program step available, skipping list messages tests', 'warn');
+      if (!MOCK_OPENAI) {
+        this.assert(false, 'Program step available for testing', 'No step ID available');
+      }
+      return;
+    }
+
+    // Test 1: List messages (should be empty initially)
+    try {
+      const response = await axios.get(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+
+      this.assert(
+        response.status === 200,
+        'List messages returns 200',
+        `Status: ${response.status}`
+      );
+
+      this.assert(
+        Array.isArray(response.data.messages),
+        'List messages returns array',
+        `Type: ${typeof response.data.messages}`
+      );
+
+      this.assert(
+        response.data.step_id === this.testData.stepId,
+        'List messages returns correct step_id',
+        `Step ID: ${response.data.step_id}`
+      );
+
+      this.assert(
+        typeof response.data.total_messages === 'number',
+        'List messages includes total_messages count',
+        `Total: ${response.data.total_messages}`
+      );
+
+    } catch (error) {
+      this.assert(false, 'List messages', `Error: ${error.response?.data?.error || error.message}`);
+    }
+
+    // Test 2: Unauthorized access (403)
+    try {
+      await axios.get(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        {
+          headers: { Authorization: `Bearer ${this.testData.user2.token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'User 2 accessing user 1 step messages returns 403', 'Expected 403');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 403,
+        'User 2 accessing user 1 step messages returns 403',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 3: No authentication (401)
+    try {
+      await axios.get(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        { timeout: this.timeout }
+      );
+      this.assert(false, 'Unauthenticated access returns 401', 'Expected 401');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 401,
+        'Unauthenticated access returns 401',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 4: Not found (404)
+    try {
+      await axios.get(
+        `${this.baseURL}/api/programSteps/nonexistent-step-id/messages`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'Get messages for nonexistent step returns 404', 'Expected 404');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 404,
+        'Get messages for nonexistent step returns 404',
+        `Status: ${error.response?.status}`
+      );
+    }
+  }
+
+  /**
+   * Test POST /api/programSteps/:id/messages - Add message
+   */
+  async testAddMessage() {
+    this.log('Testing POST /api/programSteps/:id/messages (Add Message)', 'section');
+    const token = this.testData.user1.token;
+
+    // Skip if no step available
+    if (!this.testData.stepId) {
+      this.log('No program step available, skipping add message tests', 'warn');
+      return;
+    }
+
+    // Test 1: Add valid message
+    try {
+      const messageContent = 'This is my first message about our relationship goals. I want to express more appreciation daily.';
+      
+      const response = await axios.post(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        { content: messageContent },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+
+      this.assert(
+        response.status === 201,
+        'Add message returns 201',
+        `Status: ${response.status}`
+      );
+
+      this.assert(
+        response.data.message === 'Message added successfully',
+        'Add message returns success message',
+        `Message: ${response.data.message}`
+      );
+
+      this.assert(
+        !!response.data.data?.id,
+        'Add message returns message ID',
+        `ID: ${response.data.data?.id}`
+      );
+
+      this.assert(
+        response.data.data?.content === messageContent,
+        'Add message returns correct content',
+        `Content matches: ${response.data.data?.content?.substring(0, 30)}...`
+      );
+
+      this.assert(
+        response.data.data?.step_id === this.testData.stepId,
+        'Add message returns correct step_id',
+        `Step ID: ${response.data.data?.step_id}`
+      );
+
+      this.assert(
+        response.data.data?.sender_id === this.testData.user1.id,
+        'Add message returns correct sender_id',
+        `Sender ID: ${response.data.data?.sender_id}`
+      );
+
+      this.assert(
+        response.data.data?.message_type === 'user_message',
+        'Add message has message_type user_message',
+        `Type: ${response.data.data?.message_type}`
+      );
+
+      // Store message ID for update tests
+      this.testData.messageId = response.data.data.id;
+
+    } catch (error) {
+      this.assert(false, 'Add message', `Error: ${error.response?.data?.error || error.message}`);
+    }
+
+    // Test 2: Verify step is marked as started
+    try {
+      const stepResponse = await axios.get(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+
+      this.assert(
+        stepResponse.data.step?.started === true,
+        'Step is marked as started after adding message',
+        `Started: ${stepResponse.data.step?.started}`
+      );
+
+    } catch (error) {
+      this.assert(false, 'Check step started status', `Error: ${error.response?.data?.error || error.message}`);
+    }
+
+    // Test 3: Empty content (400)
+    try {
+      await axios.post(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        { content: '' },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'Add message with empty content returns 400', 'Expected 400');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 400,
+        'Add message with empty content returns 400',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 4: Missing content (400)
+    try {
+      await axios.post(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        {},
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'Add message without content returns 400', 'Expected 400');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 400,
+        'Add message without content returns 400',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 5: Whitespace-only content (400)
+    try {
+      await axios.post(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        { content: '   \n\t  ' },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'Add message with whitespace-only content returns 400', 'Expected 400');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 400,
+        'Add message with whitespace-only content returns 400',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 6: Unauthorized access (403)
+    try {
+      await axios.post(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        { content: 'Unauthorized message attempt' },
+        {
+          headers: { Authorization: `Bearer ${this.testData.user2.token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'User 2 adding message to user 1 step returns 403', 'Expected 403');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 403,
+        'User 2 adding message to user 1 step returns 403',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 7: No authentication (401)
+    try {
+      await axios.post(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        { content: 'Unauthenticated message attempt' },
+        { timeout: this.timeout }
+      );
+      this.assert(false, 'Unauthenticated add message returns 401', 'Expected 401');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 401,
+        'Unauthenticated add message returns 401',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 8: Nonexistent step (404)
+    try {
+      await axios.post(
+        `${this.baseURL}/api/programSteps/nonexistent-step-id/messages`,
+        { content: 'Message to nonexistent step' },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'Add message to nonexistent step returns 404', 'Expected 404');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 404,
+        'Add message to nonexistent step returns 404',
+        `Status: ${error.response?.status}`
+      );
+    }
+  }
+
+  /**
+   * Test PUT /api/programSteps/:stepId/messages/:messageId - Update message
+   */
+  async testUpdateMessage() {
+    this.log('Testing PUT /api/programSteps/:stepId/messages/:messageId (Update Message)', 'section');
+    const token = this.testData.user1.token;
+
+    // Skip if no message available
+    if (!this.testData.messageId) {
+      this.log('No message available, skipping update message tests', 'warn');
+      if (!MOCK_OPENAI) {
+        this.assert(false, 'Message available for testing', 'No message ID available');
+      }
+      return;
+    }
+
+    // Test 1: Valid update
+    try {
+      const updatedContent = 'This is my updated message with new thoughts about our journey together.';
+      
+      const response = await axios.put(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages/${this.testData.messageId}`,
+        { content: updatedContent },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+
+      this.assert(
+        response.status === 200,
+        'Update message returns 200',
+        `Status: ${response.status}`
+      );
+
+      this.assert(
+        response.data.message === 'Message updated successfully',
+        'Update message returns success message',
+        `Message: ${response.data.message}`
+      );
+
+    } catch (error) {
+      this.assert(false, 'Update message', `Error: ${error.response?.data?.error || error.message}`);
+    }
+
+    // Test 2: Empty content (400)
+    try {
+      await axios.put(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages/${this.testData.messageId}`,
+        { content: '' },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'Update message with empty content returns 400', 'Expected 400');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 400,
+        'Update message with empty content returns 400',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 3: User 2 cannot update user 1's message (403)
+    try {
+      await axios.put(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages/${this.testData.messageId}`,
+        { content: 'Unauthorized update attempt' },
+        {
+          headers: { Authorization: `Bearer ${this.testData.user2.token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'User 2 updating user 1 message returns 403', 'Expected 403');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 403,
+        'User 2 updating user 1 message returns 403',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 4: Nonexistent message (404)
+    try {
+      await axios.put(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages/nonexistent-message-id`,
+        { content: 'Update nonexistent message' },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'Update nonexistent message returns 404', 'Expected 404');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 404,
+        'Update nonexistent message returns 404',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 5: Nonexistent step (404)
+    try {
+      await axios.put(
+        `${this.baseURL}/api/programSteps/nonexistent-step-id/messages/${this.testData.messageId}`,
+        { content: 'Update in nonexistent step' },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(false, 'Update message in nonexistent step returns 404', 'Expected 404');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 404,
+        'Update message in nonexistent step returns 404',
+        `Status: ${error.response?.status}`
+      );
+    }
+
+    // Test 6: No authentication (401)
+    try {
+      await axios.put(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages/${this.testData.messageId}`,
+        { content: 'Unauthenticated update' },
+        { timeout: this.timeout }
+      );
+      this.assert(false, 'Unauthenticated update returns 401', 'Expected 401');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 401,
+        'Unauthenticated update returns 401',
+        `Status: ${error.response?.status}`
+      );
+    }
+  }
+
+  /**
+   * Test message listing after adding messages
+   */
+  async testMessageListingAfterAdd() {
+    this.log('Testing Message Listing After Adding', 'section');
+    const token = this.testData.user1.token;
+
+    // Skip if no step available
+    if (!this.testData.stepId) {
+      this.log('No program step available, skipping message listing verification', 'warn');
+      return;
+    }
+
+    try {
+      const response = await axios.get(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: this.timeout
+        }
+      );
+
+      this.assert(
+        response.data.messages.length > 0,
+        'Message list contains added message',
+        `Count: ${response.data.messages.length}`
+      );
+
+      // Find our message
+      const ourMessage = response.data.messages.find(m => m.id === this.testData.messageId);
+      
+      this.assert(
+        !!ourMessage,
+        'Our message is in the list',
+        `Found: ${!!ourMessage}`
+      );
+
+      if (ourMessage) {
+        // Verify message structure
+        this.assert(
+          typeof ourMessage.id === 'string',
+          'Message has id field',
+          `ID: ${ourMessage.id}`
+        );
+
+        this.assert(
+          typeof ourMessage.step_id === 'string',
+          'Message has step_id field',
+          `Step ID: ${ourMessage.step_id}`
+        );
+
+        this.assert(
+          typeof ourMessage.message_type === 'string',
+          'Message has message_type field',
+          `Type: ${ourMessage.message_type}`
+        );
+
+        this.assert(
+          typeof ourMessage.content === 'string',
+          'Message has content field',
+          `Content length: ${ourMessage.content?.length}`
+        );
+
+        this.assert(
+          !!ourMessage.created_at,
+          'Message has created_at field',
+          `Created: ${ourMessage.created_at}`
+        );
+      }
+
+    } catch (error) {
+      this.assert(false, 'Message listing after add', `Error: ${error.response?.data?.error || error.message}`);
+    }
+  }
+
+  /**
+   * Print test summary
+   */
+  printSummary() {
+    console.log('\n' + '='.repeat(60));
+    console.log('📊 MESSAGES TEST SUMMARY');
+    console.log('='.repeat(60));
+    console.log(`Total Tests:  ${this.testResults.total}`);
+    console.log(`Passed:       ${this.testResults.passed}`);
+    console.log(`Failed:       ${this.testResults.failed}`);
+    
+    const successRate = this.testResults.total > 0 
+      ? (this.testResults.passed / this.testResults.total * 100).toFixed(1) 
+      : 0;
+    console.log(`Success Rate: ${successRate}%`);
+    
+    if (MOCK_OPENAI) {
+      console.log('\n⚠️  Note: TEST_MOCK_OPENAI=true - some message tests may be skipped');
+    }
+    
+    if (!this.testData.stepId) {
+      console.log('\n⚠️  Note: No program step was available for message testing');
+    }
+    
+    console.log('='.repeat(60));
+    
+    return this.testResults.failed === 0;
+  }
+
+  /**
+   * Run all tests
+   */
+  async runAllTests() {
+    console.log('🚀 Starting Messages Test Suite');
+    console.log(`📅 ${new Date().toISOString()}`);
+    console.log(`🔗 Base URL: ${this.baseURL}`);
+    console.log(`🤖 Mock OpenAI: ${MOCK_OPENAI}`);
+    console.log('='.repeat(60));
+
+    const setupSuccess = await this.setup();
+    if (!setupSuccess) {
+      this.log('Setup failed, aborting tests', 'fail');
+      return false;
+    }
+
+    await this.testListMessages();
+    await this.testAddMessage();
+    await this.testUpdateMessage();
+    await this.testMessageListingAfterAdd();
+
+    return this.printSummary();
+  }
+}
+
+// Check if server is running
+async function checkServer() {
+  try {
+    await axios.get(`${BASE_URL}/health`, { timeout: 3000 });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+// Main
+(async () => {
+  console.log('Checking if server is running...');
+  const running = await checkServer();
+  
+  if (!running) {
+    console.error('❌ Server not running at', BASE_URL);
+    console.error('Start the server with: npm start');
+    process.exit(1);
+  }
+  
+  console.log('✅ Server is running\n');
+  
+  const runner = new MessagesTestRunner();
+  const success = await runner.runAllTests();
+  process.exit(success ? 0 : 1);
+})();
+
+module.exports = MessagesTestRunner;
+

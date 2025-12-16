@@ -10,6 +10,10 @@ const UserProfileTestRunner = require('./user-profile-test');
 const RefreshTokenResetTestRunner = require('./refresh-token-reset-test');
 const RefreshTokenRotationTestRunner = require('./refresh-token-rotation-test');
 const ProgramUnlockTestRunner = require('./program-unlock-test');
+const ProgramsTestRunner = require('./programs-test');
+const ProgramStepsTestRunner = require('./program-steps-test');
+const MessagesTestRunner = require('./messages-test');
+const TherapyTriggerTestRunner = require('./therapy-trigger-test');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -32,7 +36,11 @@ class TestSuiteRunner {
       runRefreshTokenReset: options.runRefreshTokenReset !== false, // Default true
       runRefreshTokenRotation: false, // Temporarily disabled due to integration issues
       runProgramUnlock: options.runProgramUnlock !== false, // Default true
-      baseURL: options.baseURL || 'http://localhost:9000',
+      runPrograms: options.runPrograms !== false, // Default true
+      runProgramSteps: options.runProgramSteps !== false, // Default true
+      runMessages: options.runMessages !== false, // Default true
+      runTherapyTrigger: options.runTherapyTrigger !== false, // Default true
+      baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
     };
@@ -50,6 +58,10 @@ class TestSuiteRunner {
       refreshTokenReset: null,
       refreshTokenRotation: null,
       programUnlock: null,
+      programs: null,
+      programSteps: null,
+      messages: null,
+      therapyTrigger: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -489,6 +501,146 @@ class TestSuiteRunner {
     }
   }
 
+  async runProgramsTests() {
+    if (!this.options.runPrograms) {
+      this.log('Skipping programs tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('📋 Running Programs Test Suite', 'section');
+
+    try {
+      const programsRunner = new ProgramsTestRunner();
+      const success = await programsRunner.runAllTests();
+
+      this.results.programs = {
+        success,
+        skipped: false,
+        details: 'Program CRUD endpoints and async OpenAI generation',
+        passed: programsRunner.testResults.passed,
+        failed: programsRunner.testResults.failed,
+        total: programsRunner.testResults.total
+      };
+
+      if (success) {
+        this.log('Programs tests completed successfully', 'success');
+      } else {
+        this.log('Programs tests failed', 'error');
+      }
+
+      return this.results.programs;
+    } catch (error) {
+      this.log(`Programs tests failed: ${error.message}`, 'error');
+      this.results.programs = { success: false, error: error.message };
+      return this.results.programs;
+    }
+  }
+
+  async runProgramStepsTests() {
+    if (!this.options.runProgramSteps) {
+      this.log('Skipping program steps tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('📝 Running Program Steps Test Suite', 'section');
+
+    try {
+      const programStepsRunner = new ProgramStepsTestRunner();
+      const success = await programStepsRunner.runAllTests();
+
+      this.results.programSteps = {
+        success,
+        skipped: false,
+        details: 'Program step endpoints and structure verification',
+        passed: programStepsRunner.testResults.passed,
+        failed: programStepsRunner.testResults.failed,
+        total: programStepsRunner.testResults.total
+      };
+
+      if (success) {
+        this.log('Program steps tests completed successfully', 'success');
+      } else {
+        this.log('Program steps tests failed', 'error');
+      }
+
+      return this.results.programSteps;
+    } catch (error) {
+      this.log(`Program steps tests failed: ${error.message}`, 'error');
+      this.results.programSteps = { success: false, error: error.message };
+      return this.results.programSteps;
+    }
+  }
+
+  async runMessagesTests() {
+    if (!this.options.runMessages) {
+      this.log('Skipping messages tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('💬 Running Messages Test Suite', 'section');
+
+    try {
+      const messagesRunner = new MessagesTestRunner();
+      const success = await messagesRunner.runAllTests();
+
+      this.results.messages = {
+        success,
+        skipped: false,
+        details: 'Message CRUD within program steps',
+        passed: messagesRunner.testResults.passed,
+        failed: messagesRunner.testResults.failed,
+        total: messagesRunner.testResults.total
+      };
+
+      if (success) {
+        this.log('Messages tests completed successfully', 'success');
+      } else {
+        this.log('Messages tests failed', 'error');
+      }
+
+      return this.results.messages;
+    } catch (error) {
+      this.log(`Messages tests failed: ${error.message}`, 'error');
+      this.results.messages = { success: false, error: error.message };
+      return this.results.messages;
+    }
+  }
+
+  async runTherapyTriggerTests() {
+    if (!this.options.runTherapyTrigger) {
+      this.log('Skipping therapy trigger tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('💕 Running Therapy Trigger Test Suite', 'section');
+
+    try {
+      const therapyTriggerRunner = new TherapyTriggerTestRunner();
+      const success = await therapyTriggerRunner.runAllTests();
+
+      this.results.therapyTrigger = {
+        success,
+        skipped: false,
+        details: 'Both users post triggers therapy response',
+        passed: therapyTriggerRunner.testResults.passed,
+        failed: therapyTriggerRunner.testResults.failed,
+        total: therapyTriggerRunner.testResults.total
+      };
+
+      if (success) {
+        this.log('Therapy trigger tests completed successfully', 'success');
+      } else {
+        this.log('Therapy trigger tests failed', 'error');
+      }
+
+      return this.results.therapyTrigger;
+    } catch (error) {
+      this.log(`Therapy trigger tests failed: ${error.message}`, 'error');
+      this.results.therapyTrigger = { success: false, error: error.message };
+      return this.results.therapyTrigger;
+    }
+  }
+
   // Run all test suites
   async runAllTests() {
     this.log('🎯 Starting Comprehensive Test Suite', 'section');
@@ -507,6 +659,10 @@ class TestSuiteRunner {
     this.log(`  Refresh Token Reset Tests: ${this.options.runRefreshTokenReset ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Refresh Token Rotation Tests: ${this.options.runRefreshTokenRotation ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Program Unlock Tests: ${this.options.runProgramUnlock ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Programs Tests: ${this.options.runPrograms ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Program Steps Tests: ${this.options.runProgramSteps ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Messages Tests: ${this.options.runMessages ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Therapy Trigger Tests: ${this.options.runTherapyTrigger ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
     // Check server health
@@ -622,6 +778,42 @@ class TestSuiteRunner {
     if (this.options.runProgramUnlock) {
       await this.runProgramUnlockTests();
       if (this.results.programUnlock && !this.results.programUnlock.success && !this.results.programUnlock.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run programs tests
+    if (this.options.runPrograms) {
+      await this.runProgramsTests();
+      if (this.results.programs && !this.results.programs.success && !this.results.programs.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run program steps tests
+    if (this.options.runProgramSteps) {
+      await this.runProgramStepsTests();
+      if (this.results.programSteps && !this.results.programSteps.success && !this.results.programSteps.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run messages tests
+    if (this.options.runMessages) {
+      await this.runMessagesTests();
+      if (this.results.messages && !this.results.messages.success && !this.results.messages.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run therapy trigger tests
+    if (this.options.runTherapyTrigger) {
+      await this.runTherapyTriggerTests();
+      if (this.results.therapyTrigger && !this.results.therapyTrigger.success && !this.results.therapyTrigger.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -774,6 +966,50 @@ class TestSuiteRunner {
       }
     }
 
+    // Programs test results
+    if (this.results.programs) {
+      if (this.results.programs.skipped) {
+        this.log('📋 Programs Tests: SKIPPED', 'warn');
+      } else if (this.results.programs.success) {
+        this.log(`📋 Programs Tests: PASSED (${this.results.programs.passed}/${this.results.programs.total})`, 'success');
+      } else {
+        this.log(`📋 Programs Tests: FAILED (${this.results.programs.failed}/${this.results.programs.total} failures)`, 'error');
+      }
+    }
+
+    // Program steps test results
+    if (this.results.programSteps) {
+      if (this.results.programSteps.skipped) {
+        this.log('📝 Program Steps Tests: SKIPPED', 'warn');
+      } else if (this.results.programSteps.success) {
+        this.log(`📝 Program Steps Tests: PASSED (${this.results.programSteps.passed}/${this.results.programSteps.total})`, 'success');
+      } else {
+        this.log(`📝 Program Steps Tests: FAILED (${this.results.programSteps.failed}/${this.results.programSteps.total} failures)`, 'error');
+      }
+    }
+
+    // Messages test results
+    if (this.results.messages) {
+      if (this.results.messages.skipped) {
+        this.log('💬 Messages Tests: SKIPPED', 'warn');
+      } else if (this.results.messages.success) {
+        this.log(`💬 Messages Tests: PASSED (${this.results.messages.passed}/${this.results.messages.total})`, 'success');
+      } else {
+        this.log(`💬 Messages Tests: FAILED (${this.results.messages.failed}/${this.results.messages.total} failures)`, 'error');
+      }
+    }
+
+    // Therapy trigger test results
+    if (this.results.therapyTrigger) {
+      if (this.results.therapyTrigger.skipped) {
+        this.log('💕 Therapy Trigger Tests: SKIPPED', 'warn');
+      } else if (this.results.therapyTrigger.success) {
+        this.log(`💕 Therapy Trigger Tests: PASSED (${this.results.therapyTrigger.passed}/${this.results.therapyTrigger.total})`, 'success');
+      } else {
+        this.log(`💕 Therapy Trigger Tests: FAILED (${this.results.therapyTrigger.failed}/${this.results.therapyTrigger.total} failures)`, 'error');
+      }
+    }
+
     console.log('');
 
     // Overall result
@@ -806,7 +1042,9 @@ class TestSuiteRunner {
                this.results.therapy?.success && this.results.auth?.success && this.results.userCreation?.success &&
                this.results.pairingsEndpoint?.success && this.results.userProfile?.success &&
                this.results.refreshTokenReset?.success && this.results.refreshTokenRotation?.success &&
-               this.results.programUnlock?.success,
+               this.results.programUnlock?.success && this.results.programs?.success &&
+               this.results.programSteps?.success && this.results.messages?.success &&
+               this.results.therapyTrigger?.success,
       results: {
         security: this.results.security,
         api: this.results.api,
@@ -819,18 +1057,25 @@ class TestSuiteRunner {
         userProfile: this.results.userProfile,
         refreshTokenReset: this.results.refreshTokenReset,
         refreshTokenRotation: this.results.refreshTokenRotation,
-        programUnlock: this.results.programUnlock
+        programUnlock: this.results.programUnlock,
+        programs: this.results.programs,
+        programSteps: this.results.programSteps,
+        messages: this.results.messages,
+        therapyTrigger: this.results.therapyTrigger
       },
       summary: {
         totalTests: (this.results.security?.total || 0) + (this.results.api?.total || 0) + (this.results.openai?.testResults?.total || 0) +
                    (this.results.userCreation?.total || 0) + (this.results.pairingsEndpoint?.total || 0) + (this.results.userProfile?.total || 0) +
-                   (this.results.refreshTokenReset?.total || 0),
+                   (this.results.refreshTokenReset?.total || 0) + (this.results.programs?.total || 0) + (this.results.programSteps?.total || 0) +
+                   (this.results.messages?.total || 0) + (this.results.therapyTrigger?.total || 0),
         totalPassed: (this.results.security?.passed || 0) + (this.results.api?.passed || 0) + (this.results.openai?.testResults?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) + (this.results.userProfile?.passed || 0) +
-                    (this.results.refreshTokenReset?.passed || 0),
+                    (this.results.refreshTokenReset?.passed || 0) + (this.results.programs?.passed || 0) + (this.results.programSteps?.passed || 0) +
+                    (this.results.messages?.passed || 0) + (this.results.therapyTrigger?.passed || 0),
         totalFailed: (this.results.security?.failed || 0) + (this.results.api?.failed || 0) + (this.results.openai?.testResults?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) + (this.results.userProfile?.failed || 0) +
-                    (this.results.refreshTokenReset?.failed || 0)
+                    (this.results.refreshTokenReset?.failed || 0) + (this.results.programs?.failed || 0) + (this.results.programSteps?.failed || 0) +
+                    (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0)
       }
     };
   }
@@ -854,6 +1099,10 @@ function parseArgs() {
     if (arg === '--no-refresh-token-reset') options.runRefreshTokenReset = false;
     if (arg === '--no-refresh-token-rotation') options.runRefreshTokenRotation = false;
     if (arg === '--no-program-unlock') options.runProgramUnlock = false;
+    if (arg === '--no-programs') options.runPrograms = false;
+    if (arg === '--no-program-steps') options.runProgramSteps = false;
+    if (arg === '--no-messages') options.runMessages = false;
+    if (arg === '--no-therapy-trigger') options.runTherapyTrigger = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];
     if (arg.startsWith('--timeout=')) options.timeout = parseInt(arg.split('=')[1]);

@@ -16,7 +16,11 @@
     "test:auth": "node tests/auth-test.js",
     "test:ci": "node tests/run-all-tests.js --skip-server-check",
     "test:quick": "node tests/run-all-tests.js --no-load",
-    "test:cleanup": "node tests/cleanup-test-data.js"
+    "test:cleanup": "node tests/cleanup-test-data.js",
+    "test:programs": "node tests/programs-test.js",
+    "test:steps": "node tests/program-steps-test.js",
+    "test:messages": "node tests/messages-test.js",
+    "test:therapy-trigger": "node tests/therapy-trigger-test.js"
   },
   "keywords": [
     "api",

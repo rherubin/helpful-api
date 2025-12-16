@@ -24,7 +24,7 @@ const API_URL = process.env.TEST_BASE_URL || process.env.API_URL || 'http://loca
 
 // Generate unique test email
 const testEmail = `next-program-test_${Date.now()}_${Math.random().toString(36).substr(2, 5)}@example.com`;
-const testPassword = 'TestPassword123!';
+const testPassword = 'SecurePass987!';
 
 async function runTest() {
   console.log('🧪 Starting Next Program Generation Test\n');

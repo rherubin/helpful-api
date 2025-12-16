@@ -45,38 +45,22 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         const user1 = await userModel.getUserById(user1Id);
         const user2 = await userModel.getUserById(user2Id);
         
-        // Prepare conversation context for OpenAI
-        const conversationContext = {
-          program: {
-            user_name: program.user_name,
-            partner_name: program.partner_name,
-            children: program.children
-          },
-          step: {
-            day: step.day,
-            theme: step.theme,
-            conversation_starter: step.conversation_starter,
-            science_behind_it: step.science_behind_it
-          },
-          users: [
-            {
-              id: user1Id,
-              name: user1.first_name || 'User 1'
-            },
-            {
-              id: user2Id,
-              name: user2.first_name || 'User 2'
-            }
-          ],
-          messages: userMessages.map(msg => ({
-            sender_name: msg.sender_id === user1Id ? (user1.first_name || 'User 1') : (user2.first_name || 'User 2'),
-            content: msg.content,
-            timestamp: msg.created_at
-          }))
-        };
+        // Extract user1's messages as an array of content strings
+        const user1MessageContents = userMessages
+          .filter(msg => msg.sender_id === user1Id)
+          .map(msg => msg.content);
 
-        // Generate therapy response
-        const therapyResponse = await chatGPTService.generateTherapyResponse(conversationContext);
+        // Extract user2's first message content
+        const user2Messages = userMessages.filter(msg => msg.sender_id === user2Id);
+        const user2FirstMessage = user2Messages.length > 0 ? user2Messages[0].content : '';
+
+        // Generate therapy response using the correct method signature
+        const therapyResponse = await chatGPTService.generateCouplesTherapyResponse(
+          user1.first_name || 'User 1',
+          user2.first_name || 'User 2',
+          user1MessageContents,
+          user2FirstMessage
+        );
         
         // Add the therapy response as a system message
         await messageModel.addSystemMessage(stepId, therapyResponse, {
