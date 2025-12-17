@@ -547,7 +547,7 @@ Please format your response as a JSON object with the following structure:
           "Authorization": `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: "gpt-5",
+          model: "gpt-4o",
           messages: [
             {
               role: "system",
@@ -793,7 +793,7 @@ Then, ${sanitizedUser2Name} says in response:
           "Authorization": `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: "gpt-5",
+          model: "gpt-4o",
           messages: [
             {
               role: "system",

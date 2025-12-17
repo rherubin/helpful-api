@@ -7,19 +7,24 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
   // Helper function to check if we should trigger background therapy response
   async function checkAndTriggerTherapyResponse(stepId, currentUserId) {
+    console.log(`[THERAPY_TRIGGER] Checking therapy response for step ${stepId}, user ${currentUserId}`);
     try {
       // Get the program step to find the program
       const step = await programStepModel.getStepById(stepId);
       const program = await programModel.getProgramById(step.program_id);
-      
+      console.log(`[THERAPY_TRIGGER] Step: ${stepId}, Program: ${program.id}, Pairing: ${program.pairing_id}`);
+
       // Only trigger if program has a pairing
       if (!program.pairing_id) {
+        console.log(`[THERAPY_TRIGGER] No pairing_id, skipping`);
         return;
       }
 
       // Get the pairing to find both users
       const pairing = await pairingModel.getPairingById(program.pairing_id);
+      console.log(`[THERAPY_TRIGGER] Pairing status: ${pairing.status}`);
       if (pairing.status !== 'accepted') {
+        console.log(`[THERAPY_TRIGGER] Pairing not accepted, skipping`);
         return;
       }
 
@@ -38,6 +43,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       const user2HasPosted = userMessages.some(msg => msg.sender_id === user2Id);
       
       // Only trigger if both users have posted at least one message
+      console.log(`[THERAPY_TRIGGER] User1 (${user1Id}) posted: ${user1HasPosted}, User2 (${user2Id}) posted: ${user2HasPosted}`);
       if (user1HasPosted && user2HasPosted) {
         console.log(`Both users have posted messages in step ${stepId}, triggering therapy response...`);
         

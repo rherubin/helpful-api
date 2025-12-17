@@ -277,8 +277,8 @@ class Message {
   async getStepMessages(stepId) {
     try {
       const query = `
-        SELECT m.id, m.step_id, m.message_type, m.sender_id, m.content, 
-               m.created_at, m.updated_at
+        SELECT m.id, m.step_id, m.message_type, m.sender_id, m.content,
+               m.metadata, m.created_at, m.updated_at
         FROM messages m
         WHERE m.step_id = ?
         ORDER BY m.created_at ASC
@@ -292,6 +292,7 @@ class Message {
         message_type: message.message_type,
         sender_id: message.sender_id,
         content: message.content,
+        metadata: message.metadata,
         created_at: message.created_at,
         updated_at: message.updated_at
       }));

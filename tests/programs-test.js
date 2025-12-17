@@ -9,6 +9,7 @@
  * - TEST_MOCK_OPENAI: When 'true', skips waiting for OpenAI-generated content
  */
 
+require('dotenv').config();
 const axios = require('axios');
 const { generateTestEmail } = require('./test-helpers');
 
@@ -18,7 +19,7 @@ const MOCK_OPENAI = process.env.TEST_MOCK_OPENAI === 'true';
 class ProgramsTestRunner {
   constructor() {
     this.baseURL = BASE_URL;
-    this.timeout = 15000;
+    this.timeout = MOCK_OPENAI ? 15000 : 60000; // Longer timeout for real OpenAI calls
     this.testResults = {
       passed: 0,
       failed: 0,
@@ -64,7 +65,7 @@ class ProgramsTestRunner {
   /**
    * Poll for program steps to be created (async OpenAI generation)
    */
-  async pollForSteps(programId, token, maxWait = 15000) {
+  async pollForSteps(programId, token, maxWait = this.timeout) {
     if (MOCK_OPENAI) {
       this.log('TEST_MOCK_OPENAI=true, skipping step generation wait', 'info');
       return { found: false, skipped: true };
