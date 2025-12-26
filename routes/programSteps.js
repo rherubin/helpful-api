@@ -58,9 +58,18 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       const user1HasPosted = userMessages.some(msg => msg.sender_id === user1Id);
       const user2HasPosted = userMessages.some(msg => msg.sender_id === user2Id);
 
-      // Only trigger if both users have posted at least one message
-      console.log(`[THERAPY_TRIGGER] User1 (${user1Id}) posted: ${user1HasPosted}, User2 (${user2Id}) posted: ${user2HasPosted}`);
-      if (user1HasPosted && user2HasPosted) {
+      // Check if a therapy response already exists for this step
+      const existingTherapyResponse = messages.some(msg =>
+        msg.message_type === 'system' &&
+        msg.metadata &&
+        (typeof msg.metadata === 'string' ?
+          msg.metadata.includes('therapy_response') :
+          msg.metadata.type === 'therapy_response')
+      );
+
+      // Only trigger if both users have posted at least one message AND no therapy response exists yet
+      console.log(`[THERAPY_TRIGGER] User1 (${user1Id}) posted: ${user1HasPosted}, User2 (${user2Id}) posted: ${user2HasPosted}, Existing therapy response: ${existingTherapyResponse}`);
+      if (user1HasPosted && user2HasPosted && !existingTherapyResponse) {
         console.log(`Both users have posted messages in step ${stepId}, triggering therapy response...`);
 
         // Get user details for context
@@ -93,6 +102,8 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         });
 
         console.log(`Therapy response added to step ${stepId}`);
+      } else if (existingTherapyResponse) {
+        console.log(`Therapy response already exists for step ${stepId}, skipping duplicate trigger`);
       }
     } catch (error) {
       console.error('Error checking therapy response trigger:', error.message);
@@ -233,10 +244,11 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         }
       }, 500);
 
-      // Check if we should trigger a background therapy response
-      setTimeout(() => {
+      // Check if we should trigger a therapy response immediately
+      // Use setImmediate to ensure the user message is committed first
+      setImmediate(() => {
         checkAndTriggerTherapyResponse(id, userId);
-      }, 1000); // Small delay to ensure message is saved
+      });
 
       res.status(201).json({
         message: 'Message added successfully',
