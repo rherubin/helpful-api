@@ -34,23 +34,39 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
       // Get all messages in this step
       const messages = await messageModel.getStepMessages(stepId);
-      
+
       // Filter user messages only
       const userMessages = messages.filter(msg => msg.message_type === 'user_message');
-      
+
+      // Check if this is the very first message in the chatroom
+      if (userMessages.length === 1 && userMessages[0].sender_id === currentUserId) {
+        console.log(`First message in step ${stepId} from user ${currentUserId}, adding welcome system message`);
+
+        // Add the welcome system message
+        await messageModel.addSystemMessage(stepId, "Thanks for the message! As soon as your partner replies, I'll start helping you move the conversation forward in the healthiest, most positive way.", {
+          type: 'first_message_welcome',
+          triggered_by: 'first_message',
+          step_day: step.day,
+          step_theme: step.theme
+        });
+
+        console.log(`Welcome system message added to step ${stepId}`);
+        return; // Don't continue with therapy response logic for first message
+      }
+
       // Check if both users have posted messages
       const user1HasPosted = userMessages.some(msg => msg.sender_id === user1Id);
       const user2HasPosted = userMessages.some(msg => msg.sender_id === user2Id);
-      
+
       // Only trigger if both users have posted at least one message
       console.log(`[THERAPY_TRIGGER] User1 (${user1Id}) posted: ${user1HasPosted}, User2 (${user2Id}) posted: ${user2HasPosted}`);
       if (user1HasPosted && user2HasPosted) {
         console.log(`Both users have posted messages in step ${stepId}, triggering therapy response...`);
-        
+
         // Get user details for context
         const user1 = await userModel.getUserById(user1Id);
         const user2 = await userModel.getUserById(user2Id);
-        
+
         // Extract user1's messages as an array of content strings
         const user1MessageContents = userMessages
           .filter(msg => msg.sender_id === user1Id)
@@ -67,7 +83,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
           user1MessageContents,
           user2FirstMessage
         );
-        
+
         // Add the therapy response as a system message
         await messageModel.addSystemMessage(stepId, therapyResponse, {
           type: 'therapy_response',
@@ -75,7 +91,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
           step_day: step.day,
           step_theme: step.theme
         });
-        
+
         console.log(`Therapy response added to step ${stepId}`);
       }
     } catch (error) {

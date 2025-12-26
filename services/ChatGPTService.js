@@ -756,20 +756,6 @@ Please format your response as a JSON object with the following structure:
         throw new Error('Input contains potentially unsafe content');
       }
 
-      // Additional validation
-      if (sanitizedUser1Name.length < 1 || sanitizedUser1Name.length > 50) {
-        throw new Error('User 1 name must be between 1 and 50 characters');
-      }
-      if (sanitizedUser2Name.length < 1 || sanitizedUser2Name.length > 50) {
-        throw new Error('User 2 name must be between 1 and 50 characters');
-      }
-      if (sanitizedUser1Messages.length < 10 || sanitizedUser1Messages.length > 3000) {
-        throw new Error('User 1 messages must be between 10 and 3000 characters');
-      }
-      if (sanitizedUser2FirstMessage.length < 10 || sanitizedUser2FirstMessage.length > 2000) {
-        throw new Error('User 2 first message must be between 10 and 2000 characters');
-      }
-
       const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
 
 Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
@@ -795,10 +781,6 @@ Then, ${sanitizedUser2Name} says in response:
         body: JSON.stringify({
           model: "gpt-4o",
           messages: [
-            {
-              role: "system",
-              content: "You are a professional couples therapist. Provide thoughtful, therapeutic responses that help the couple connect emotionally. You may provide up to 3 separate messages if needed to fully address their situation."
-            },
             {
               role: "user",
               content: prompt
