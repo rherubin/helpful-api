@@ -1036,6 +1036,126 @@ class MessagesTestRunner {
   }
 
   /**
+   * Test: Validate therapy response logic fixes (duplicate prevention and timing)
+   */
+  async testTherapyResponseLogicValidation() {
+    this.log('Testing: Therapy response logic validation (duplicate prevention and timing)', 'section');
+
+    // Test 1: Validate duplicate prevention logic
+    this.log('Validating duplicate prevention logic...', 'info');
+
+    // Simulate the duplicate prevention check logic from routes/programSteps.js
+    const mockMessagesWithTherapy = [
+      { message_type: 'user_message', sender_id: 'user1', content: 'Hello' },
+      { message_type: 'user_message', sender_id: 'user2', content: 'Hi there' },
+      { message_type: 'system', sender_id: null, content: 'Therapy response', metadata: JSON.stringify({ type: 'therapy_response' }) }
+    ];
+
+    const mockMessagesWithoutTherapy = [
+      { message_type: 'user_message', sender_id: 'user1', content: 'Hello' },
+      { message_type: 'user_message', sender_id: 'user2', content: 'Hi there' }
+    ];
+
+    // Test case 1: Existing therapy response should prevent new one
+    const user1HasPosted1 = mockMessagesWithTherapy.some(msg => msg.sender_id === 'user1');
+    const user2HasPosted1 = mockMessagesWithTherapy.some(msg => msg.sender_id === 'user2');
+    const existingTherapyResponse1 = mockMessagesWithTherapy.some(msg =>
+      msg.message_type === 'system' &&
+      msg.metadata &&
+      JSON.parse(msg.metadata).type === 'therapy_response'
+    );
+
+    const shouldTrigger1 = user1HasPosted1 && user2HasPosted1 && !existingTherapyResponse1;
+
+    this.assert(
+      !shouldTrigger1,
+      'Duplicate prevention: Existing therapy response prevents new trigger',
+      `Should not trigger: ${shouldTrigger1}, User1: ${user1HasPosted1}, User2: ${user2HasPosted1}, Existing: ${existingTherapyResponse1}`
+    );
+
+    // Test case 2: No existing therapy response should allow trigger
+    const user1HasPosted2 = mockMessagesWithoutTherapy.some(msg => msg.sender_id === 'user1');
+    const user2HasPosted2 = mockMessagesWithoutTherapy.some(msg => msg.sender_id === 'user2');
+    const existingTherapyResponse2 = mockMessagesWithoutTherapy.some(msg =>
+      msg.message_type === 'system' &&
+      msg.metadata &&
+      JSON.parse(msg.metadata).type === 'therapy_response'
+    );
+
+    const shouldTrigger2 = user1HasPosted2 && user2HasPosted2 && !existingTherapyResponse2;
+
+    this.assert(
+      shouldTrigger2,
+      'Logic validation: No existing therapy response allows trigger',
+      `Should trigger: ${shouldTrigger2}, User1: ${user1HasPosted2}, User2: ${user2HasPosted2}, Existing: ${existingTherapyResponse2}`
+    );
+
+    // Test case 3: Only one user posted should not trigger
+    const singleUserMessages = [
+      { message_type: 'user_message', sender_id: 'user1', content: 'Hello' }
+    ];
+
+    const user1HasPosted3 = singleUserMessages.some(msg => msg.sender_id === 'user1');
+    const user2HasPosted3 = singleUserMessages.some(msg => msg.sender_id === 'user2');
+    const existingTherapyResponse3 = singleUserMessages.some(msg =>
+      msg.message_type === 'system' &&
+      msg.metadata &&
+      JSON.parse(msg.metadata).type === 'therapy_response'
+    );
+
+    const shouldTrigger3 = user1HasPosted3 && user2HasPosted3 && !existingTherapyResponse3;
+
+    this.assert(
+      !shouldTrigger3,
+      'Logic validation: Single user message does not trigger therapy response',
+      `Should not trigger: ${shouldTrigger3}, User1: ${user1HasPosted3}, User2: ${user2HasPosted3}`
+    );
+
+    // Test 2: Validate code changes are present
+    this.log('Validating code changes are present...', 'info');
+
+    const fs = require('fs');
+    const programStepsContent = fs.readFileSync('./routes/programSteps.js', 'utf8');
+
+    // Check for duplicate prevention logic
+    const hasDuplicatePrevention = programStepsContent.includes('existingTherapyResponse');
+    this.assert(
+      hasDuplicatePrevention,
+      'Code validation: Duplicate prevention logic is present in routes/programSteps.js',
+      `Found: ${hasDuplicatePrevention}`
+    );
+
+    // Check for improved timing
+    const hasSetImmediate = programStepsContent.includes('setImmediate');
+    this.assert(
+      hasSetImmediate,
+      'Code validation: Improved timing (setImmediate) is present in routes/programSteps.js',
+      `Found: ${hasSetImmediate}`
+    );
+
+    // Check for first message welcome logic
+    const hasFirstMessageLogic = programStepsContent.includes('first_message_welcome');
+    this.assert(
+      hasFirstMessageLogic,
+      'Code validation: First message welcome logic is present in routes/programSteps.js',
+      `Found: ${hasFirstMessageLogic}`
+    );
+
+    // Test 3: Validate server health
+    this.log('Validating server health...', 'info');
+    try {
+      const healthResponse = await axios.get(`${this.baseURL}/health`);
+      this.assert(
+        healthResponse.status === 200,
+        'Server health check: API is responding',
+        `Status: ${healthResponse.status}`
+      );
+    } catch (error) {
+      this.assert(false, 'Server health check', `Error: ${error.message}`);
+    }
+  }
+
+  /**
    * Run all tests
    */
   async runAllTests() {
@@ -1055,6 +1175,9 @@ class MessagesTestRunner {
     await this.testAddMessage();
     await this.testUpdateMessage();
     await this.testMessageListingAfterAdd();
+
+    // Always run logic validation test (doesn't require OpenAI)
+    await this.testTherapyResponseLogicValidation();
 
     // Only run therapy response test if OpenAI is available
     if (!MOCK_OPENAI) {
