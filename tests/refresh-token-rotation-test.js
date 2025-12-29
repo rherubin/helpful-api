@@ -10,6 +10,7 @@
 
 require('dotenv').config();
 const axios = require('axios');
+const bcrypt = require('bcrypt');
 const { getPool } = require('../config/database');
 
 const API_URL = process.env.TEST_BASE_URL || 'http://localhost:9000';
@@ -58,7 +59,9 @@ async function runTest() {
 
     console.log('📊 Original token in database:');
     console.log(`   Expires at: ${originalTokenData[0].expires_at}`);
-    console.log(`   Token matches: ${originalTokenData[0].token === originalRefreshToken ? '✅' : '❌'}\n`);
+    // Tokens are hashed in database, use bcrypt.compare to verify
+    const originalTokenMatches = await bcrypt.compare(originalRefreshToken, originalTokenData[0].token);
+    console.log(`   Token matches (hash verified): ${originalTokenMatches ? '✅' : '❌'}\n`);
 
     // Wait a moment to ensure timestamps are different
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -88,10 +91,11 @@ async function runTest() {
       [userId]
     );
 
-    const tokenMatches = newTokenData[0].token === newRefreshToken;
+    // Tokens are hashed in database, use bcrypt.compare to verify
+    const tokenMatches = await bcrypt.compare(newRefreshToken, newTokenData[0].token);
     const expirationExtended = newTokenData[0].expires_unix > originalTokenData[0].expires_unix;
 
-    console.log(`   New token in database: ${tokenMatches ? '✅' : '❌'}`);
+    console.log(`   New token in database (hash verified): ${tokenMatches ? '✅' : '❌'}`);
     console.log(`   Old expires at: ${originalTokenData[0].expires_at}`);
     console.log(`   New expires at: ${newTokenData[0].expires_at}`);
     console.log(`   Expiration extended: ${expirationExtended ? '✅' : '❌'}\n`);

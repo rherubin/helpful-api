@@ -122,19 +122,30 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         return res.status(403).json({ error: 'Not authorized to access this program\'s steps' });
       }
 
+      // Get the program to find the pairing_id
+      const program = await programModel.getProgramById(programId);
+
       // Get all program steps for this program
       const programSteps = await programStepModel.getProgramSteps(programId);
       
-      // Format program steps without messages
-      const formattedSteps = programSteps.map(step => ({
-        id: step.id,
-        day: step.day,
-        theme: step.theme,
-        conversation_starter: step.conversation_starter,
-        science_behind_it: step.science_behind_it,
-        started: step.started,
-        created_at: step.created_at,
-        updated_at: step.updated_at
+      // Format program steps with contribution status
+      const formattedSteps = await Promise.all(programSteps.map(async (step) => {
+        let contributions = null;
+        if (program.pairing_id) {
+          contributions = await programStepModel.getStepContributionStatus(step.id, program.pairing_id);
+        }
+        
+        return {
+          id: step.id,
+          day: step.day,
+          theme: step.theme,
+          conversation_starter: step.conversation_starter,
+          science_behind_it: step.science_behind_it,
+          started: step.started,
+          contributions,
+          created_at: step.created_at,
+          updated_at: step.updated_at
+        };
       }));
       
       res.status(200).json({
@@ -163,9 +174,21 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         return res.status(403).json({ error: 'Not authorized to access this program step' });
       }
 
+      // Get the program to find the pairing_id
+      const program = await programModel.getProgramById(step.program_id);
+      
+      // Get contribution status if there's a pairing
+      let contributions = null;
+      if (program.pairing_id) {
+        contributions = await programStepModel.getStepContributionStatus(id, program.pairing_id);
+      }
+
       res.status(200).json({
         message: 'Program step retrieved successfully',
-        step: step
+        step: {
+          ...step,
+          contributions
+        }
       });
     } catch (error) {
       if (error.message === 'Program step not found') {
@@ -231,6 +254,9 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
       // Mark the step as started (if not already started)
       await programStepModel.markStepAsStarted(id);
+
+      // Record user contribution (idempotent - only first contribution is recorded)
+      await programStepModel.recordUserContribution(id, userId);
 
       // Add the user message
       const message = await messageModel.addUserMessage(id, userId, content.trim());

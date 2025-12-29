@@ -35,12 +35,30 @@ class ProgramStep {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
 
+    const createContributionsTable = `
+      CREATE TABLE IF NOT EXISTS program_step_user_contribution (
+        id VARCHAR(50) PRIMARY KEY,
+        step_id VARCHAR(50) NOT NULL,
+        user_id VARCHAR(50) NOT NULL,
+        contributed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_step_user (step_id, user_id),
+        INDEX idx_step_id (step_id),
+        INDEX idx_user_id (user_id),
+        FOREIGN KEY (step_id) REFERENCES program_steps (id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `;
+
     try {
       await this.query(createProgramStepsTable);
       console.log('Program steps table initialized successfully.');
       
+      await this.query(createContributionsTable);
+      console.log('Program step user contribution table initialized successfully.');
+      
       // Add migration support for existing databases
       await this.migrateStartedField();
+      await this.migrateExistingContributions();
     } catch (err) {
       console.error('Error creating program_steps table:', err.message);
       throw err;
@@ -88,6 +106,37 @@ class ProgramStep {
     } catch (err) {
       // Ignore errors if column already exists
       console.log('Migration check completed (started column may already exist).');
+    }
+  }
+
+  // Migration method to populate contributions from existing messages
+  async migrateExistingContributions() {
+    try {
+      // Check if the contributions table has any data
+      const existingContributions = await this.queryOne(`
+        SELECT COUNT(*) as count FROM program_step_user_contribution
+      `);
+
+      // Only migrate if table is empty (first time setup)
+      if (existingContributions.count === 0) {
+        // Insert first contribution for each user in each step based on their first message
+        await this.query(`
+          INSERT INTO program_step_user_contribution (id, step_id, user_id, contributed_at)
+          SELECT 
+            CONCAT(CONV(UNIX_TIMESTAMP(MIN(m.created_at)), 10, 36), SUBSTRING(MD5(RAND()), 1, 8)) as id,
+            m.step_id,
+            m.sender_id,
+            MIN(m.created_at) as contributed_at
+          FROM messages m
+          WHERE m.sender_id IS NOT NULL AND m.message_type = 'user_message'
+          GROUP BY m.step_id, m.sender_id
+          ON DUPLICATE KEY UPDATE contributed_at = contributed_at
+        `);
+        console.log('Migrated existing message contributions to program_step_user_contribution table.');
+      }
+    } catch (err) {
+      // Ignore errors during migration
+      console.log('Migration check completed for contributions (may already exist or table empty).');
     }
   }
 
@@ -322,6 +371,74 @@ class ProgramStep {
     } catch (err) {
       console.error('Error checking program step access:', err.message);
       throw new Error('Failed to check program step access');
+    }
+  }
+
+  // Record a user's first contribution to a program step (idempotent)
+  async recordUserContribution(stepId, userId) {
+    const contributionId = this.generateUniqueId();
+
+    try {
+      const insertQuery = `
+        INSERT IGNORE INTO program_step_user_contribution (id, step_id, user_id, contributed_at)
+        VALUES (?, ?, ?, NOW())
+      `;
+
+      await this.query(insertQuery, [contributionId, stepId, userId]);
+      return true;
+    } catch (err) {
+      console.error('Error recording user contribution:', err.message);
+      throw new Error('Failed to record user contribution');
+    }
+  }
+
+  // Get all contributions for a program step
+  async getStepContributions(stepId) {
+    try {
+      const query = `
+        SELECT c.user_id, c.contributed_at
+        FROM program_step_user_contribution c
+        WHERE c.step_id = ?
+        ORDER BY c.contributed_at ASC
+      `;
+
+      const contributions = await this.query(query, [stepId]);
+      return contributions;
+    } catch (err) {
+      console.error('Error fetching step contributions:', err.message);
+      throw new Error('Failed to fetch step contributions');
+    }
+  }
+
+  // Get contribution status for a program step with pairing context
+  async getStepContributionStatus(stepId, pairingId) {
+    try {
+      // Get the pairing users
+      const pairingQuery = `
+        SELECT user1_id, user2_id FROM pairings WHERE id = ?
+      `;
+      const pairing = await this.queryOne(pairingQuery, [pairingId]);
+      
+      if (!pairing) {
+        return [];
+      }
+
+      // Get contributions for this step
+      const contributions = await this.getStepContributions(stepId);
+      
+      // Build contribution status array for each user in the pairing
+      const userIds = [pairing.user1_id, pairing.user2_id].filter(Boolean);
+      
+      return userIds.map(userId => {
+        const contribution = contributions.find(c => c.user_id === userId);
+        return {
+          user_id: userId,
+          contributed_at: contribution ? contribution.contributed_at : null
+        };
+      });
+    } catch (err) {
+      console.error('Error fetching step contribution status:', err.message);
+      throw new Error('Failed to fetch step contribution status');
     }
   }
 }
