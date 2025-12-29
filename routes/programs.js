@@ -256,7 +256,7 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
   // Create a program
   router.post('/', authenticateToken, async (req, res) => {
     try {
-      const { user_input, pairing_id } = req.body;
+      const { user_input, pairing_id, steps_required_for_unlock } = req.body;
       const userId = req.user.id;
 
       // Validation
@@ -297,7 +297,8 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       // Create the program first
       const program = await programModel.createProgram(userId, {
         user_input,
-        pairing_id
+        pairing_id,
+        steps_required_for_unlock: steps_required_for_unlock || 7
       });
 
       // Return immediate response

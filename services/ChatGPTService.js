@@ -231,17 +231,19 @@ class ChatGPTService {
 
   // Process OpenAI request based on type
   async processOpenAIRequest(requestData, retryCount = 0) {
-    if (requestData.type === 'therapy_response') {
-      return this.generateCouplesTherapyResponseInternal(requestData, retryCount);
+    if (requestData.type === 'chime_in_response_1') {
+      return this.generateFirstChimeInPrompt(requestData, retryCount);
+    } else if (requestData.type === 'chime_in_response_2') {
+      return this.generateSecondChimeInPrompt(requestData, retryCount);
     } else if (requestData.type === 'next_program') {
-      return this.generateNextCouplesProgramInternal(requestData, retryCount);
+      return this.generateNextProgram(requestData, retryCount);
     } else {
-      return this.generateCouplesProgramInternal(requestData, retryCount);
+      return this.generateInitialProgram(requestData, retryCount);
     }
   }
 
   // Internal method that does the actual OpenAI call for programs
-  async generateCouplesProgramInternal({ userName, partnerName, userInput }, retryCount = 0) {
+  async generateInitialProgram({ userName, partnerName, userInput }, retryCount = 0) {
     const MAX_RETRIES = 2;
     const BASE_DELAY = 1000; // 1 second
     
@@ -423,7 +425,7 @@ class ChatGPTService {
         console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
         
         await new Promise(resolve => setTimeout(resolve, delay));
-        return this.generateCouplesProgramInternal({ userName, partnerName, userInput }, retryCount + 1);
+        return this.generateInitialProgram({ userName, partnerName, userInput }, retryCount + 1);
       }
 
       // Enhanced error logging for security monitoring
@@ -447,7 +449,7 @@ class ChatGPTService {
   }
 
   // Internal method for generating next program based on previous conversation starters
-  async generateNextCouplesProgramInternal({ userName, partnerName, previousConversationStarters, userInput }, retryCount = 0) {
+  async generateNextProgram({ userName, partnerName, previousConversationStarters, userInput }, retryCount = 0) {
     const MAX_RETRIES = 2;
     const BASE_DELAY = 1000; // 1 second
     
@@ -601,7 +603,8 @@ Please format your response as a JSON object with the following structure:
         console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
         
         await new Promise(resolve => setTimeout(resolve, delay));
-        return this.generateNextCouplesProgramInternal({ userName, partnerName, previousConversationStarters, userInput }, retryCount + 1);
+        
+        return this.generateNextProgram({ userName, partnerName, previousConversationStarters, userInput }, retryCount + 1);
       }
 
       // Enhanced error logging for security monitoring
@@ -735,7 +738,7 @@ Please format your response as a JSON object with the following structure:
   }
 
   // Internal method for generating couples therapy responses
-  async generateCouplesTherapyResponseInternal({ user1Name, user2Name, user1Messages, user2FirstMessage }, retryCount = 0) {
+  async generateFirstChimeInPrompt({ user1Name, user2Name, user1Messages, user2FirstMessage }, retryCount = 0) {
     const MAX_RETRIES = 2;
     const BASE_DELAY = 1000; // 1 second
     
@@ -770,7 +773,9 @@ ${sanitizedUser1Name} says:
 
 Then, ${sanitizedUser2Name} says in response:
 
-"${sanitizedUser2FirstMessage}"`;
+"${sanitizedUser2FirstMessage}"
+
+Your goal, as their couples therapist, is to chime into this conversation and ask one follow-up question that enables the conversation to progress in the healthiest, most positive way possible.`;
 
       const completion = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -818,7 +823,7 @@ Then, ${sanitizedUser2Name} says in response:
         console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
         
         await new Promise(resolve => setTimeout(resolve, delay));
-        return this.generateCouplesTherapyResponseInternal({ user1Name, user2Name, user1Messages, user2FirstMessage }, retryCount + 1);
+        return this.generateFirstChimeInPrompt({ user1Name, user2Name, user1Messages, user2FirstMessage }, retryCount + 1);
       }
 
       // Enhanced error logging for security monitoring
