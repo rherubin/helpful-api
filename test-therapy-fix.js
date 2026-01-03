@@ -79,8 +79,8 @@ async function testTherapyFix() {
       msg.message_type === 'system' &&
       msg.metadata &&
       (typeof msg.metadata === 'string' ?
-        msg.metadata.includes('therapy_response') :
-        msg.metadata.type === 'therapy_response')
+        msg.metadata.includes('chime_in_response_1') :
+        msg.metadata.type === 'chime_in_response_1')
     );
 
     console.log(`   User1 posted: ${user1HasPosted}`);

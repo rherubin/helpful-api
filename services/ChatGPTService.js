@@ -197,7 +197,7 @@ class ChatGPTService {
     }
 
     return this.queueOpenAIRequest({ 
-      type: 'therapy_response',
+      type: 'chime_in_response_1',
       user1Name, 
       user2Name, 
       user1Messages, 

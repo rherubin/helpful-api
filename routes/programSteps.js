@@ -63,12 +63,13 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         msg.message_type === 'system' &&
         msg.metadata &&
         (typeof msg.metadata === 'string' ?
-          msg.metadata.includes('therapy_response') :
-          msg.metadata.type === 'therapy_response')
+          msg.metadata.includes('chime_in_response_1') :
+          msg.metadata.type === 'chime_in_response_1')
       );
 
       // Only trigger if both users have posted at least one message AND no therapy response exists yet
       console.log(`[THERAPY_TRIGGER] User1 (${user1Id}) posted: ${user1HasPosted}, User2 (${user2Id}) posted: ${user2HasPosted}, Existing therapy response: ${existingTherapyResponse}`);
+      
       if (user1HasPosted && user2HasPosted && !existingTherapyResponse) {
         console.log(`Both users have posted messages in step ${stepId}, triggering therapy response...`);
 
@@ -95,7 +96,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
         // Add the therapy response as a system message
         await messageModel.addSystemMessage(stepId, therapyResponse, {
-          type: 'therapy_response',
+          type: 'chime_in_response_1',
           triggered_by: 'both_users_posted',
           step_day: step.day,
           step_theme: step.theme
