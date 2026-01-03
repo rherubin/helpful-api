@@ -828,7 +828,7 @@ class MessagesTestRunner {
         const therapyMessages = response.data.messages?.filter(
           msg => msg.message_type === 'system' &&
                  msg.metadata &&
-                 JSON.parse(msg.metadata).type === 'therapy_response'
+                 JSON.parse(msg.metadata).type === 'chime_in_response_1'
         );
 
         // Debug: log all message types and metadata
@@ -1012,7 +1012,7 @@ class MessagesTestRunner {
       );
 
       this.assert(
-        metadata.type === 'therapy_response',
+        metadata.type === 'chime_in_response_1',
         'Therapy message has correct metadata type',
         `Metadata type: ${metadata.type}`
       );
@@ -1048,7 +1048,7 @@ class MessagesTestRunner {
     const mockMessagesWithTherapy = [
       { message_type: 'user_message', sender_id: 'user1', content: 'Hello' },
       { message_type: 'user_message', sender_id: 'user2', content: 'Hi there' },
-      { message_type: 'system', sender_id: null, content: 'Therapy response', metadata: JSON.stringify({ type: 'therapy_response' }) }
+      { message_type: 'system', sender_id: null, content: 'Therapy response', metadata: JSON.stringify({ type: 'chime_in_response_1' }) }
     ];
 
     const mockMessagesWithoutTherapy = [
@@ -1062,7 +1062,7 @@ class MessagesTestRunner {
     const existingTherapyResponse1 = mockMessagesWithTherapy.some(msg =>
       msg.message_type === 'system' &&
       msg.metadata &&
-      JSON.parse(msg.metadata).type === 'therapy_response'
+      JSON.parse(msg.metadata).type === 'chime_in_response_1'
     );
 
     const shouldTrigger1 = user1HasPosted1 && user2HasPosted1 && !existingTherapyResponse1;
@@ -1079,7 +1079,7 @@ class MessagesTestRunner {
     const existingTherapyResponse2 = mockMessagesWithoutTherapy.some(msg =>
       msg.message_type === 'system' &&
       msg.metadata &&
-      JSON.parse(msg.metadata).type === 'therapy_response'
+      JSON.parse(msg.metadata).type === 'chime_in_response_1'
     );
 
     const shouldTrigger2 = user1HasPosted2 && user2HasPosted2 && !existingTherapyResponse2;
@@ -1100,7 +1100,7 @@ class MessagesTestRunner {
     const existingTherapyResponse3 = singleUserMessages.some(msg =>
       msg.message_type === 'system' &&
       msg.metadata &&
-      JSON.parse(msg.metadata).type === 'therapy_response'
+      JSON.parse(msg.metadata).type === 'chime_in_response_1'
     );
 
     const shouldTrigger3 = user1HasPosted3 && user2HasPosted3 && !existingTherapyResponse3;
