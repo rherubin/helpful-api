@@ -775,7 +775,9 @@ Then, ${sanitizedUser2Name} says in response:
 
 "${sanitizedUser2FirstMessage}"
 
-Your goal, as their couples therapist, is to chime into this conversation and ask one follow-up question that enables the conversation to progress in the healthiest, most positive way possible.`;
+Your goal, as their couples therapist, is to chime into this conversation and ask one follow-up question that enables the conversation to progress in the healthiest, most positive way possible.
+
+When you create the follow-up conversation-starter for the couple, please do not assume that the couple is traveling or has been on a vacation or road trip unless they explicitly reference traveling, vacations, or road trips. Most commonly, the couple will be discussing a relationship dynamic. `;
 
       const completion = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
