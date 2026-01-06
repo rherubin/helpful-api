@@ -86,23 +86,37 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         const user2Messages = userMessages.filter(msg => msg.sender_id === user2Id);
         const user2FirstMessage = user2Messages.length > 0 ? user2Messages[0].content : '';
 
-        // Generate therapy response using the correct method signature
-        const therapyResponse = await chatGPTService.generateCouplesTherapyResponse(
+        // Generate therapy response (returns array of messages)
+        const therapyResponses = await chatGPTService.generateCouplesTherapyResponse(
           user1.first_name || 'User 1',
           user2.first_name || 'User 2',
           user1MessageContents,
           user2FirstMessage
         );
 
-        // Add the therapy response as a system message
-        await messageModel.addSystemMessage(stepId, therapyResponse, {
-          type: 'chime_in_response_1',
-          triggered_by: 'both_users_posted',
-          step_day: step.day,
-          step_theme: step.theme
-        });
+        // Ensure we have an array
+        const messages = Array.isArray(therapyResponses) ? therapyResponses : [therapyResponses];
 
-        console.log(`Therapy response added to step ${stepId}`);
+        // Add each therapy response as a separate system message
+        for (let i = 0; i < messages.length; i++) {
+          const content = messages[i]
+            .replace(/^\[|\]$/g, '')  // Remove leading/trailing brackets
+            .replace(/\\n/g, ' ')      // Replace escaped newlines with space
+            .trim();
+          
+          if (content.length > 0) {
+            await messageModel.addSystemMessage(stepId, content, {
+              type: 'chime_in_response_1',
+              triggered_by: 'both_users_posted',
+              step_day: step.day,
+              step_theme: step.theme,
+              sequence: i + 1,
+              total_messages: messages.length
+            });
+          }
+        }
+
+        console.log(`Therapy response added to step ${stepId} (${messages.length} message(s))`);
       } else if (existingTherapyResponse) {
         console.log(`Therapy response already exists for step ${stepId}, skipping duplicate trigger`);
       }
