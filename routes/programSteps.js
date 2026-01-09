@@ -42,9 +42,14 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       // Filter user messages only
       const userMessages = messages.filter(msg => msg.message_type === 'user_message');
 
-      // Check if this is the very first message in the chatroom
-      if (userMessages.length === 1 && userMessages[0].sender_id === currentUserId) {
-        console.log(`First message in step ${stepId} from user ${currentUserId}, adding welcome system message`);
+      // Check if this is the very first message in the first step of the first program ever
+      // Only show welcome message for day 1 of a program that has no previous_program_id
+      const isFirstProgram = !program.previous_program_id;
+      const isFirstStep = step.day === 1;
+      const isFirstMessageInStep = userMessages.length === 1 && userMessages[0].sender_id === currentUserId;
+      
+      if (isFirstProgram && isFirstStep && isFirstMessageInStep) {
+        console.log(`First message in first step of first program from user ${currentUserId}, adding welcome system message`);
 
         // Add the welcome system message
         await messageModel.addSystemMessage(stepId, "Thanks for the message! As soon as your partner replies, I'll start helping you move the conversation forward in the healthiest, most positive way.", {

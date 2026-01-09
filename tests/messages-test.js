@@ -145,6 +145,25 @@ class MessagesTestRunner {
         this.log(`📋 User 2 ID: ${user2Response.data.user.id}`, 'info');
       }
 
+      // Set user names (required for therapy content generation)
+      await axios.put(`${this.baseURL}/api/users/${this.testData.user1.id}`, {
+        user_name: 'TestUser1',
+        partner_name: 'TestUser2'
+      }, {
+        headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+        timeout: this.timeout
+      });
+      this.log('Set user 1 names: TestUser1 / TestUser2', 'info');
+
+      await axios.put(`${this.baseURL}/api/users/${this.testData.user2.id}`, {
+        user_name: 'TestUser2',
+        partner_name: 'TestUser1'
+      }, {
+        headers: { Authorization: `Bearer ${this.testData.user2.token}` },
+        timeout: this.timeout
+      });
+      this.log('Set user 2 names: TestUser2 / TestUser1', 'info');
+
       // Create a program
       const programResponse = await axios.post(`${this.baseURL}/api/programs`, {
         user_input: 'We want to learn better ways to express appreciation and gratitude to each other.'
