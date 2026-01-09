@@ -759,8 +759,15 @@ class MessagesTestRunner {
 
   /**
    * Setup pairing between user1 and user2 for therapy response tests
+   * Reuses existing pairing if already created
    */
   async setupPairing() {
+    // If pairing already exists, reuse it
+    if (this.testData.pairingId) {
+      this.log(`Reusing existing pairing: ${this.testData.pairingId}`, 'info');
+      return true;
+    }
+
     this.log('Setting up pairing for therapy response test...', 'section');
 
     try {
@@ -800,6 +807,9 @@ class MessagesTestRunner {
       if (pairingsResponse.data.pairings?.length > 0) {
         this.testData.pairingId = pairingsResponse.data.pairings[0].id;
         this.log(`Pairing established with ID: ${this.testData.pairingId}`, 'info');
+        if (this.keepData) {
+          this.log(`📋 Pairing ID: ${this.testData.pairingId}`, 'info');
+        }
         return true;
       } else {
         throw new Error('No accepted pairing found');
@@ -1156,6 +1166,167 @@ class MessagesTestRunner {
   }
 
   /**
+   * Test: First message in a step triggers welcome message
+   */
+  async testFirstMessageWelcome() {
+    this.log('Testing: First message welcome system message', 'section');
+
+    // Setup pairing
+    this.log('Setting up pairing for first message welcome test...', 'section');
+    const pairingSetup = await this.setupPairing();
+    if (!pairingSetup) {
+      this.assert(false, 'Setup pairing for first message welcome test', 'Failed to create pairing');
+      return;
+    }
+
+    // Create a program with the pairing
+    let testProgramId, testStepId;
+    try {
+      const programResponse = await axios.post(
+        `${this.baseURL}/api/programs`,
+        {
+          user_input: 'We want to test the first message welcome feature.',
+          pairing_id: this.testData.pairingId
+        },
+        {
+          headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+          timeout: this.timeout
+        }
+      );
+
+      testProgramId = programResponse.data.program.id;
+      this.log(`Created program for welcome test: ${testProgramId}`, 'info');
+      if (this.keepData) {
+        this.log(`📋 Welcome Test Program ID: ${testProgramId}`, 'info');
+      }
+
+      this.assert(
+        !!testProgramId,
+        'Program created for welcome test',
+        `Program ID: ${testProgramId}`
+      );
+    } catch (error) {
+      this.assert(false, 'Create program for welcome test', `Error: ${error.response?.data?.error || error.message}`);
+      return;
+    }
+
+    // Wait for program steps to be generated
+    const pollResult = await this.pollForSteps(testProgramId, this.testData.user1.token);
+
+    if (!pollResult.found || pollResult.steps.length === 0) {
+      this.log('Program steps not generated - likely OpenAI API issue', 'warn');
+      this.log('Skipping first message welcome test as prerequisite steps are missing', 'warn');
+      this.assert(true, 'First message welcome test skipped', 'Program steps not available (OpenAI API issue)');
+      return;
+    }
+
+    testStepId = pollResult.steps[0].id;
+    this.log(`Using step ID for welcome test: ${testStepId}`, 'info');
+    if (this.keepData) {
+      this.log(`📋 Welcome Test Step ID: ${testStepId}`, 'info');
+    }
+
+    // User 1 adds the FIRST message to the step
+    try {
+      await axios.post(
+        `${this.baseURL}/api/programSteps/${testStepId}/messages`,
+        { content: 'This is my first message in the conversation about improving our relationship.' },
+        {
+          headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+          timeout: this.timeout
+        }
+      );
+      this.log('User 1 added first message', 'info');
+    } catch (error) {
+      this.assert(false, 'User 1 add first message', `Error: ${error.response?.data?.error || error.message}`);
+      return;
+    }
+
+    // Wait for async processing (the welcome message is added via setImmediate)
+    await this.sleep(2000);
+
+    // Fetch messages for the step
+    let stepMessages;
+    try {
+      const messagesResponse = await axios.get(
+        `${this.baseURL}/api/programSteps/${testStepId}/messages`,
+        {
+          headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+          timeout: this.timeout
+        }
+      );
+      stepMessages = messagesResponse.data.messages;
+      this.log(`Retrieved ${stepMessages.length} messages from step`, 'info');
+    } catch (error) {
+      this.assert(false, 'Fetch step messages', `Error: ${error.response?.data?.error || error.message}`);
+      return;
+    }
+
+    // Log all messages for debugging
+    stepMessages.forEach((msg, index) => {
+      let metadataType = 'none';
+      if (msg.metadata) {
+        try {
+          const parsed = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+          metadataType = parsed.type || 'unknown';
+        } catch (e) {
+          metadataType = 'parse_error';
+        }
+      }
+      this.log(`  ${index + 1}. ${msg.message_type}(${metadataType}): ${msg.content?.substring(0, 50)}...`, 'info');
+    });
+
+    // Find the welcome message
+    const welcomeMessage = stepMessages.find(msg => {
+      if (msg.message_type !== 'system') return false;
+      if (!msg.metadata) return false;
+      try {
+        const parsed = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+        return parsed.type === 'first_message_welcome';
+      } catch (e) {
+        return false;
+      }
+    });
+
+    // Assert: Welcome message exists
+    this.assert(
+      !!welcomeMessage,
+      'First message welcome system message was added',
+      welcomeMessage ? `Found welcome message` : 'No welcome message found'
+    );
+
+    // Assert: Welcome message has correct content
+    if (welcomeMessage) {
+      this.assert(
+        welcomeMessage.content.includes('As soon as your partner replies'),
+        'Welcome message has correct content',
+        `Content: ${welcomeMessage.content.substring(0, 80)}...`
+      );
+    }
+
+    // Find any therapy response (should NOT exist yet)
+    const therapyResponse = stepMessages.find(msg => {
+      if (msg.message_type !== 'system') return false;
+      if (!msg.metadata) return false;
+      try {
+        const parsed = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+        return parsed.type === 'chime_in_response_1';
+      } catch (e) {
+        return false;
+      }
+    });
+
+    // Assert: NO therapy response triggered yet (only one user has posted)
+    this.assert(
+      !therapyResponse,
+      'No therapy response triggered for single user post',
+      therapyResponse ? 'ERROR: Therapy response was incorrectly triggered!' : 'Correctly no therapy response yet'
+    );
+
+    this.log('First message welcome test completed', 'info');
+  }
+
+  /**
    * Run all tests
    */
   async runAllTests() {
@@ -1179,11 +1350,12 @@ class MessagesTestRunner {
     // Always run logic validation test (doesn't require OpenAI)
     await this.testTherapyResponseLogicValidation();
 
-    // Only run therapy response test if OpenAI is available
+    // Only run therapy response tests if OpenAI is available
     if (!MOCK_OPENAI) {
+      await this.testFirstMessageWelcome();
       await this.testTherapyResponseTrigger();
     } else {
-      this.log('Skipping therapy response test (TEST_MOCK_OPENAI=true)', 'warn');
+      this.log('Skipping therapy response tests (TEST_MOCK_OPENAI=true)', 'warn');
     }
 
     return this.printSummary();

@@ -8,10 +8,12 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
   // Helper function to check if we should trigger background therapy response
   async function checkAndTriggerTherapyResponse(stepId, currentUserId) {
     console.log(`[THERAPY_TRIGGER] Checking therapy response for step ${stepId}, user ${currentUserId}`);
+
     try {
       // Get the program step to find the program
       const step = await programStepModel.getStepById(stepId);
       const program = await programModel.getProgramById(step.program_id);
+
       console.log(`[THERAPY_TRIGGER] Step: ${stepId}, Program: ${program.id}, Pairing: ${program.pairing_id}`);
 
       // Only trigger if program has a pairing
@@ -22,7 +24,9 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
       // Get the pairing to find both users
       const pairing = await pairingModel.getPairingById(program.pairing_id);
+      
       console.log(`[THERAPY_TRIGGER] Pairing status: ${pairing.status}`);
+
       if (pairing.status !== 'accepted') {
         console.log(`[THERAPY_TRIGGER] Pairing not accepted, skipping`);
         return;
@@ -86,10 +90,19 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         const user2Messages = userMessages.filter(msg => msg.sender_id === user2Id);
         const user2FirstMessage = user2Messages.length > 0 ? user2Messages[0].content : '';
 
+        // Validate that both users have names set before generating therapy response
+        const user1Name = user1.user_name;
+        const user2Name = user2.user_name;
+        
+        if (!user1Name || !user2Name) {
+          console.error(`[THERAPY_TRIGGER] Cannot generate therapy response - user names not set. User1: ${user1Name || 'not set'}, User2: ${user2Name || 'not set'}`);
+          return;
+        }
+
         // Generate therapy response (returns array of messages)
         const therapyResponses = await chatGPTService.generateCouplesTherapyResponse(
-          user1.first_name || 'User 1',
-          user2.first_name || 'User 2',
+          user1Name,
+          user2Name,
           user1MessageContents,
           user2FirstMessage
         );
@@ -263,6 +276,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       
       // Check if user has access to this program step
       const hasAccess = await programStepModel.checkStepAccess(userId, step.program_id);
+
       if (!hasAccess) {
         return res.status(403).json({ error: 'Not authorized to access this program step' });
       }
