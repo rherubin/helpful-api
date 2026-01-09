@@ -143,9 +143,7 @@ class TherapyTriggerTestRunner {
       const user1Email = generateTestEmail('therapy-trigger-1');
       const user1Response = await axios.post(`${this.baseURL}/api/users`, {
         email: user1Email,
-        password: 'SecurePass987!',
-        first_name: 'Alice',
-        user_name: 'Alice'
+        password: 'SecurePass987!'
       }, { timeout: this.timeout });
       
       this.testData.user1 = {
@@ -156,13 +154,21 @@ class TherapyTriggerTestRunner {
       };
       this.log(`Created user 1: ${user1Email}`, 'info');
 
+      // Set user 1 names (required for therapy content generation)
+      await axios.put(`${this.baseURL}/api/users/${this.testData.user1.id}`, {
+        user_name: 'Alice',
+        partner_name: 'Bob'
+      }, {
+        headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+        timeout: this.timeout
+      });
+      this.log('Set user 1 names: Alice / Bob', 'info');
+
       // Create user 2
       const user2Email = generateTestEmail('therapy-trigger-2');
       const user2Response = await axios.post(`${this.baseURL}/api/users`, {
         email: user2Email,
-        password: 'SecurePass987!',
-        first_name: 'Bob',
-        user_name: 'Bob'
+        password: 'SecurePass987!'
       }, { timeout: this.timeout });
       
       this.testData.user2 = {
@@ -172,6 +178,16 @@ class TherapyTriggerTestRunner {
         name: 'Bob'
       };
       this.log(`Created user 2: ${user2Email}`, 'info');
+
+      // Set user 2 names (required for therapy content generation)
+      await axios.put(`${this.baseURL}/api/users/${this.testData.user2.id}`, {
+        user_name: 'Bob',
+        partner_name: 'Alice'
+      }, {
+        headers: { Authorization: `Bearer ${this.testData.user2.token}` },
+        timeout: this.timeout
+      });
+      this.log('Set user 2 names: Bob / Alice', 'info');
 
       // User 1 requests a pairing
       const pairingRequestResponse = await axios.post(
