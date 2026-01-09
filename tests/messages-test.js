@@ -147,22 +147,22 @@ class MessagesTestRunner {
 
       // Set user names (required for therapy content generation)
       await axios.put(`${this.baseURL}/api/users/${this.testData.user1.id}`, {
-        user_name: 'TestUser1',
-        partner_name: 'TestUser2'
+        user_name: 'Sarah',
+        partner_name: 'Michael'
       }, {
         headers: { Authorization: `Bearer ${this.testData.user1.token}` },
         timeout: this.timeout
       });
-      this.log('Set user 1 names: TestUser1 / TestUser2', 'info');
+      this.log('Set user 1 names: Sarah / Michael', 'info');
 
       await axios.put(`${this.baseURL}/api/users/${this.testData.user2.id}`, {
-        user_name: 'TestUser2',
-        partner_name: 'TestUser1'
+        user_name: 'Michael',
+        partner_name: 'Sarah'
       }, {
         headers: { Authorization: `Bearer ${this.testData.user2.token}` },
         timeout: this.timeout
       });
-      this.log('Set user 2 names: TestUser2 / TestUser1', 'info');
+      this.log('Set user 2 names: Michael / Sarah', 'info');
 
       // Create a program
       const programResponse = await axios.post(`${this.baseURL}/api/programs`, {
