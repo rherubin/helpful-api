@@ -42,14 +42,14 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       }
 
       // Get user names for the prompt
-      let userName = 'User';
-      let partnerName = 'Partner';
+      let userName = null;
+      let partnerName = null;
 
       if (userModel) {
         try {
           const user = await userModel.getUserById(previousProgram.user_id);
-          userName = user.user_name || userName;
-          partnerName = user.partner_name || partnerName;
+          userName = user.user_name || null;
+          partnerName = user.partner_name || null;
 
           // If pairing exists and partner_name is not set, try to get partner's user_name
           if (previousProgram.pairing_id && pairingModel && !user.partner_name) {
@@ -65,8 +65,20 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
             }
           }
         } catch (userError) {
-          console.log('Could not fetch user names, using defaults:', userError.message);
+          console.log('Could not fetch user names:', userError.message);
         }
+      }
+
+      // Validate that both user names are set
+      if (!userName || !partnerName) {
+        return res.status(400).json({
+          error: 'User names are required to generate therapy content',
+          details: {
+            user_name_set: !!userName,
+            partner_name_set: !!partnerName
+          },
+          hint: 'Please update your profile with user_name and partner_name before generating a program'
+        });
       }
 
       // Get conversation starters from previous program that have messages
@@ -179,14 +191,14 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       }
 
       // Get user names for the prompt
-      let userName = 'User';
-      let partnerName = 'Partner';
+      let userName = null;
+      let partnerName = null;
 
       if (userModel) {
         try {
           const user = await userModel.getUserById(program.user_id);
-          userName = user.user_name || userName;
-          partnerName = user.partner_name || partnerName;
+          userName = user.user_name || null;
+          partnerName = user.partner_name || null;
 
           // If pairing exists and partner_name is not set, try to get partner's user_name
           if (program.pairing_id && pairingModel && !user.partner_name) {
@@ -202,8 +214,20 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
             }
           }
         } catch (userError) {
-          console.log('Could not fetch user names, using defaults:', userError.message);
+          console.log('Could not fetch user names:', userError.message);
         }
+      }
+
+      // Validate that both user names are set
+      if (!userName || !partnerName) {
+        return res.status(400).json({
+          error: 'User names are required to generate therapy content',
+          details: {
+            user_name_set: !!userName,
+            partner_name_set: !!partnerName
+          },
+          hint: 'Please update your profile with user_name and partner_name before generating a program'
+        });
       }
 
       // Return immediate response
@@ -267,14 +291,14 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       }
 
       // Get user names for the prompt
-      let userName = 'User';
-      let partnerName = 'Partner';
+      let userName = null;
+      let partnerName = null;
 
       if (userModel) {
         try {
           const user = await userModel.getUserById(userId);
-          userName = user.user_name || userName;
-          partnerName = user.partner_name || partnerName;
+          userName = user.user_name || null;
+          partnerName = user.partner_name || null;
 
           // If pairing exists and partner_name is not set, try to get partner's user_name
           if (pairing_id && pairingModel && !user.partner_name) {
@@ -290,8 +314,20 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
             }
           }
         } catch (userError) {
-          console.log('Could not fetch user names, using defaults:', userError.message);
+          console.log('Could not fetch user names:', userError.message);
         }
+      }
+
+      // Validate that both user names are set
+      if (!userName || !partnerName) {
+        return res.status(400).json({
+          error: 'User names are required to generate therapy content',
+          details: {
+            user_name_set: !!userName,
+            partner_name_set: !!partnerName
+          },
+          hint: 'Please update your profile with user_name and partner_name before generating a program'
+        });
       }
 
       // Create the program first

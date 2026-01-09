@@ -106,6 +106,38 @@ class ChatGPTService {
     return true;
   }
 
+  // Validate that user names are not generic placeholders
+  validateUserNames(names) {
+    const genericPatterns = [
+      /^user\s*\d*$/i,       // "User", "User 1", "User 2", etc.
+      /^partner\s*\d*$/i,    // "Partner", "Partner 1", "Partner 2", etc.
+      /^person\s*\d*$/i,     // "Person", "Person 1", "Person 2", etc.
+      /^name\s*\d*$/i,       // "Name", "Name 1", etc.
+      /^unknown$/i,          // "Unknown"
+      /^anonymous$/i,        // "Anonymous"
+      /^placeholder$/i,      // "Placeholder"
+      /^test\s*user\s*\d*$/i // "Test User", "TestUser1", etc.
+    ];
+
+    for (const name of names) {
+      if (!name || typeof name !== 'string' || name.trim() === '') {
+        return { valid: false, error: 'User names are required and cannot be empty' };
+      }
+
+      const trimmedName = name.trim();
+      
+      for (const pattern of genericPatterns) {
+        if (pattern.test(trimmedName)) {
+          return { 
+            valid: false, 
+            error: `User name "${trimmedName}" appears to be a generic placeholder. Please set actual user names before generating therapy content.` 
+          };
+        }
+      }
+    }
+    return { valid: true };
+  }
+
   // Queue OpenAI request for rate limiting and concurrency control
   async queueOpenAIRequest(requestData) {
     return new Promise((resolve, reject) => {
@@ -258,6 +290,12 @@ class ChatGPTService {
           !this.validateInputSafety(sanitizedUserName) || 
           !this.validateInputSafety(sanitizedPartnerName)) {
         throw new Error('Input contains potentially unsafe content');
+      }
+
+      // Validate that user names are not generic placeholders
+      const nameValidation = this.validateUserNames([sanitizedUserName, sanitizedPartnerName]);
+      if (!nameValidation.valid) {
+        throw new Error(nameValidation.error);
       }
 
       // Additional validation - ensure names are reasonable
@@ -469,6 +507,12 @@ class ChatGPTService {
           !this.validateInputSafety(sanitizedUserName) || 
           !this.validateInputSafety(sanitizedPartnerName)) {
         throw new Error('Input contains potentially unsafe content');
+      }
+
+      // Validate that user names are not generic placeholders
+      const nameValidation = this.validateUserNames([sanitizedUserName, sanitizedPartnerName]);
+      if (!nameValidation.valid) {
+        throw new Error(nameValidation.error);
       }
 
       // Additional validation - ensure names are reasonable
@@ -757,6 +801,12 @@ Please format your response as a JSON object with the following structure:
           !this.validateInputSafety(sanitizedUser1Messages) ||
           !this.validateInputSafety(sanitizedUser2FirstMessage)) {
         throw new Error('Input contains potentially unsafe content');
+      }
+
+      // Validate that user names are not generic placeholders
+      const nameValidation = this.validateUserNames([sanitizedUser1Name, sanitizedUser2Name]);
+      if (!nameValidation.valid) {
+        throw new Error(nameValidation.error);
       }
 
       const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
