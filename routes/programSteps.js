@@ -121,6 +121,9 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
           const content = messages[i]
             .replace(/^\[|\]$/g, '')  // Remove leading/trailing brackets
             .replace(/\\n/g, ' ')      // Replace escaped newlines with space
+            .replace(/^["']+/, '')     // Remove leading quotes
+            .replace(/["']+\.?\s*$/, '') // Remove trailing quotes and quote-period
+            .replace(/\.\s*["']+\s*$/, '.') // Clean up ". patterns
             .trim();
           
           if (content.length > 0) {
