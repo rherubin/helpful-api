@@ -16,27 +16,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
       console.log(`[THERAPY_TRIGGER] Step: ${stepId}, Program: ${program.id}, Pairing: ${program.pairing_id}`);
 
-      // Only trigger if program has a pairing
-      if (!program.pairing_id) {
-        console.log(`[THERAPY_TRIGGER] No pairing_id, skipping`);
-        return;
-      }
-
-      // Get the pairing to find both users
-      const pairing = await pairingModel.getPairingById(program.pairing_id);
-      
-      console.log(`[THERAPY_TRIGGER] Pairing status: ${pairing.status}`);
-
-      if (pairing.status !== 'accepted') {
-        console.log(`[THERAPY_TRIGGER] Pairing not accepted, skipping`);
-        return;
-      }
-
-      const user1Id = pairing.user1_id;
-      const user2Id = pairing.user2_id;
-      const otherUserId = currentUserId === user1Id ? user2Id : user1Id;
-
-      // Get all messages in this step
+      // Get all messages in this step (needed for welcome message check)
       const messages = await messageModel.getStepMessages(stepId);
 
       // Filter user messages only
@@ -44,6 +24,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
       // Check if this is the very first message in the first step of the first program ever
       // Only show welcome message for day 1 of a program that has no previous_program_id
+      // This check happens BEFORE pairing validation so it works even if pairing is invalid
       const isFirstProgram = !program.previous_program_id;
       const isFirstStep = step.day === 1;
       const isFirstMessageInStep = userMessages.length === 1 && userMessages[0].sender_id === currentUserId;
@@ -62,6 +43,26 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         console.log(`Welcome system message added to step ${stepId}`);
         return; // Don't continue with therapy response logic for first message
       }
+
+      // Only trigger therapy response if program has a pairing
+      if (!program.pairing_id) {
+        console.log(`[THERAPY_TRIGGER] No pairing_id, skipping therapy response`);
+        return;
+      }
+
+      // Get the pairing to find both users
+      const pairing = await pairingModel.getPairingById(program.pairing_id);
+      
+      console.log(`[THERAPY_TRIGGER] Pairing status: ${pairing.status}`);
+
+      if (pairing.status !== 'accepted') {
+        console.log(`[THERAPY_TRIGGER] Pairing not accepted, skipping`);
+        return;
+      }
+
+      const user1Id = pairing.user1_id;
+      const user2Id = pairing.user2_id;
+      const otherUserId = currentUserId === user1Id ? user2Id : user1Id;
 
       // Check if both users have posted messages
       const user1HasPosted = userMessages.some(msg => msg.sender_id === user1Id);
