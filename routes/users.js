@@ -1,6 +1,13 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
 
+// Helper function to filter sensitive fields from user objects
+function filterUserData(user) {
+  if (!user) return null;
+  const { password_hash, ...filteredUser } = user;
+  return filteredUser;
+}
+
 function createUserRoutes(userModel, authService, pairingService) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
@@ -56,7 +63,7 @@ function createUserRoutes(userModel, authService, pairingService) {
       }
 
       // Filter out sensitive fields for the response
-      const { password_hash, max_pairings, created_at, updated_at, deleted_at, ...filteredUser } = user;
+      const filteredUser = filterUserData(user);
 
       const response = {
         message: 'Account created successfully',
@@ -90,7 +97,7 @@ function createUserRoutes(userModel, authService, pairingService) {
     try {
       const { id } = req.params;
       const user = await userModel.getUserById(id);
-      res.status(200).json(user);
+      res.status(200).json(filterUserData(user));
     } catch (error) {
       if (error.message === 'User not found') {
         return res.status(404).json({ error: error.message });
@@ -167,7 +174,7 @@ function createUserRoutes(userModel, authService, pairingService) {
 
       res.status(200).json({
         message: 'User updated successfully',
-        user: updatedUser
+        user: filterUserData(updatedUser)
       });
     } catch (error) {
       if (error.message === 'User not found') {
@@ -187,7 +194,7 @@ function createUserRoutes(userModel, authService, pairingService) {
   router.get('/deleted/all', authenticateToken, async (req, res) => {
     try {
       const deletedUsers = await userModel.getDeletedUsers();
-      res.json(deletedUsers);
+      res.json(deletedUsers.map(filterUserData));
     } catch (error) {
       res.status(500).json({ error: 'Failed to fetch deleted users' });
     }
