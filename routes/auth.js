@@ -9,6 +9,13 @@ const {
   securityLogger 
 } = require('../middleware/security');
 
+// Helper function to filter sensitive fields from user objects
+function filterUserData(user) {
+  if (!user) return null;
+  const { password_hash, ...filteredUser } = user;
+  return filteredUser;
+}
+
 function createAuthRoutes(authService, userModel, pairingService) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
@@ -177,7 +184,7 @@ function createAuthRoutes(authService, userModel, pairingService) {
       const pairingCodes = pairingsResult.pairings.map(pairing => pairing.partner_code).filter(code => code);
 
       const profile = {
-        ...user,
+        ...filterUserData(user),
         pairings: pairingsResult.pairings,
         pairing_codes: pairingCodes
       };

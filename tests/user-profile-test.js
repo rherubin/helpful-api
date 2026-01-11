@@ -649,11 +649,11 @@ class UserProfileTestRunner {
         `Type: ${typeof profile.pairing_codes}`
       );
 
-      // Test that sensitive fields are excluded (if any)
+      // Test that sensitive fields are excluded
       this.assert(
-        profile.hasOwnProperty('password_hash'),
-        'Profile includes password_hash (as expected from getUserById)',
-        'Password hash present (expected behavior)'
+        !profile.hasOwnProperty('password_hash'),
+        'Profile excludes password_hash (sensitive field filtered)',
+        'Password hash correctly excluded'
       );
       
     } catch (error) {
