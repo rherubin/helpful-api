@@ -898,6 +898,27 @@ When you create the follow-up conversation-starter for the couple, please do not
     }
   }
 
+  // Clean up individual message text by removing unwanted quotes and artifacts
+  cleanMessageText(text) {
+    if (!text || typeof text !== 'string') return text;
+    
+    return text
+      // Remove leading/trailing whitespace first
+      .trim()
+      // Remove leading quotes (single or double)
+      .replace(/^["']+/, '')
+      // Remove trailing quotes and quote-period combinations
+      .replace(/["']+\.?\s*$/, '')
+      .replace(/\.\s*["']+\s*$/, '.')
+      // Remove standalone ". at the end
+      .replace(/"\.\s*$/, '.')
+      // Clean up any remaining stray quotes at boundaries
+      .replace(/^["']/, '')
+      .replace(/["']$/, '')
+      // Final trim
+      .trim();
+  }
+
   // Split therapy response into individual messages (up to 3)
   splitTherapyResponse(response) {
     if (!response || typeof response !== 'string') {
@@ -908,7 +929,7 @@ When you create the follow-up conversation-starter for the couple, please do not
     const numberedSections = response.split(/(?=\d+\.\s)/);
     if (numberedSections.length > 1 && numberedSections.length <= 3) {
       return numberedSections
-        .map(section => section.replace(/^\d+\.\s*/, '').trim())
+        .map(section => this.cleanMessageText(section.replace(/^\d+\.\s*/, '')))
         .filter(section => section.length > 0)
         .slice(0, 3);
     }
@@ -917,7 +938,7 @@ When you create the follow-up conversation-starter for the couple, please do not
     const paragraphs = response.split(/\n\s*\n/);
     if (paragraphs.length > 1 && paragraphs.length <= 3) {
       return paragraphs
-        .map(p => p.trim())
+        .map(p => this.cleanMessageText(p))
         .filter(p => p.length > 0)
         .slice(0, 3);
     }
@@ -930,14 +951,14 @@ When you create the follow-up conversation-starter for the couple, please do not
       for (let i = 0; i < sentences.length; i += messagesPerGroup) {
         const group = sentences.slice(i, i + messagesPerGroup).join('. ').trim();
         if (group.length > 0) {
-          groups.push(group + (group.endsWith('.') ? '' : '.'));
+          groups.push(this.cleanMessageText(group + (group.endsWith('.') ? '' : '.')));
         }
       }
       return groups.slice(0, 3);
     }
 
     // If no clear splits, return as single message
-    return [response.trim()];
+    return [this.cleanMessageText(response)];
   }
 }
 
