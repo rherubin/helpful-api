@@ -119,14 +119,16 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         // Add each therapy response as a separate system message
         for (let i = 0; i < messages.length; i++) {
           const content = messages[i]
-            .replace(/^\[|\]$/g, '')  // Remove leading/trailing brackets
-            .replace(/\\n/g, ' ')      // Replace escaped newlines with space
-            .replace(/^["']+/, '')     // Remove leading quotes
-            .replace(/["']+\.?\s*$/, '') // Remove trailing quotes and quote-period
+            .replace(/^\[|\]$/g, '')        // Remove leading/trailing brackets
+            .replace(/\\n/g, ' ')           // Replace escaped newlines with space
             .replace(/\.\s*["']+\s*$/, '.') // Clean up ". patterns
+            .replace(/^["']+/, '')          // Remove leading quotes
+            .replace(/["']+\.?\s*$/, '')    // Remove trailing quotes and quote-period
             .trim();
           
-          if (content.length > 0) {
+          // Skip empty messages or messages that are only punctuation/whitespace
+          const hasActualContent = content.length > 0 && /[a-zA-Z0-9]/.test(content);
+          if (hasActualContent) {
             await messageModel.addSystemMessage(stepId, content, {
               type: 'chime_in_response_1',
               triggered_by: 'both_users_posted',

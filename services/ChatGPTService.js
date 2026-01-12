@@ -902,21 +902,28 @@ When you create the follow-up conversation-starter for the couple, please do not
   cleanMessageText(text) {
     if (!text || typeof text !== 'string') return text;
     
-    return text
+    const cleaned = text
       // Remove leading/trailing whitespace first
       .trim()
+      // Clean up ". and '. patterns FIRST (before removing quotes)
+      .replace(/\.\s*["']+\s*$/, '.')
+      .replace(/"\.\s*$/, '.')
       // Remove leading quotes (single or double)
       .replace(/^["']+/, '')
       // Remove trailing quotes and quote-period combinations
       .replace(/["']+\.?\s*$/, '')
-      .replace(/\.\s*["']+\s*$/, '.')
-      // Remove standalone ". at the end
-      .replace(/"\.\s*$/, '.')
       // Clean up any remaining stray quotes at boundaries
       .replace(/^["']/, '')
       .replace(/["']$/, '')
       // Final trim
       .trim();
+    
+    // Return empty string if result is only punctuation (no actual content)
+    if (cleaned.length > 0 && !/[a-zA-Z0-9]/.test(cleaned)) {
+      return '';
+    }
+    
+    return cleaned;
   }
 
   // Split therapy response into individual messages (up to 3)
