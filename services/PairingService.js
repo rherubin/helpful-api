@@ -26,6 +26,8 @@ class PairingService {
         throw new Error('You already have a pending pairing request. Cancel it first or wait for someone to accept it.');
       }
 
+
+      
       // Create the pairing request with partner code
       const pairing = await this.pairingModel.createPairingWithPartnerCode(requestingUserId);
       
