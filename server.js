@@ -12,9 +12,12 @@ const Pairing = require('./models/Pairing');
 const Program = require('./models/Program');
 const ProgramStep = require('./models/ProgramStep');
 const Message = require('./models/Message');
+const IosSubscription = require('./models/IosSubscription');
+const AndroidSubscription = require('./models/AndroidSubscription');
 const AuthService = require('./services/AuthService');
 const PairingService = require('./services/PairingService');
 const ChatGPTService = require('./services/ChatGPTService');
+const { SubscriptionService } = require('./services/SubscriptionService');
 
 // Import routes
 const createUserRoutes = require('./routes/users');
@@ -22,6 +25,7 @@ const createAuthRoutes = require('./routes/auth');
 const createPairingRoutes = require('./routes/pairing');
 const createProgramRoutes = require('./routes/programs');
 const createProgramStepRoutes = require('./routes/programSteps');
+const createSubscriptionRoutes = require('./routes/subscription');
 
 const app = express();
 
@@ -106,7 +110,7 @@ async function setupDatabase() {
 setupDatabase();
 
 // Initialize models and services
-let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, authService, pairingService, chatGPTService;
+let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, authService, pairingService, chatGPTService, subscriptionService;
 
 async function initializeApp() {
   try {
@@ -117,6 +121,8 @@ async function initializeApp() {
     const programModelInstance = new Program(db);
     const programStepModelInstance = new ProgramStep(db);
     const messageModelInstance = new Message(db);
+    const iosSubscriptionModelInstance = new IosSubscription(db);
+    const androidSubscriptionModelInstance = new AndroidSubscription(db);
     
     // Initialize database tables
     await userModelInstance.initDatabase();
@@ -125,6 +131,8 @@ async function initializeApp() {
     await programModelInstance.initDatabase();
     await programStepModelInstance.initDatabase();
     await messageModelInstance.initDatabase();
+    await iosSubscriptionModelInstance.initDatabase();
+    await androidSubscriptionModelInstance.initDatabase();
     
     // Assign to global variables after successful initialization
     userModel = userModelInstance;
@@ -133,11 +141,19 @@ async function initializeApp() {
     programModel = programModelInstance;
     programStepModel = programStepModelInstance;
     messageModel = messageModelInstance;
+    iosSubscriptionModel = iosSubscriptionModelInstance;
+    androidSubscriptionModel = androidSubscriptionModelInstance;
 
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel);
     pairingService = new PairingService(userModel, pairingModel);
     chatGPTService = new ChatGPTService();
+    subscriptionService = new SubscriptionService(
+      iosSubscriptionModel,
+      androidSubscriptionModel,
+      userModel,
+      pairingModel
+    );
     
     // Setup routes
     setupRoutes();
@@ -178,6 +194,11 @@ function setupRoutes() {
   // Setup conversation routes
   if (programStepModel && messageModel && programModel && pairingModel && userModel && chatGPTService && authService) {
     app.use('/api', createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService, authService));
+  }
+
+  // Setup subscription routes
+  if (subscriptionService && authService) {
+    app.use('/api/subscription', createSubscriptionRoutes(subscriptionService, authService));
   }
 }
 

@@ -110,6 +110,9 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 - **`POST /api/pairing/request`** - Create partner code for pairing
 - **`POST /api/pairing/accept`** - Accept pairing with partner code
 - **`GET /api/pairings`** - Get all pairings (accepted + pending)
+- **`POST /api/subscription`** - Submit iOS/Android subscription receipts
+- **`GET /api/subscription`** - Get active subscription status
+- **`GET /api/subscription/receipts`** - Get stored receipts for current user
 - **`GET /api/programs/:id/programSteps`** - Get all program steps for a program
 - **`POST /api/programSteps/:id/messages`** - Add message to a program step
 - **`GET /api/programSteps/:id/messages`** - Get messages for a program step
@@ -268,6 +271,77 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
   ```json
   {
     "message": "Logged out successfully"
+  }
+  ```
+
+### Subscriptions
+
+#### Submit Subscription Receipt
+- **POST** `/api/subscription`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Body (iOS):**
+  ```json
+  {
+    "platform": "ios",
+    "product_id": "com.helpful.yearly.29.99",
+    "transaction_id": "ios_txn_123",
+    "original_transaction_id": "ios_txn_123",
+    "jws_receipt": "base64_jws_receipt",
+    "environment": "Production",
+    "purchase_date": 1737390462000,
+    "expiration_date": 1768926462000
+  }
+  ```
+- **Body (Android):**
+  ```json
+  {
+    "platform": "android",
+    "product_id": "com.helpful.yearly.29.99",
+    "purchase_token": "token_from_google",
+    "order_id": "GPA.1234-5678-9012-34567",
+    "package_name": "com.helpful.app",
+    "purchase_date": 1737390462000,
+    "expiration_date": 1768926462000
+  }
+  ```
+- **Notes:**
+  - `environment` must be `Production` or `Sandbox` (case-insensitive accepted).
+  - `purchase_date` and `expiration_date` must be positive millisecond timestamps.
+  - If a receipt belongs to another user, the API returns `409 Conflict`.
+
+#### Get Subscription Status
+- **GET** `/api/subscription`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:**
+  ```json
+  {
+    "premium": true,
+    "active_subscriptions": 1,
+    "latest_expiration": 1768926462000,
+    "subscriptions": [
+      {
+        "id": "subscription_id",
+        "platform": "ios",
+        "product_id": "com.helpful.yearly.29.99",
+        "expiration_date": 1768926462000,
+        "purchase_date": 1737390462000
+      }
+    ]
+  }
+  ```
+
+#### Get Stored Receipts
+- **GET** `/api/subscription/receipts`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:**
+  ```json
+  {
+    "message": "Receipts retrieved successfully",
+    "data": {
+      "ios_receipts": [],
+      "android_receipts": [],
+      "total_receipts": 0
+    }
   }
   ```
 
@@ -1665,7 +1739,8 @@ helpful-api/
 ├── services/
 │   ├── AuthService.js       # Authentication service
 │   ├── PairingService.js    # Pairing business logic
-│   └── ChatGPTService.js    # OpenAI integration service
+│   ├── ChatGPTService.js    # OpenAI integration service
+│   └── SubscriptionService.js # Subscription receipt processing
 ├── routes/
 │   ├── users.js             # User endpoints
 │   ├── auth.js              # Authentication endpoints
