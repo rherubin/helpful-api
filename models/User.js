@@ -27,7 +27,7 @@ class User {
         partner_name VARCHAR(255) DEFAULT NULL,
         children INT DEFAULT NULL,
         max_pairings INT DEFAULT 1,
-        premium BOOLEAN DEFAULT FALSE,
+        premium TINYINT(1) NOT NULL DEFAULT 0,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -39,7 +39,7 @@ class User {
 
     // Migration: Add premium column if it doesn't exist
     const addPremiumColumn = `
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS premium BOOLEAN DEFAULT FALSE
+      ALTER TABLE users ADD COLUMN premium TINYINT(1) NOT NULL DEFAULT 0
     `;
 
     try {
@@ -57,7 +57,7 @@ class User {
             "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'users' AND COLUMN_NAME = 'premium'"
           );
           if (columns.length === 0) {
-            await this.query('ALTER TABLE users ADD COLUMN premium BOOLEAN DEFAULT FALSE');
+            await this.query('ALTER TABLE users ADD COLUMN premium TINYINT(1) NOT NULL DEFAULT 0');
             console.log('Added premium column to users table.');
           }
         }
@@ -175,6 +175,8 @@ class User {
       if (!row) {
         throw new Error('User not found');
       }
+      // Convert premium field to boolean
+      row.premium = !!row.premium;
       return row;
     } catch (err) {
       // If it's already a "User not found" error, re-throw it
@@ -193,6 +195,8 @@ class User {
       if (!row) {
         throw new Error('User not found');
       }
+      // Convert premium field to boolean
+      row.premium = !!row.premium;
       return row;
     } catch (err) {
       // If it's already a "User not found" error, re-throw it
@@ -238,7 +242,7 @@ class User {
     }
     if (premium !== undefined) {
       updateFields.push('premium = ?');
-      updateValues.push(premium ? 1 : 0);
+      updateValues.push(premium);
     }
 
     // Check if at least one field is being updated
@@ -343,6 +347,8 @@ class User {
       if (!row) {
         throw new Error('User not found');
       }
+      // Convert premium field to boolean
+      row.premium = !!row.premium;
       return row;
     } catch (err) {
       throw new Error('Failed to fetch user');
@@ -354,7 +360,11 @@ class User {
     try {
       const query = 'SELECT * FROM users WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC';
       const rows = await this.query(query);
-      return rows;
+      // Convert premium field to boolean for each user
+      return rows.map(row => {
+        row.premium = !!row.premium;
+        return row;
+      });
     } catch (err) {
       throw new Error('Failed to fetch deleted users');
     }
@@ -364,12 +374,12 @@ class User {
   async setPremiumStatus(userId, isPremium) {
     try {
       const updateQuery = `
-        UPDATE users 
+        UPDATE users
         SET premium = ?, updated_at = NOW()
         WHERE id = ? AND deleted_at IS NULL
       `;
 
-      const result = await this.query(updateQuery, [isPremium ? 1 : 0, userId]);
+      const result = await this.query(updateQuery, [isPremium, userId]);
       if (result.affectedRows === 0) {
         throw new Error('User not found');
       }
