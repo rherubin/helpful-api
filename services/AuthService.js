@@ -10,13 +10,17 @@ class AuthService {
     this.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
     this.JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h'; // Access token - increased to 24 hours for better UX
     this.JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '14d'; // Long-lived refresh token
+
+    // Response expiration values (in seconds) - configurable via environment
+    this.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS = parseInt(process.env.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS) || this.parseExpirationToSeconds(this.JWT_EXPIRES_IN);
+    this.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS = parseInt(process.env.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS) || this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN);
     
     // Log token configuration on startup (without exposing secrets)
     console.log('JWT Configuration:', {
       accessTokenExpiry: this.JWT_EXPIRES_IN,
       refreshTokenExpiry: this.JWT_REFRESH_EXPIRES_IN,
-      accessTokenSeconds: this.parseExpirationToSeconds(this.JWT_EXPIRES_IN),
-      refreshTokenSeconds: this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN)
+      accessTokenSeconds: this.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+      refreshTokenSeconds: this.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS
     });
   }
 
@@ -29,8 +33,8 @@ class AuthService {
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
-      expires_in: this.parseExpirationToSeconds(this.JWT_EXPIRES_IN),
-      refresh_expires_in: this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN)
+      expires_in: this.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+      refresh_expires_in: this.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS
     };
   }
 
@@ -182,8 +186,8 @@ class AuthService {
           user: userData,
           access_token: accessToken,
           refresh_token: refreshToken,
-          expires_in: this.parseExpirationToSeconds(this.JWT_EXPIRES_IN),
-          refresh_expires_in: this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN)
+          expires_in: this.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+          refresh_expires_in: this.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS
         }
       };
     } catch (error) {
@@ -217,8 +221,8 @@ class AuthService {
         message: 'Token refreshed successfully',
         access_token: newAccessToken,
         refresh_token: newRefreshToken,
-        expires_in: this.parseExpirationToSeconds(this.JWT_EXPIRES_IN),
-        refresh_expires_in: this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN)
+        expires_in: this.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+        refresh_expires_in: this.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS
       };
     } catch (error) {
       console.error('Refresh token error:', error.message);
