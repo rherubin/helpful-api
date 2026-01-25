@@ -206,12 +206,12 @@ class Pairing {
   async getUserPairings(userId) {
     try {
       const query = `
-        SELECT p.*, 
+        SELECT p.*,
                u1.user_name as user1_user_name, u1.email as user1_email,
                u2.user_name as user2_user_name, u2.email as user2_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
-        JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
+        LEFT JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
         WHERE (p.user1_id = ? OR p.user2_id = ?) AND p.deleted_at IS NULL
         ORDER BY p.created_at DESC
       `;
@@ -520,11 +520,11 @@ class Pairing {
   async userHasPremiumPairing(userId) {
     try {
       const row = await this.queryOne(
-        `SELECT id FROM pairings 
-         WHERE (user1_id = ? OR user2_id = ?) 
-         AND status = 'accepted' 
-         AND premium = 1 
-         AND deleted_at IS NULL 
+        `SELECT id FROM pairings
+         WHERE (user1_id = ? OR user2_id = ?)
+         AND status = 'accepted'
+         AND premium = 1
+         AND deleted_at IS NULL
          LIMIT 1`,
         [userId, userId]
       );

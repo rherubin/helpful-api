@@ -78,6 +78,7 @@ function createPairingRoutes(pairingService, authService) {
       const result = await pairingService.getUserPairings(userId);
       res.status(200).json(result);
     } catch (error) {
+      console.error('Error getting pairings:', error.message);
       return res.status(500).json({ error: 'Failed to fetch pairings' });
     }
   });

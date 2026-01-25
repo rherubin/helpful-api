@@ -22,19 +22,26 @@ async function createTestUser(userName = 'Test User') {
 
   try {
     const response = await axios.post(`${BASE_URL}/users`, {
-      user_name: userName,
       email,
-      password,
-      first_name: userName.split(' ')[0],
-      last_name: userName.split(' ')[1] || 'User'
+      password
     });
 
-    return {
+    const user = {
       user: response.data.user,
       token: response.data.access_token,
       email,
       password
     };
+
+    // Set user name via update (required for therapy content generation)
+    await axios.put(`${BASE_URL}/users/${user.user.id}`, {
+      user_name: userName,
+      partner_name: 'Test Partner' // Default partner name for testing
+    }, {
+      headers: { Authorization: `Bearer ${user.token}` }
+    });
+
+    return user;
   } catch (error) {
     console.error('Error creating test user:', error.response?.data || error.message);
     throw error;
