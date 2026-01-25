@@ -23,7 +23,23 @@ class PairingService {
       );
       
       if (hasPendingPartnerCode) {
-        throw new Error('You already have a pending pairing request. Cancel it first or wait for someone to accept it.');
+        const pendingRequest = existingPendingRequest.find(p =>
+          p.status === 'pending' && p.partner_code && !p.user2_id
+        );
+
+        if (pendingRequest) {
+          return {
+            message: 'Existing partner code retrieved successfully.',
+            partner_code: pendingRequest.partner_code,
+            pairing_id: pendingRequest.id,
+            requester: {
+              id: requestingUser.id,
+              user_name: requestingUser.user_name,
+              email: requestingUser.email
+            },
+            expires_note: 'This partner code is valid until someone uses it or you cancel the request.'
+          };
+        }
       }
 
 
@@ -166,46 +182,47 @@ class PairingService {
   async getUserPairings(userId) {
     try {
       // Get accepted pairings
-      const rawAcceptedPairings = await this.pairingModel.getUserPairings(userId);
-      
+      const rawAcceptedPairings = await this.pairingModel.getAcceptedPairings(userId);
+
       // Get pending pairings
       const rawPendingPairings = await this.pairingModel.getPendingPairings(userId);
-      
-      // Combine both arrays
-      const allRawPairings = [...rawAcceptedPairings, ...rawPendingPairings];
-      
-      // Transform pairings to only include partner information (not current user)
-      const pairings = allRawPairings.map(pairing => {
+
+      // Combine arrays
+      const allPairings = rawAcceptedPairings.concat(rawPendingPairings);
+
+      // Sort by created_at descending (most recent first)
+      allPairings.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      // Transform pairings to include partner information
+      const transformedPairings = allPairings.map(pairing => {
         // Determine which user is the partner (not the current user)
         const isUser1 = pairing.user1_id === userId;
         const partnerId = isUser1 ? pairing.user2_id : pairing.user1_id;
         const partnerUserName = isUser1 ? pairing.user2_user_name : pairing.user1_user_name;
         const partnerEmail = isUser1 ? pairing.user2_email : pairing.user1_email;
-        
+
         // For partner code requests where user2 is null, there's no partner yet
         const partner = partnerId ? {
           id: partnerId,
           user_name: partnerUserName,
           email: partnerEmail
         } : null;
-        
+
         // Return pairing with partner information (null if no partner yet)
         return {
           id: pairing.id,
           status: pairing.status,
           partner_code: pairing.partner_code,
+          premium: pairing.premium,
           created_at: pairing.created_at,
           updated_at: pairing.updated_at,
           partner: partner
         };
       });
-      
-      // Sort by created_at descending (most recent first)
-      pairings.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-      
+
       return {
         message: 'User pairings retrieved successfully',
-        pairings: pairings
+        pairings: transformedPairings
       };
     } catch (error) {
       throw error;
@@ -224,19 +241,20 @@ class PairingService {
         const partnerId = isUser1 ? pairing.user2_id : pairing.user1_id;
         const partnerUserName = isUser1 ? pairing.user2_user_name : pairing.user1_user_name;
         const partnerEmail = isUser1 ? pairing.user2_email : pairing.user1_email;
-        
+
         // For partner code requests where user2 is null, there's no partner yet
         const partner = partnerId ? {
           id: partnerId,
           user_name: partnerUserName,
           email: partnerEmail
         } : null;
-        
+
         // Return pairing with partner information (null if no partner yet)
         return {
           id: pairing.id,
           status: pairing.status,
           partner_code: pairing.partner_code,
+          premium: pairing.premium,
           created_at: pairing.created_at,
           updated_at: pairing.updated_at,
           partner: partner
@@ -270,6 +288,7 @@ class PairingService {
           id: pairing.id,
           status: pairing.status,
           partner_code: pairing.partner_code,
+          premium: pairing.premium,
           created_at: pairing.created_at,
           updated_at: pairing.updated_at,
           partner: {

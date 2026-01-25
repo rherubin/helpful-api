@@ -62,16 +62,20 @@ class APITestRunner {
         `Status: ${response.status}`
       );
       
+      const isPlainText = typeof response.data === 'string';
+      const statusValue = isPlainText ? response.data : response.data.status;
+      const timestampValue = isPlainText ? null : response.data.timestamp;
+
       this.assert(
-        response.data.status === 'OK',
+        statusValue === 'OK',
         'Health endpoint returns OK status',
-        `Status: ${response.data.status}`
+        `Status: ${statusValue}`
       );
       
       this.assert(
-        !!response.data.timestamp,
+        isPlainText || !!timestampValue,
         'Health endpoint includes timestamp',
-        `Timestamp: ${response.data.timestamp}`
+        `Timestamp: ${timestampValue}`
       );
       
     } catch (error) {

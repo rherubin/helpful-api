@@ -176,7 +176,10 @@ function createAuthRoutes(authService, userModel, pairingService) {
     try {
       const userId = req.user.id;
       const user = await userModel.getUserById(userId);
-      
+
+      // Check if user has premium access (any premium pairings)
+      const hasPremiumPairing = await pairingService.pairingModel.userHasPremiumPairing(userId);
+
       // Get user's pairings (both accepted and pending)
       const pairingsResult = await pairingService.getUserPairings(userId);
 
@@ -185,10 +188,11 @@ function createAuthRoutes(authService, userModel, pairingService) {
 
       const profile = {
         ...filterUserData(user),
+        premium: hasPremiumPairing,
         pairings: pairingsResult.pairings,
         pairing_codes: pairingCodes
       };
-      
+
       res.status(200).json({
         message: 'User profile retrieved successfully',
         profile: profile

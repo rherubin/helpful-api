@@ -125,6 +125,25 @@ class ProgramsTestRunner {
       };
       this.log(`Created test user 2: ${user2Email}`, 'info');
 
+      // Set user names (required for therapy content generation)
+      await axios.put(`${this.baseURL}/api/users/${this.testData.user1.id}`, {
+        user_name: 'Alice',
+        partner_name: 'Bob'
+      }, {
+        headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+        timeout: this.timeout
+      });
+      this.log('Set user 1 names: Alice / Bob', 'info');
+
+      await axios.put(`${this.baseURL}/api/users/${this.testData.user2.id}`, {
+        user_name: 'Bob',
+        partner_name: 'Alice'
+      }, {
+        headers: { Authorization: `Bearer ${this.testData.user2.token}` },
+        timeout: this.timeout
+      });
+      this.log('Set user 2 names: Bob / Alice', 'info');
+
       return true;
     } catch (error) {
       this.log(`Setup failed: ${error.response?.data?.error || error.message}`, 'fail');

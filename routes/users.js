@@ -97,7 +97,16 @@ function createUserRoutes(userModel, authService, pairingService) {
     try {
       const { id } = req.params;
       const user = await userModel.getUserById(id);
-      res.status(200).json(filterUserData(user));
+
+      // Check if user has premium access (any premium pairings)
+      const hasPremiumPairing = await pairingService.pairingModel.userHasPremiumPairing(id);
+
+      const userWithPremium = {
+        ...filterUserData(user),
+        premium: hasPremiumPairing
+      };
+
+      res.status(200).json(userWithPremium);
     } catch (error) {
       if (error.message === 'User not found') {
         return res.status(404).json({ error: error.message });
