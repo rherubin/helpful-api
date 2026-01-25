@@ -301,6 +301,38 @@ class Message {
       throw new Error('Failed to fetch step messages');
     }
   }
+
+  // Get message counts per program step since a given epoch timestamp for a specific program
+  async getMessageStatsSinceDate(epochTimestamp, programId) {
+    try {
+      // Convert epoch timestamp (seconds) to MySQL datetime
+      const sinceDate = new Date(epochTimestamp * 1000);
+      
+      const query = `
+        SELECT m.step_id, COUNT(*) as message_count
+        FROM messages m
+        JOIN program_steps ps ON m.step_id = ps.id
+        WHERE m.created_at > ?
+          AND ps.program_id = ?
+        GROUP BY m.step_id
+      `;
+
+      const results = await this.query(query, [sinceDate, programId]);
+      
+      // Transform results into an object keyed by programStepId
+      const stats = {};
+      for (const row of results) {
+        stats[row.step_id] = {
+          messageCount: row.message_count
+        };
+      }
+      
+      return stats;
+    } catch (err) {
+      console.error('Error fetching message stats:', err.message);
+      throw new Error('Failed to fetch message stats');
+    }
+  }
 }
 
 module.exports = Message;

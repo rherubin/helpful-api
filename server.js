@@ -200,6 +200,34 @@ function setupRoutes() {
   if (subscriptionService && authService) {
     app.use('/api/subscription', createSubscriptionRoutes(subscriptionService, authService));
   }
+
+  // Setup message stats endpoint
+  if (messageModel && authService) {
+    const { createAuthenticateToken } = require('./middleware/auth');
+    const authenticateToken = createAuthenticateToken(authService);
+    
+    app.get('/api/messages-stats', authenticateToken, async (req, res) => {
+      try {
+        const { date, programId } = req.query;
+
+        // Validate required parameters
+        if (!date || !programId) {
+          return res.status(400).json({ error: 'date and programId query parameters are required' });
+        }
+
+        const epochTimestamp = parseInt(date, 10);
+        if (isNaN(epochTimestamp)) {
+          return res.status(400).json({ error: 'date must be a valid epoch integer' });
+        }
+
+        const stats = await messageModel.getMessageStatsSinceDate(epochTimestamp, programId);
+        res.status(200).json(stats);
+      } catch (error) {
+        console.error('Error fetching message stats:', error.message);
+        return res.status(500).json({ error: 'Failed to fetch message stats' });
+      }
+    });
+  }
 }
 
 // Get all user's pairings endpoint
