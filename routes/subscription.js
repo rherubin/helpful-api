@@ -26,7 +26,7 @@ function createSubscriptionRoutes(subscriptionService, authService) {
         },
         premium_status: {
           active: result.isActive,
-          users_updated: result.premiumUpdates.length
+          pairings_updated: result.premiumUpdates.length
         }
       });
 

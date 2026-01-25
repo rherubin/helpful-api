@@ -9,7 +9,7 @@ const { generateTestEmail } = require('./test-helpers');
  * Run with keep-data: node tests/subscription-test.js --__keep-data
  * 
  * The --__keep-data flag prevents cleanup of test data, allowing SQL verification:
- *   SELECT id, email, premium, created_at FROM users
+ *   SELECT id, email, created_at FROM users
  *     WHERE email LIKE 'subscription_ios%@example.com'
  *        OR email LIKE 'subscription_android%@example.com';
  *   SELECT s.*, u.email FROM ios_subscriptions s JOIN users u ON s.user_id = u.id
@@ -19,8 +19,8 @@ const { generateTestEmail } = require('./test-helpers');
  *   SELECT p.*, u1.email as user1_email, u2.email as user2_email FROM pairings p
  *     LEFT JOIN users u1 ON p.user1_id = u1.id
  *     LEFT JOIN users u2 ON p.user2_id = u2.id
- *     WHERE u1.email LIKE 'subscription_ios%@example.com'
- *        OR u2.email LIKE 'subscription_ios%@example.com';
+ *     WHERE (u1.email LIKE 'subscription_ios%@example.com' OR u2.email LIKE 'subscription_ios%@example.com')
+ *        AND p.premium = 1;
  */
 
 class SubscriptionTestRunner {
@@ -188,9 +188,9 @@ class SubscriptionTestRunner {
       );
 
       this.assert(
-        response.data.premium_status.users_updated >= 1,
-        'At least one user updated to premium',
-        `Users updated: ${response.data.premium_status.users_updated}`
+        response.data.premium_status.pairings_updated === 0,
+        'No pairings updated to premium for single user',
+        `Pairings updated: ${response.data.premium_status.pairings_updated}`
       );
 
       // Store for later tests
@@ -593,9 +593,9 @@ class SubscriptionTestRunner {
       );
 
       this.assert(
-        response.data.premium_status.users_updated === 0,
-        'No users updated to premium for expired subscription',
-        `Users updated: ${response.data.premium_status.users_updated}`
+        response.data.premium_status.pairings_updated === 0,
+        'No pairings updated to premium for expired subscription',
+        `Pairings updated: ${response.data.premium_status.pairings_updated}`
       );
 
     } catch (error) {
@@ -635,9 +635,9 @@ class SubscriptionTestRunner {
       });
 
       this.assert(
-        subscriptionResponse.data.premium_status.users_updated === 2,
-        'Both partners updated to premium',
-        `Users updated: ${subscriptionResponse.data.premium_status.users_updated}`
+        subscriptionResponse.data.premium_status.pairings_updated === 1,
+        'Pairing updated to premium',
+        `Pairings updated: ${subscriptionResponse.data.premium_status.pairings_updated}`
       );
 
       // Verify user1's premium status via subscription endpoint
@@ -976,8 +976,8 @@ class SubscriptionTestRunner {
       });
 
       this.assert(
-        afterResponse.data.premium === true,
-        'Premium status is true after subscription',
+        afterResponse.data.premium === false,
+        'Premium status remains false for single user (no pairings)',
         `Premium: ${afterResponse.data.premium}`
       );
 
@@ -1160,7 +1160,7 @@ class SubscriptionTestRunner {
     this.log('💾 TEST DATA PRESERVED - SQL Queries for Verification:', 'data');
     this.log('', 'info');
     this.log('-- View test users:', 'info');
-    this.log("SELECT id, email, premium, created_at FROM users WHERE email LIKE 'subscription_ios%@example.com' OR email LIKE 'subscription_android%@example.com';", 'info');
+    this.log("SELECT p.*, u1.email as user1_email, u2.email as user2_email FROM pairings p LEFT JOIN users u1 ON p.user1_id = u1.id LEFT JOIN users u2 ON p.user2_id = u2.id WHERE (u1.email LIKE 'subscription_ios%@example.com' OR u2.email LIKE 'subscription_ios%@example.com' OR u1.email LIKE 'subscription_android%@example.com' OR u2.email LIKE 'subscription_android%@example.com') AND p.premium = 1;", 'info');
     this.log('', 'info');
     this.log('-- View iOS subscriptions:', 'info');
     this.log('SELECT s.*, u.email FROM ios_subscriptions s JOIN users u ON s.user_id = u.id WHERE u.email LIKE \'subscription_ios%@example.com\';', 'info');

@@ -144,17 +144,10 @@ class SubscriptionService {
     }
   }
 
-  async getAcceptedPartnerIds(userId) {
+  async getAcceptedPairingsForUser(userId) {
     try {
       const userPairings = await this.pairingModel.getAcceptedPairings(userId);
-      const partnerIds = [];
-      for (const pairing of userPairings) {
-        const partnerId = pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
-        if (partnerId && !partnerIds.includes(partnerId)) {
-          partnerIds.push(partnerId);
-        }
-      }
-      return partnerIds;
+      return userPairings;
     } catch (error) {
       console.error('Error fetching accepted pairings for premium reconciliation:', error.message);
       return [];
@@ -169,15 +162,16 @@ class SubscriptionService {
     return iosActive || androidActive;
   }
 
-  async computePremiumStatus(userId) {
-    const hasActive = await this.hasActiveSubscription(userId);
-    if (hasActive) {
+  // Compute if a pairing should be premium based on either user having an active subscription
+  async computePairingPremiumStatus(pairing) {
+    const user1HasActive = await this.hasActiveSubscription(pairing.user1_id);
+    if (user1HasActive) {
       return true;
     }
-
-    const partnerIds = await this.getAcceptedPartnerIds(userId);
-    for (const partnerId of partnerIds) {
-      if (await this.hasActiveSubscription(partnerId)) {
+    
+    if (pairing.user2_id) {
+      const user2HasActive = await this.hasActiveSubscription(pairing.user2_id);
+      if (user2HasActive) {
         return true;
       }
     }
@@ -185,20 +179,39 @@ class SubscriptionService {
     return false;
   }
 
-  async reconcilePremiumStatus(userId) {
-    const partnerIds = await this.getAcceptedPartnerIds(userId);
-    const userIds = Array.from(new Set([userId, ...partnerIds]));
-    const premiumUpdates = [];
+  // Legacy method for backward compatibility - computes if user has access to premium via any pairing
+  async computePremiumStatus(userId) {
+    const hasActive = await this.hasActiveSubscription(userId);
+    if (hasActive) {
+      return true;
+    }
 
-    for (const id of userIds) {
-      const shouldBePremium = await this.computePremiumStatus(id);
-      await this.userModel.setPremiumStatus(id, shouldBePremium);
-      if (shouldBePremium) {
-        premiumUpdates.push(id);
+    // Check if any of user's pairings have a partner with active subscription
+    const pairings = await this.getAcceptedPairingsForUser(userId);
+    for (const pairing of pairings) {
+      const partnerId = pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
+      if (partnerId && await this.hasActiveSubscription(partnerId)) {
+        return true;
       }
     }
 
-    return premiumUpdates;
+    return false;
+  }
+
+  // Reconcile premium status for all pairings involving the user
+  async reconcilePremiumStatus(userId) {
+    const pairings = await this.getAcceptedPairingsForUser(userId);
+    const premiumPairingIds = [];
+
+    for (const pairing of pairings) {
+      const shouldBePremium = await this.computePairingPremiumStatus(pairing);
+      await this.pairingModel.setPremiumStatus(pairing.id, shouldBePremium);
+      if (shouldBePremium) {
+        premiumPairingIds.push(pairing.id);
+      }
+    }
+
+    return premiumPairingIds;
   }
 
   async processReceipt(userId, payload) {
@@ -238,7 +251,8 @@ class SubscriptionService {
   }
 
   async getStatus(userId) {
-    const isPremium = await this.userModel.getPremiumStatus(userId);
+    // Check if user has any premium pairings
+    const hasPremiumPairing = await this.pairingModel.userHasPremiumPairing(userId);
     const iosSubscriptions = await this.iosSubscriptionModel.getActiveByUserId(userId);
     const androidSubscriptions = await this.androidSubscriptionModel.getActiveByUserId(userId);
 
@@ -253,7 +267,7 @@ class SubscriptionService {
     }
 
     return {
-      premium: isPremium,
+      premium: hasPremiumPairing,
       active_subscriptions: allSubscriptions.length,
       latest_expiration: latestExpiration,
       subscriptions: allSubscriptions.map(subscription => ({

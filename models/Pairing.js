@@ -23,6 +23,7 @@ class Pairing {
         user2_id VARCHAR(50) DEFAULT NULL,
         partner_code VARCHAR(10) DEFAULT NULL,
         status VARCHAR(20) DEFAULT 'pending',
+        premium TINYINT(1) NOT NULL DEFAULT 0,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -30,6 +31,7 @@ class Pairing {
         INDEX idx_user2_id (user2_id),
         INDEX idx_partner_code (partner_code),
         INDEX idx_status (status),
+        INDEX idx_premium (premium),
         INDEX idx_deleted_at (deleted_at),
         FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
         FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE
@@ -39,9 +41,31 @@ class Pairing {
     try {
       await this.query(createPairingsTable);
       console.log('Pairings table initialized successfully.');
+      
+      // Migration: Add premium column if it doesn't exist (for existing databases)
+      await this.migratePremiumField();
     } catch (err) {
       console.error('Error creating pairings table:', err.message);
       throw err;
+    }
+  }
+
+  // Migration to add premium field to existing tables
+  async migratePremiumField() {
+    try {
+      const [columns] = await this.db.execute(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'pairings' AND COLUMN_NAME = 'premium'"
+      );
+      if (columns.length === 0) {
+        await this.query('ALTER TABLE pairings ADD COLUMN premium TINYINT(1) NOT NULL DEFAULT 0');
+        await this.query('ALTER TABLE pairings ADD INDEX idx_premium (premium)');
+        console.log('Added premium column to pairings table.');
+      }
+    } catch (err) {
+      // Column might already exist, ignore
+      if (!err.message.includes('Duplicate')) {
+        console.warn('Warning during premium migration:', err.message);
+      }
     }
   }
 
@@ -193,7 +217,10 @@ class Pairing {
       `;
 
       const rows = await this.query(query, [userId, userId]);
-      return rows;
+      return rows.map(row => {
+        row.premium = !!row.premium;
+        return row;
+      });
     } catch (err) {
       throw new Error('Failed to fetch pairings');
     }
@@ -214,7 +241,10 @@ class Pairing {
       `;
 
       const rows = await this.query(query, [userId, userId]);
-      return rows;
+      return rows.map(row => {
+        row.premium = !!row.premium;
+        return row;
+      });
     } catch (err) {
       throw new Error('Failed to fetch pending pairings');
     }
@@ -235,7 +265,10 @@ class Pairing {
       `;
 
       const rows = await this.query(query, [userId, userId]);
-      return rows;
+      return rows.map(row => {
+        row.premium = !!row.premium;
+        return row;
+      });
     } catch (err) {
       throw new Error('Failed to fetch accepted pairings');
     }
@@ -273,6 +306,7 @@ class Pairing {
       if (!row) {
         throw new Error('Pairing not found');
       }
+      row.premium = !!row.premium;
       return row;
     } catch (err) {
       throw new Error('Failed to fetch pairing');
@@ -291,6 +325,9 @@ class Pairing {
       `;
 
       const row = await this.queryOne(query, [partnerCode]);
+      if (row) {
+        row.premium = !!row.premium;
+      }
       return row; // Returns null if not found, which is fine
     } catch (err) {
       throw new Error('Failed to fetch pairing by partner code');
@@ -407,6 +444,7 @@ class Pairing {
       if (!row) {
         throw new Error('Pairing not found');
       }
+      row.premium = !!row.premium;
       return row;
     } catch (err) {
       throw new Error('Failed to fetch pairing');
@@ -428,9 +466,95 @@ class Pairing {
       `;
       
       const rows = await this.query(query);
-      return rows;
+      return rows.map(row => {
+        row.premium = !!row.premium;
+        return row;
+      });
     } catch (err) {
       throw new Error('Failed to fetch deleted pairings');
+    }
+  }
+
+  // Set premium status for a pairing
+  async setPremiumStatus(pairingId, isPremium) {
+    try {
+      const updateQuery = `
+        UPDATE pairings
+        SET premium = ?, updated_at = NOW()
+        WHERE id = ? AND deleted_at IS NULL
+      `;
+
+      const result = await this.query(updateQuery, [isPremium ? 1 : 0, pairingId]);
+      if (result.affectedRows === 0) {
+        throw new Error('Pairing not found');
+      }
+      return { id: pairingId, premium: isPremium };
+    } catch (err) {
+      if (err.message === 'Pairing not found') {
+        throw err;
+      }
+      throw new Error('Failed to update premium status');
+    }
+  }
+
+  // Get premium status for a pairing
+  async getPremiumStatus(pairingId) {
+    try {
+      const row = await this.queryOne(
+        'SELECT premium FROM pairings WHERE id = ? AND deleted_at IS NULL',
+        [pairingId]
+      );
+      if (!row) {
+        throw new Error('Pairing not found');
+      }
+      return !!row.premium;
+    } catch (err) {
+      if (err.message === 'Pairing not found') {
+        throw err;
+      }
+      throw new Error('Failed to fetch premium status');
+    }
+  }
+
+  // Check if a user has any premium pairings
+  async userHasPremiumPairing(userId) {
+    try {
+      const row = await this.queryOne(
+        `SELECT id FROM pairings 
+         WHERE (user1_id = ? OR user2_id = ?) 
+         AND status = 'accepted' 
+         AND premium = 1 
+         AND deleted_at IS NULL 
+         LIMIT 1`,
+        [userId, userId]
+      );
+      return !!row;
+    } catch (err) {
+      throw new Error('Failed to check premium pairing status');
+    }
+  }
+
+  // Get accepted pairings for a user with premium status
+  async getAcceptedPairingsWithPremium(userId) {
+    try {
+      const query = `
+        SELECT p.*, 
+               u1.user_name as user1_user_name, u1.email as user1_email,
+               u2.user_name as user2_user_name, u2.email as user2_email
+        FROM pairings p
+        JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
+        JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
+        WHERE (p.user1_id = ? OR p.user2_id = ?) AND p.status = 'accepted' AND p.deleted_at IS NULL
+        ORDER BY p.created_at DESC
+      `;
+
+      const rows = await this.query(query, [userId, userId]);
+      return rows.map(row => {
+        row.premium = !!row.premium;
+        return row;
+      });
+    } catch (err) {
+      throw new Error('Failed to fetch accepted pairings');
     }
   }
 }
