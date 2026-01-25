@@ -27,41 +27,17 @@ class User {
         partner_name VARCHAR(255) DEFAULT NULL,
         children INT DEFAULT NULL,
         max_pairings INT DEFAULT 1,
-        premium TINYINT(1) NOT NULL DEFAULT 0,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_email (email),
-        INDEX idx_deleted_at (deleted_at),
-        INDEX idx_premium (premium)
+        INDEX idx_deleted_at (deleted_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `;
-
-    // Migration: Add premium column if it doesn't exist
-    const addPremiumColumn = `
-      ALTER TABLE users ADD COLUMN premium TINYINT(1) NOT NULL DEFAULT 0
     `;
 
     try {
       await this.query(createUsersTable);
       console.log('Users table initialized successfully.');
-      
-      // Try to add premium column (for existing databases)
-      try {
-        await this.query(addPremiumColumn);
-      } catch (alterErr) {
-        // Column might already exist or syntax not supported, try alternative
-        if (!alterErr.message.includes('Duplicate column')) {
-          // MySQL doesn't support IF NOT EXISTS for ALTER TABLE, check manually
-          const [columns] = await this.db.execute(
-            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'users' AND COLUMN_NAME = 'premium'"
-          );
-          if (columns.length === 0) {
-            await this.query('ALTER TABLE users ADD COLUMN premium TINYINT(1) NOT NULL DEFAULT 0');
-            console.log('Added premium column to users table.');
-          }
-        }
-      }
     } catch (err) {
       console.error('Error creating users table:', err.message);
       throw err;
@@ -175,8 +151,6 @@ class User {
       if (!row) {
         throw new Error('User not found');
       }
-      // Convert premium field to boolean
-      row.premium = !!row.premium;
       return row;
     } catch (err) {
       // If it's already a "User not found" error, re-throw it
@@ -195,8 +169,6 @@ class User {
       if (!row) {
         throw new Error('User not found');
       }
-      // Convert premium field to boolean
-      row.premium = !!row.premium;
       return row;
     } catch (err) {
       // If it's already a "User not found" error, re-throw it
@@ -210,7 +182,7 @@ class User {
 
   // Update user
   async updateUser(id, updateData) {
-    const { email, max_pairings, user_name, partner_name, children, premium } = updateData;
+    const { email, max_pairings, user_name, partner_name, children } = updateData;
 
     // Build update query dynamically
     const updateFields = [];
@@ -239,10 +211,6 @@ class User {
       }
       updateFields.push('children = ?');
       updateValues.push(children);
-    }
-    if (premium !== undefined) {
-      updateFields.push('premium = ?');
-      updateValues.push(premium);
     }
 
     // Check if at least one field is being updated
@@ -347,8 +315,6 @@ class User {
       if (!row) {
         throw new Error('User not found');
       }
-      // Convert premium field to boolean
-      row.premium = !!row.premium;
       return row;
     } catch (err) {
       throw new Error('Failed to fetch user');
@@ -360,54 +326,9 @@ class User {
     try {
       const query = 'SELECT * FROM users WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC';
       const rows = await this.query(query);
-      // Convert premium field to boolean for each user
-      return rows.map(row => {
-        row.premium = !!row.premium;
-        return row;
-      });
+      return rows;
     } catch (err) {
       throw new Error('Failed to fetch deleted users');
-    }
-  }
-
-  // Set premium status for a user
-  async setPremiumStatus(userId, isPremium) {
-    try {
-      const updateQuery = `
-        UPDATE users
-        SET premium = ?, updated_at = NOW()
-        WHERE id = ? AND deleted_at IS NULL
-      `;
-
-      const result = await this.query(updateQuery, [isPremium, userId]);
-      if (result.affectedRows === 0) {
-        throw new Error('User not found');
-      }
-      return { id: userId, premium: isPremium };
-    } catch (err) {
-      if (err.message === 'User not found') {
-        throw err;
-      }
-      throw new Error('Failed to update premium status');
-    }
-  }
-
-  // Get premium status for a user
-  async getPremiumStatus(userId) {
-    try {
-      const row = await this.queryOne(
-        'SELECT premium FROM users WHERE id = ? AND deleted_at IS NULL',
-        [userId]
-      );
-      if (!row) {
-        throw new Error('User not found');
-      }
-      return !!row.premium;
-    } catch (err) {
-      if (err.message === 'User not found') {
-        throw err;
-      }
-      throw new Error('Failed to fetch premium status');
     }
   }
 }

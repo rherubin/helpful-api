@@ -312,27 +312,31 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
   - `environment` must be `Production` or `Sandbox` (case-insensitive accepted).
   - `purchase_date` and `expiration_date` must be positive millisecond timestamps.
   - If a receipt belongs to another user, the API returns `409 Conflict`.
+  - **Premium Access**: Premium status is granted to pairings, not individual users. When a user purchases a subscription, all their accepted pairings become premium-enabled, allowing both partners access to premium features.
 
 #### Get Subscription Status
 - **GET** `/api/subscription`
 - **Headers:** `Authorization: Bearer {access_token}`
 - **Response:**
-  ```json
-  {
-    "premium": true,
-    "active_subscriptions": 1,
-    "latest_expiration": 1768926462000,
-    "subscriptions": [
-      {
-        "id": "subscription_id",
-        "platform": "ios",
-        "product_id": "com.helpful.yearly.29.99",
-        "expiration_date": 1768926462000,
-        "purchase_date": 1737390462000
-      }
-    ]
-  }
-  ```
+ ```json
+ {
+   "premium": true,
+   "active_subscriptions": 1,
+   "latest_expiration": 1768926462000,
+   "subscriptions": [
+     {
+       "id": "subscription_id",
+       "platform": "ios",
+       "product_id": "com.helpful.yearly.29.99",
+       "expiration_date": 1768926462000,
+       "purchase_date": 1737390462000
+     }
+   ]
+ }
+ ```
+- **Notes:**
+  - `premium`: Whether the user has access to premium features through any of their accepted pairings
+  - Premium access is pairing-based: users get premium access when they have accepted pairings where at least one partner has an active subscription
 
 #### Get Stored Receipts
 - **GET** `/api/subscription/receipts`
