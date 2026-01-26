@@ -4,7 +4,8 @@ const { createAuthenticateToken } = require('../middleware/auth');
 // Helper function to filter sensitive fields from user objects
 function filterUserData(user) {
   if (!user) return null;
-  const { password_hash, ...filteredUser } = user;
+  // Remove password_hash and premium (premium should be set explicitly as boolean)
+  const { password_hash, premium, ...filteredUser } = user;
   return filteredUser;
 }
 
@@ -65,9 +66,16 @@ function createUserRoutes(userModel, authService, pairingService) {
       // Filter out sensitive fields for the response
       const filteredUser = filterUserData(user);
 
+      // New users can't have premium pairings yet, so premium is always false
+      // Explicitly set as boolean to ensure iOS/Swift compatibility
+      const userWithPremium = {
+        ...filteredUser,
+        premium: false
+      };
+
       const response = {
         message: 'Account created successfully',
-        user: filteredUser,
+        user: userWithPremium,
         access_token: tokenPayload.access_token,
         refresh_token: tokenPayload.refresh_token,
         expires_in: tokenPayload.expires_in,

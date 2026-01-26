@@ -12,7 +12,8 @@ const {
 // Helper function to filter sensitive fields from user objects
 function filterUserData(user) {
   if (!user) return null;
-  const { password_hash, ...filteredUser } = user;
+  // Remove password_hash and premium (premium should be set explicitly as boolean)
+  const { password_hash, premium, ...filteredUser } = user;
   return filteredUser;
 }
 
