@@ -82,18 +82,33 @@ async function testDefaultUnlockThreshold() {
     testProgram = programResponse.data.program;
     console.log('✓ Program created:', testProgram.id);
 
-    // Wait for program steps to be generated
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    // Get program details
-    const programDetails = await axios.get(
-      `${BASE_URL}/programs/${testProgram.id}`,
-      {
-        headers: { Authorization: `Bearer ${user.token}` }
+    // Wait for program steps to be generated (OpenAI can take time)
+    console.log('Waiting for program steps to be generated...');
+    let program;
+    let attempts = 0;
+    const maxAttempts = 10;
+    
+    while (attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      attempts++;
+      
+      const programDetails = await axios.get(
+        `${BASE_URL}/programs/${testProgram.id}`,
+        {
+          headers: { Authorization: `Bearer ${user.token}` }
+        }
+      );
+      
+      program = programDetails.data.program;
+      testProgramSteps = program.program_steps || [];
+      
+      if (testProgramSteps.length >= 7) {
+        console.log(`✓ Program steps generated after ${attempts * 3} seconds`);
+        break;
       }
-    );
-
-    const program = programDetails.data.program;
+      
+      console.log(`  Waiting... (${testProgramSteps.length} steps so far, attempt ${attempts}/${maxAttempts})`);
+    }
     
     if (program.steps_required_for_unlock === 7) {
       console.log('✓ Default threshold is 7');
@@ -107,7 +122,6 @@ async function testDefaultUnlockThreshold() {
       throw new Error(`Program should start as locked, got: ${program.next_program_unlocked}`);
     }
 
-    testProgramSteps = program.program_steps || [];
     console.log(`✓ Program has ${testProgramSteps.length} steps`);
 
     console.log('✓ Test 1 PASSED');
@@ -296,7 +310,7 @@ async function testPairingUnlock() {
 
     // User 2 accepts the pairing
     await axios.post(
-      `${BASE_URL}/pairing/accept-code`,
+      `${BASE_URL}/pairing/accept`,
       { partner_code: partnerCode },
       {
         headers: { Authorization: `Bearer ${user2.token}` }
@@ -332,21 +346,35 @@ async function testPairingUnlock() {
     const pairingProgram = programResponse.data.program;
     console.log('✓ Paired program created:', pairingProgram.id);
 
-    // Wait for program steps
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    // Get program steps
-    const programDetails = await axios.get(
-      `${BASE_URL}/programs/${pairingProgram.id}`,
-      {
-        headers: { Authorization: `Bearer ${testUsers[0].token}` }
+    // Wait for program steps to be generated (OpenAI can take time)
+    console.log('Waiting for program steps to be generated...');
+    let pairingSteps = [];
+    let attempts = 0;
+    const maxAttempts = 10;
+    
+    while (attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      attempts++;
+      
+      const programDetails = await axios.get(
+        `${BASE_URL}/programs/${pairingProgram.id}`,
+        {
+          headers: { Authorization: `Bearer ${testUsers[0].token}` }
+        }
+      );
+      
+      pairingSteps = programDetails.data.program.program_steps || [];
+      
+      if (pairingSteps.length >= 3) {
+        console.log(`✓ Program steps generated after ${attempts * 3} seconds`);
+        break;
       }
-    );
-
-    const pairingSteps = programDetails.data.program.program_steps || [];
+      
+      console.log(`  Waiting... (${pairingSteps.length} steps so far, attempt ${attempts}/${maxAttempts})`);
+    }
     
     if (pairingSteps.length < 3) {
-      throw new Error(`Need at least 3 program steps, only have ${pairingSteps.length}`);
+      throw new Error(`Need at least 3 program steps after ${maxAttempts * 3}s, only have ${pairingSteps.length}`);
     }
 
     // User 1 adds message to step 1
