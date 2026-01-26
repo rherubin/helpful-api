@@ -1,9 +1,10 @@
 const jwt = require('jsonwebtoken');
 
 class AuthService {
-  constructor(userModel, refreshTokenModel) {
+  constructor(userModel, refreshTokenModel, pairingModel = null) {
     this.userModel = userModel;
     this.refreshTokenModel = refreshTokenModel;
+    this.pairingModel = pairingModel;
     
     // JWT Configuration
     this.JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
@@ -178,12 +179,27 @@ class AuthService {
       const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 days from now
       await this.refreshTokenModel.createRefreshToken(user.id, refreshToken, expiresAt);
 
-      // Return user data (excluding password hash) and tokens
-      const { password_hash, ...userData } = user;
+      // Return user data (excluding password hash and database premium field) and tokens
+      // Premium should be set explicitly as a boolean for iOS/Swift compatibility
+      const { password_hash, premium: dbPremium, ...userData } = user;
+      
+      // Check if user has premium access (any premium pairings)
+      let hasPremiumPairing = false;
+      try {
+        if (this.pairingModel) {
+          hasPremiumPairing = await this.pairingModel.userHasPremiumPairing(user.id);
+        }
+      } catch (err) {
+        console.warn('Failed to check premium pairing status:', err.message);
+      }
+      
       return {
         message: 'Login successful',
         data: {
-          user: userData,
+          user: {
+            ...userData,
+            premium: hasPremiumPairing
+          },
           access_token: accessToken,
           refresh_token: refreshToken,
           expires_in: this.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS,

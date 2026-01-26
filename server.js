@@ -153,7 +153,7 @@ async function initializeApp() {
     androidSubscriptionModel = androidSubscriptionModelInstance;
 
     // Initialize services
-    authService = new AuthService(userModel, refreshTokenModel);
+    authService = new AuthService(userModel, refreshTokenModel, pairingModel);
     pairingService = new PairingService(userModel, pairingModel);
     chatGPTService = new ChatGPTService();
     subscriptionService = new SubscriptionService(
