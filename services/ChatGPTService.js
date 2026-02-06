@@ -327,7 +327,7 @@ class ChatGPTService {
       - Each conversation-starter should have a theme, which I'd like you to specifically identify as a separate data element.
       - Each conversation-starter should help each person unpack what they're feeling; they should be designed so that each person is able to articulate their perspective.
       - Each conversation-starter should feel very personalized. Please mention specifics about the couple throughout the program.
-      - The conversation-starters should use both of their names, when appropriate.
+      - The first conversation-starter should use both of their names, but the remainder of the conversation-starters should not, unless you're asking each person a different question and you need to.
       - The conversation-starters should feel like they're coming from a therapist. Ask the questions like a friendly therapist would ask them to their couples therapy clients.
       - Stylistically, have the entire conversation-starter in one line, with no paragraph breaks.
 
