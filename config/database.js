@@ -12,6 +12,9 @@ const dbConfig = {
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
+  // SSL configuration for local development
+  ssl: false,
+  allowPublicKeyRetrieval: true,
   // Railway MySQL URLs come in format: mysql://user:password@host:port/database
   // If MYSQL_URL is provided, it will be parsed and used instead
 };
@@ -35,6 +38,11 @@ function createPool() {
         queueLimit: 0,
         enableKeepAlive: true,
         keepAliveInitialDelay: 0,
+        // SSL configuration for Railway
+        ssl: {
+          rejectUnauthorized: false,
+        },
+        allowPublicKeyRetrieval: true,
       });
       console.log('MySQL connection pool created from MYSQL_URL');
     } catch (error) {

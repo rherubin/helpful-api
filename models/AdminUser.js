@@ -1,6 +1,6 @@
 const bcrypt = require('bcrypt');
 
-class User {
+class AdminUser {
   constructor(db) {
     this.db = db; // MySQL pool
   }
@@ -16,10 +16,19 @@ class User {
     return results[0] || null;
   }
 
-  // Initialize database tables
+  async query(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results;
+  }
+
+  async queryOne(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results[0] || null;
+  }
+
   async initDatabase() {
-    const createUsersTable = `
-      CREATE TABLE IF NOT EXISTS users (
+    const createAdminUsersTable = `
+      CREATE TABLE IF NOT EXISTS admin_users (
         id VARCHAR(50) PRIMARY KEY,
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
@@ -27,55 +36,23 @@ class User {
         partner_name VARCHAR(255) DEFAULT NULL,
         children INT DEFAULT NULL,
         max_pairings INT DEFAULT 1,
-        org_code_id VARCHAR(50) DEFAULT NULL,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_email (email),
-        INDEX idx_deleted_at (deleted_at),
-        INDEX idx_org_code_id (org_code_id),
-        CONSTRAINT fk_users_org_code
-          FOREIGN KEY (org_code_id) REFERENCES org_codes(id)
-          ON DELETE SET NULL
+        INDEX idx_deleted_at (deleted_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
 
     try {
-      await this.query(createUsersTable);
-      console.log('Users table initialized successfully.');
-
-      // Migration: Add org_code_id column if it doesn't exist
-      try {
-        // Check if column exists
-        const columnExists = await this.queryOne(`
-          SELECT COLUMN_NAME
-          FROM INFORMATION_SCHEMA.COLUMNS
-          WHERE TABLE_SCHEMA = DATABASE()
-            AND TABLE_NAME = 'users'
-            AND COLUMN_NAME = 'org_code_id'
-        `);
-
-        if (!columnExists) {
-          await this.query('ALTER TABLE users ADD COLUMN org_code_id VARCHAR(50) DEFAULT NULL');
-          await this.query('ALTER TABLE users ADD INDEX idx_org_code_id (org_code_id)');
-          await this.query(`
-            ALTER TABLE users ADD CONSTRAINT fk_users_org_code
-            FOREIGN KEY (org_code_id) REFERENCES org_codes(id) ON DELETE SET NULL
-          `);
-          console.log('Migrated users table: added org_code_id column and foreign key');
-        } else {
-          console.log('Users table already has org_code_id column');
-        }
-      } catch (migrationErr) {
-        console.warn('Migration warning for users table:', migrationErr.message);
-      }
+      await this.query(createAdminUsersTable);
+      console.log('AdminUsers table initialized successfully.');
     } catch (err) {
-      console.error('Error creating users table:', err.message);
+      console.error('Error creating admin_users table:', err.message);
       throw err;
     }
   }
 
-  // Generate unique ID
   generateUniqueId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
@@ -86,17 +63,17 @@ class User {
     if (password.length < 8) {
       return { valid: false, error: 'Password must be at least 8 characters long' };
     }
-    
+
     // Maximum length to prevent DoS attacks
     if (password.length > 128) {
       return { valid: false, error: 'Password must not exceed 128 characters' };
     }
-    
+
     const hasNumber = /\d/.test(password);
     const hasSymbol = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password);
     const hasCapital = /[A-Z]/.test(password);
     const hasLowercase = /[a-z]/.test(password);
-    
+
     if (!hasNumber) {
       return { valid: false, error: 'Password must contain at least one number' };
     }
@@ -109,7 +86,7 @@ class User {
     if (!hasLowercase) {
       return { valid: false, error: 'Password must contain at least one lowercase letter' };
     }
-    
+
     // Check for common weak patterns
     const commonPatterns = [
       /(.)\1{2,}/, // 3+ repeated characters
@@ -117,21 +94,20 @@ class User {
       /password|admin|login|user/i, // Common words
       /qwerty|asdf|zxcv/i // Keyboard patterns
     ];
-    
+
     for (const pattern of commonPatterns) {
       if (pattern.test(password)) {
         return { valid: false, error: 'Password contains weak patterns. Avoid repeated characters, sequences, or common words' };
       }
     }
-    
+
     return { valid: true };
   }
 
-  // Create a new user
-  async createUser(userData) {
+  // Create a new admin user
+  async createAdminUser(userData) {
     const { email, password } = userData;
-    const max_pairings = 1; // Always set to 1 - constraint enforced
-    
+
     // Validate password
     const passwordValidation = this.validatePassword(password);
     if (!passwordValidation.valid) {
@@ -152,17 +128,17 @@ class User {
     });
 
     const insertUser = `
-      INSERT INTO users (id, email, password_hash, max_pairings, created_at, updated_at)
+      INSERT INTO admin_users (id, email, password_hash, max_pairings, created_at, updated_at)
       VALUES (?, ?, ?, ?, NOW(), NOW())
     `;
 
     try {
-      await this.query(insertUser, [userId, email, hash, max_pairings]);
-      
+      await this.query(insertUser, [userId, email, hash, 1]);
+
       return {
         id: userId,
         email,
-        max_pairings: max_pairings,
+        max_pairings: 1,
         created_at: new Date().toISOString()
       };
     } catch (err) {
@@ -170,50 +146,46 @@ class User {
         throw new Error('Email already exists');
       } else {
         console.error('Database error:', err);
-        throw new Error('Failed to create user');
+        throw new Error('Failed to create admin user');
       }
     }
   }
 
-  // Get user by ID (excluding soft deleted)
-  async getUserById(id) {
+  // Get admin user by ID (excluding soft deleted)
+  async getAdminUserById(id) {
     try {
-      const row = await this.queryOne('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [id]);
+      const row = await this.queryOne('SELECT * FROM admin_users WHERE id = ? AND deleted_at IS NULL', [id]);
       if (!row) {
-        throw new Error('User not found');
+        throw new Error('Admin user not found');
       }
       return row;
     } catch (err) {
-      // If it's already a "User not found" error, re-throw it
-      if (err.message === 'User not found') {
+      if (err.message === 'Admin user not found') {
         throw err;
       }
-      // Otherwise, it's a database error
-      throw new Error('Failed to fetch user');
+      throw new Error('Failed to fetch admin user');
     }
   }
 
-  // Get user by email (excluding soft deleted)
-  async getUserByEmail(email) {
+  // Get admin user by email (excluding soft deleted)
+  async getAdminUserByEmail(email) {
     try {
-      const row = await this.queryOne('SELECT * FROM users WHERE email = ? AND deleted_at IS NULL', [email]);
+      const row = await this.queryOne('SELECT * FROM admin_users WHERE email = ? AND deleted_at IS NULL', [email]);
       if (!row) {
-        throw new Error('User not found');
+        throw new Error('Admin user not found');
       }
       return row;
     } catch (err) {
-      // If it's already a "User not found" error, re-throw it
-      if (err.message === 'User not found') {
+      if (err.message === 'Admin user not found') {
         throw err;
       }
-      // Otherwise, it's a database error
-      throw new Error('Failed to fetch user');
+      throw new Error('Failed to fetch admin user');
     }
   }
 
-  // Update user
-  async updateUser(id, updateData) {
-    const { email, max_pairings, user_name, partner_name, children, org_code_id } = updateData;
+  // Update admin user
+  async updateAdminUser(id, updateData) {
+    const { email, max_pairings, user_name, partner_name, children } = updateData;
 
     // Build update query dynamically
     const updateFields = [];
@@ -243,35 +215,31 @@ class User {
       updateFields.push('children = ?');
       updateValues.push(children);
     }
-    if (org_code_id !== undefined) {
-      updateFields.push('org_code_id = ?');
-      updateValues.push(org_code_id);
-    }
 
     // Check if at least one field is being updated
     if (updateFields.length === 0) {
       throw new Error('At least one field must be provided for update');
     }
-    
+
     // updated_at is automatically handled by ON UPDATE CURRENT_TIMESTAMP
-    
-    const updateQuery = `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`;
+
+    const updateQuery = `UPDATE admin_users SET ${updateFields.join(', ')} WHERE id = ?`;
     updateValues.push(id);
 
     try {
       const result = await this.query(updateQuery, updateValues);
       if (result.affectedRows === 0) {
-        throw new Error('User not found');
+        throw new Error('Admin user not found');
       }
       // Get updated user data
-      return await this.getUserById(id);
+      return await this.getAdminUserById(id);
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
         throw new Error('Email already exists');
-      } else if (err.message === 'User not found') {
+      } else if (err.message === 'Admin user not found') {
         throw err;
       } else {
-        throw new Error('Failed to update user');
+        throw new Error('Failed to update admin user');
       }
     }
   }
@@ -289,109 +257,52 @@ class User {
     });
   }
 
-  // Soft delete a user and cascade delete their pairings
-  async softDeleteUser(id, pairingModel = null) {
+  // Soft delete an admin user
+  async softDeleteAdminUser(id) {
     try {
-      // First, soft delete the user
-      const updateUserQuery = `
-        UPDATE users 
+      const updateQuery = `
+        UPDATE admin_users
         SET deleted_at = NOW(), updated_at = NOW()
         WHERE id = ? AND deleted_at IS NULL
       `;
 
-      const result = await this.query(updateUserQuery, [id]);
+      const result = await this.query(updateQuery, [id]);
       if (result.affectedRows === 0) {
-        throw new Error('User not found or already deleted');
+        throw new Error('Admin user not found or already deleted');
       }
 
-      // Then, cascade soft delete their pairings if pairingModel is provided
-      let pairingResult = null;
-      if (pairingModel) {
-        try {
-          pairingResult = await pairingModel.softDeleteUserPairings(id);
-        } catch (pairingError) {
-          console.warn('Warning: Failed to cascade delete user pairings:', pairingError.message);
-        }
-      }
-
-      return { 
-        message: 'User deleted successfully', 
-        deleted_at: new Date().toISOString(),
-        cascade_result: pairingResult
+      return {
+        message: 'Admin user deleted successfully',
+        deleted_at: new Date().toISOString()
       };
     } catch (error) {
       throw error;
     }
   }
 
-  // Restore a soft deleted user
-  async restoreUser(id) {
+  // Get admin user by ID including soft deleted (for admin purposes)
+  async getAdminUserByIdIncludingDeleted(id) {
     try {
-      const updateQuery = `
-        UPDATE users 
-        SET deleted_at = NULL, updated_at = NOW()
-        WHERE id = ? AND deleted_at IS NOT NULL
-      `;
-
-      const result = await this.query(updateQuery, [id]);
-      if (result.affectedRows === 0) {
-        throw new Error('User not found or not deleted');
-      }
-      return { message: 'User restored successfully' };
-    } catch (err) {
-      throw new Error('Failed to restore user');
-    }
-  }
-
-  // Get user by ID including soft deleted (for admin purposes)
-  async getUserByIdIncludingDeleted(id) {
-    try {
-      const row = await this.queryOne('SELECT * FROM users WHERE id = ?', [id]);
+      const row = await this.queryOne('SELECT * FROM admin_users WHERE id = ?', [id]);
       if (!row) {
-        throw new Error('User not found');
+        throw new Error('Admin user not found');
       }
       return row;
     } catch (err) {
-      throw new Error('Failed to fetch user');
+      throw new Error('Failed to fetch admin user');
     }
   }
 
-  // Get all soft deleted users
-  async getDeletedUsers() {
+  // Get all soft deleted admin users
+  async getDeletedAdminUsers() {
     try {
-      const query = 'SELECT * FROM users WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC';
+      const query = 'SELECT * FROM admin_users WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC';
       const rows = await this.query(query);
       return rows;
     } catch (err) {
-      throw new Error('Failed to fetch deleted users');
-    }
-  }
-
-  // Get user's org code (active only)
-  async getUserOrgCode(userId) {
-    try {
-      // First get the user's org code
-      const userQuery = `
-        SELECT u.org_code_id FROM users u
-        WHERE u.id = ? AND u.deleted_at IS NULL
-      `;
-      const userResult = await this.queryOne(userQuery, [userId]);
-
-      if (!userResult || !userResult.org_code_id) {
-        return null;
-      }
-
-      // Then check if the org code is active
-      const orgCodeQuery = `
-        SELECT * FROM org_codes
-        WHERE id = ?
-        AND (expires_at IS NULL OR expires_at > NOW())
-      `;
-      return this.queryOne(orgCodeQuery, [userResult.org_code_id]);
-    } catch (err) {
-      throw new Error('Failed to fetch user org code');
+      throw new Error('Failed to fetch deleted admin users');
     }
   }
 }
 
-module.exports = User;
+module.exports = AdminUser;

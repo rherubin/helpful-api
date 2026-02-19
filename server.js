@@ -14,10 +14,13 @@ const ProgramStep = require('./models/ProgramStep');
 const Message = require('./models/Message');
 const IosSubscription = require('./models/IosSubscription');
 const AndroidSubscription = require('./models/AndroidSubscription');
+const OrgCode = require('./models/OrgCode');
+const AdminUser = require('./models/AdminUser');
 const AuthService = require('./services/AuthService');
 const PairingService = require('./services/PairingService');
 const ChatGPTService = require('./services/ChatGPTService');
 const { SubscriptionService } = require('./services/SubscriptionService');
+const AdminAuthService = require('./services/AdminAuthService');
 
 // Import routes
 const createUserRoutes = require('./routes/users');
@@ -26,6 +29,8 @@ const createPairingRoutes = require('./routes/pairing');
 const createProgramRoutes = require('./routes/programs');
 const createProgramStepRoutes = require('./routes/programSteps');
 const createSubscriptionRoutes = require('./routes/subscription');
+const createOrgCodeRoutes = require('./routes/org-codes');
+const createAdminAuthRoutes = require('./routes/admin-auth');
 
 const app = express();
 
@@ -118,7 +123,7 @@ async function setupDatabase() {
 setupDatabase();
 
 // Initialize models and services
-let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, authService, pairingService, chatGPTService, subscriptionService;
+let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, authService, pairingService, chatGPTService, subscriptionService, adminAuthService;
 
 async function initializeApp() {
   try {
@@ -131,6 +136,8 @@ async function initializeApp() {
     const messageModelInstance = new Message(db);
     const iosSubscriptionModelInstance = new IosSubscription(db);
     const androidSubscriptionModelInstance = new AndroidSubscription(db);
+    const orgCodeModelInstance = new OrgCode(db);
+    const adminUserModelInstance = new AdminUser(db);
     
     // Initialize database tables
     await userModelInstance.initDatabase();
@@ -141,6 +148,8 @@ async function initializeApp() {
     await messageModelInstance.initDatabase();
     await iosSubscriptionModelInstance.initDatabase();
     await androidSubscriptionModelInstance.initDatabase();
+    await orgCodeModelInstance.initDatabase();
+    await adminUserModelInstance.initDatabase();
     
     // Assign to global variables after successful initialization
     userModel = userModelInstance;
@@ -151,11 +160,14 @@ async function initializeApp() {
     messageModel = messageModelInstance;
     iosSubscriptionModel = iosSubscriptionModelInstance;
     androidSubscriptionModel = androidSubscriptionModelInstance;
+    orgCodeModel = orgCodeModelInstance;
+    adminUserModel = adminUserModelInstance;
 
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel, pairingModel);
     pairingService = new PairingService(userModel, pairingModel);
     chatGPTService = new ChatGPTService();
+    adminAuthService = new AdminAuthService(adminUserModel, refreshTokenModel);
     subscriptionService = new SubscriptionService(
       iosSubscriptionModel,
       androidSubscriptionModel,
@@ -196,17 +208,27 @@ function setupRoutes() {
 
   // Setup program routes
   if (programModel && chatGPTService && authService) {
-    app.use('/api/programs', createProgramRoutes(programModel, chatGPTService, programStepModel, userModel, pairingModel, authService));
+    app.use('/api/programs', createProgramRoutes(programModel, chatGPTService, programStepModel, userModel, pairingModel, authService, userModel));
   }
 
   // Setup conversation routes
   if (programStepModel && messageModel && programModel && pairingModel && userModel && chatGPTService && authService) {
-    app.use('/api', createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService, authService));
+    app.use('/api', createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService, authService, userModel));
   }
 
   // Setup subscription routes
   if (subscriptionService && authService) {
     app.use('/api/subscription', createSubscriptionRoutes(subscriptionService, authService));
+  }
+
+  // Setup admin auth routes
+  if (adminAuthService && adminUserModel) {
+    app.use('/api/admin/auth', createAdminAuthRoutes(adminAuthService, adminUserModel));
+  }
+
+  // Setup org code routes (admin only)
+  if (orgCodeModel && userModel && authService && adminAuthService) {
+    app.use('/api/org-codes', createOrgCodeRoutes(orgCodeModel, userModel, authService, adminAuthService));
   }
 
   // Setup message stats endpoint

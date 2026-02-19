@@ -223,7 +223,8 @@ class ChatGPTService {
   }
 
   // Generate couples therapy response for ongoing conversations
-  async generateCouplesTherapyResponse(user1Name, user2Name, user1Messages, user2FirstMessage) {
+  // customPrompts.therapyResponsePrompt overrides the default chime-in prompt when provided
+  async generateCouplesTherapyResponse(user1Name, user2Name, user1Messages, user2FirstMessage, customPrompts = null) {
     if (!this.apiKey) {
       throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
     }
@@ -233,21 +234,24 @@ class ChatGPTService {
       user1Name, 
       user2Name, 
       user1Messages, 
-      user2FirstMessage 
+      user2FirstMessage,
+      customPrompts
     });
   }
 
   // Public interface - queue the request
-  async generateCouplesProgram(userName, partnerName, userInput) {
+  // customPrompts.initialProgramPrompt overrides the default initial program prompt when provided
+  async generateCouplesProgram(userName, partnerName, userInput, customPrompts = null) {
     if (!this.apiKey) {
       throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
     }
 
-    return this.queueOpenAIRequest({ type: 'program', userName, partnerName, userInput });
+    return this.queueOpenAIRequest({ type: 'program', userName, partnerName, userInput, customPrompts });
   }
 
   // Public interface for next program generation - queue the request
-  async generateNextCouplesProgram(userName, partnerName, previousConversationStarters, userInput) {
+  // customPrompts.nextProgramPrompt overrides the default next program prompt when provided
+  async generateNextCouplesProgram(userName, partnerName, previousConversationStarters, userInput, customPrompts = null) {
     if (!this.apiKey) {
       throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
     }
@@ -257,7 +261,8 @@ class ChatGPTService {
       userName, 
       partnerName, 
       previousConversationStarters,
-      userInput 
+      userInput,
+      customPrompts
     });
   }
 
@@ -275,7 +280,7 @@ class ChatGPTService {
   }
 
   // Internal method that does the actual OpenAI call for programs
-  async generateInitialProgram({ userName, partnerName, userInput }, retryCount = 0) {
+  async generateInitialProgram({ userName, partnerName, userInput, customPrompts }, retryCount = 0) {
     const MAX_RETRIES = 2;
     const BASE_DELAY = 1000; // 1 second
     
@@ -309,7 +314,7 @@ class ChatGPTService {
         throw new Error('User input must be between 10 and 2000 characters');
       }
 
-      const prompt_new = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
+      const defaultPrompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
       
       Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
       
@@ -356,52 +361,13 @@ class ChatGPTService {
         }
       }`;
       
-      const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
-
-      Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
-
-      A couple comes into your therapy room. Their names are ${sanitizedUserName} and ${sanitizedPartnerName}.
-
-      ${sanitizedUserName} says the following to you:
-
-      "${sanitizedUserInput}"
-
-      Your goal, as their couples therapist, is to help them talk every day for 14 consecutive days in order to solve their primary issue and enable them to experience greater emotional connection together.
-
-      Specifically, your task is to provide 1 conversation-starter per day for 14 consecutive days. Each conversation starter should have the following attributes:
-
-      - Each conversation should build upon the one before it. They should all move towards a unified goal of helping the couple experience emotional connection together.
-      - Each conversation-starter should have a theme, which I'd like you to specifically identify as a separate data element.
-      - Each conversation-starter should help each person unpack what they're feeling; they should be designed so that each person is able to articulate their perspective.
-      - Each conversation-starter should feel very personalized. Please mention specifics about the couple throughout the program.
-      - The conversation-starters should use both of their names, when appropriate.
-      - The conversation-starters should feel like they're coming from a therapist. Ask the questions like a friendly therapist would ask them to their couples therapy clients.
-      - Stylistically, have the entire conversation-starter in one line, with no paragraph breaks.
-
-      Together, all of the conversation-starters make up a two-week program, which should feel comprehensive.
-
-      Now, craft me the 14 conversation-starters, provide a theme for each one, and explain the science and research behind each question. Note that when you explain the science and research, act like you're talking directly to the couple and say it in a very accessible way. Label this science and research section: "The Science Behind It"
-
-      Lastly, give the entire two-week program a name as well.
-
-      Note: Don't ever reference Emotionally Focused Therapy or Gottman Couples Therapy. Instead of that, you can refer to it as a research-based couples therapy approach, or a therapy method that is scientifically backed.
-
-      Please format your response as a JSON object with the following structure:
-
-      {
-        "program": {
-          "title": "14-Day Emotional Connection Program for ${sanitizedUserName} and ${sanitizedPartnerName}",
-          "overview": "Brief description of the program goals, which should be a single sentence that captures the overall goal of the program.",
-          "days": [
-            {
-              "day": 1,
-              "theme": "Theme name",
-              "conversation_starter": "The conversation starter text",
-              "science_behind_it": "Explanation of the research and science"
-            }
-          ]
-        }
-      }`;
+      // Use org-code custom prompt when available, otherwise fall back to default
+      const resolvedPrompt = (customPrompts && customPrompts.initialProgramPrompt)
+        ? customPrompts.initialProgramPrompt
+            .replace(/\{\{userName\}\}/g, sanitizedUserName)
+            .replace(/\{\{partnerName\}\}/g, sanitizedPartnerName)
+            .replace(/\{\{userInput\}\}/g, sanitizedUserInput)
+        : defaultPrompt;
 
       const completion = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -418,7 +384,7 @@ class ChatGPTService {
             },
             {
               role: "user",
-              content: prompt_new
+              content: resolvedPrompt
             }
           ],
           temperature: 0.7,
@@ -463,7 +429,7 @@ class ChatGPTService {
         console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
         
         await new Promise(resolve => setTimeout(resolve, delay));
-        return this.generateInitialProgram({ userName, partnerName, userInput }, retryCount + 1);
+        return this.generateInitialProgram({ userName, partnerName, userInput, customPrompts }, retryCount + 1);
       }
 
       // Enhanced error logging for security monitoring
@@ -487,7 +453,7 @@ class ChatGPTService {
   }
 
   // Internal method for generating next program based on previous conversation starters
-  async generateNextProgram({ userName, partnerName, previousConversationStarters, userInput }, retryCount = 0) {
+  async generateNextProgram({ userName, partnerName, previousConversationStarters, userInput, customPrompts }, retryCount = 0) {
     const MAX_RETRIES = 2;
     const BASE_DELAY = 1000; // 1 second
     
@@ -534,7 +500,7 @@ class ChatGPTService {
           .join('\n');
       }
 
-      const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
+      const defaultPrompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
 
 Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
 
@@ -586,6 +552,15 @@ Please format your response as a JSON object with the following structure:
   }
 }`;
 
+      // Use org-code custom prompt when available, otherwise fall back to default
+      const resolvedPrompt = (customPrompts && customPrompts.nextProgramPrompt)
+        ? customPrompts.nextProgramPrompt
+            .replace(/\{\{userName\}\}/g, sanitizedUserName)
+            .replace(/\{\{partnerName\}\}/g, sanitizedPartnerName)
+            .replace(/\{\{userInput\}\}/g, sanitizedUserInput)
+            .replace(/\{\{previousQuestions\}\}/g, previousQuestionsText)
+        : defaultPrompt;
+
       const completion = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -601,7 +576,7 @@ Please format your response as a JSON object with the following structure:
             },
             {
               role: "user",
-              content: prompt
+              content: resolvedPrompt
             }
           ],
           max_tokens: 4000,
@@ -648,7 +623,7 @@ Please format your response as a JSON object with the following structure:
         
         await new Promise(resolve => setTimeout(resolve, delay));
         
-        return this.generateNextProgram({ userName, partnerName, previousConversationStarters, userInput }, retryCount + 1);
+        return this.generateNextProgram({ userName, partnerName, previousConversationStarters, userInput, customPrompts }, retryCount + 1);
       }
 
       // Enhanced error logging for security monitoring
@@ -782,7 +757,7 @@ Please format your response as a JSON object with the following structure:
   }
 
   // Internal method for generating couples therapy responses
-  async generateFirstChimeInPrompt({ user1Name, user2Name, user1Messages, user2FirstMessage }, retryCount = 0) {
+  async generateFirstChimeInPrompt({ user1Name, user2Name, user1Messages, user2FirstMessage, customPrompts }, retryCount = 0) {
     const MAX_RETRIES = 2;
     const BASE_DELAY = 1000; // 1 second
     
@@ -809,7 +784,7 @@ Please format your response as a JSON object with the following structure:
         throw new Error(nameValidation.error);
       }
 
-      const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
+      const defaultPrompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
 
 Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
 
@@ -829,6 +804,15 @@ Your goal, as their couples therapist, is to chime into this conversation and as
 
 When you create the follow-up conversation-starter for the couple, please do not assume that the couple is traveling or has been on a vacation or road trip unless they explicitly reference traveling, vacations, or road trips. Most commonly, the couple will be discussing a relationship dynamic. `;
 
+      // Use org-code custom prompt when available, otherwise fall back to default
+      const resolvedPrompt = (customPrompts && customPrompts.therapyResponsePrompt)
+        ? customPrompts.therapyResponsePrompt
+            .replace(/\{\{user1Name\}\}/g, sanitizedUser1Name)
+            .replace(/\{\{user2Name\}\}/g, sanitizedUser2Name)
+            .replace(/\{\{user1Messages\}\}/g, sanitizedUser1Messages)
+            .replace(/\{\{user2FirstMessage\}\}/g, sanitizedUser2FirstMessage)
+        : defaultPrompt;
+
       const completion = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -840,7 +824,7 @@ When you create the follow-up conversation-starter for the couple, please do not
           messages: [
             {
               role: "user",
-              content: prompt
+              content: resolvedPrompt
             }
           ],
           max_tokens: 2000,
@@ -875,7 +859,7 @@ When you create the follow-up conversation-starter for the couple, please do not
         console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
         
         await new Promise(resolve => setTimeout(resolve, delay));
-        return this.generateFirstChimeInPrompt({ user1Name, user2Name, user1Messages, user2FirstMessage }, retryCount + 1);
+        return this.generateFirstChimeInPrompt({ user1Name, user2Name, user1Messages, user2FirstMessage, customPrompts }, retryCount + 1);
       }
 
       // Enhanced error logging for security monitoring
