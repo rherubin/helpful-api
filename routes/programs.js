@@ -1,9 +1,25 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
 
-function createProgramRoutes(programModel, chatGPTService, programStepModel = null, userModel = null, pairingModel = null, authService = null) {
+function createProgramRoutes(programModel, chatGPTService, programStepModel = null, userModel = null, pairingModel = null, authService = null, userModelForOrgCode = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
+
+  // Fetch active org-code custom prompts for a user, or null if none
+  async function getCustomPrompts(userId) {
+    if (!userModelForOrgCode) return null;
+    try {
+      const orgCode = await userModelForOrgCode.getUserOrgCode(userId);
+      if (!orgCode) return null;
+      return {
+        initialProgramPrompt: orgCode.initial_program_prompt || null,
+        nextProgramPrompt: orgCode.next_program_prompt || null,
+        therapyResponsePrompt: orgCode.therapy_response_prompt || null
+      };
+    } catch {
+      return null;
+    }
+  }
 
   // Create next program based on previous program
   router.post('/:id/next_program', authenticateToken, async (req, res) => {
@@ -109,11 +125,13 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         (async () => {
           try {
             console.log('Generating next program ChatGPT response for program:', newProgram.id);
+            const customPrompts = await getCustomPrompts(previousProgram.user_id);
             const therapyResponse = await chatGPTService.generateNextCouplesProgram(
               userName, 
               partnerName, 
               previousConversationStarters,
-              user_input
+              user_input,
+              customPrompts
             );
             
             // Convert response to string if it's an object
@@ -241,7 +259,8 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       (async () => {
         try {
           console.log('Manually generating ChatGPT response for program:', program_id);
-          const therapyResponse = await chatGPTService.generateCouplesProgram(userName, partnerName, program.user_input);
+          const customPrompts = await getCustomPrompts(program.user_id);
+          const therapyResponse = await chatGPTService.generateCouplesProgram(userName, partnerName, program.user_input, customPrompts);
           
           // Convert response to string if it's an object
           const therapyResponseString = typeof therapyResponse === 'object' 
@@ -349,7 +368,8 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         (async () => {
           try {
             console.log('Generating ChatGPT response for program:', program.id);
-            const therapyResponse = await chatGPTService.generateCouplesProgram(userName, partnerName, user_input);
+            const customPrompts = await getCustomPrompts(userId);
+            const therapyResponse = await chatGPTService.generateCouplesProgram(userName, partnerName, user_input, customPrompts);
             
             // Convert response to string if it's an object
             const therapyResponseString = typeof therapyResponse === 'object' 
