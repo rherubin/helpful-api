@@ -1,9 +1,25 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
 
-function createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService, authService) {
+function createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService, authService, userModelForOrgCode = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
+
+  // Fetch active org-code custom prompts for a user, or null if none
+  async function getCustomPrompts(userId) {
+    if (!userModelForOrgCode) return null;
+    try {
+      const orgCode = await userModelForOrgCode.getUserOrgCode(userId);
+      if (!orgCode) return null;
+      return {
+        initialProgramPrompt: orgCode.initial_program_prompt || null,
+        nextProgramPrompt: orgCode.next_program_prompt || null,
+        therapyResponsePrompt: orgCode.therapy_response_prompt || null
+      };
+    } catch {
+      return null;
+    }
+  }
 
   // Helper function to check if we should trigger background therapy response
   async function checkAndTriggerTherapyResponse(stepId, currentUserId) {
@@ -106,11 +122,13 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         }
 
         // Generate therapy response (returns array of messages)
+        const customPrompts = await getCustomPrompts(user1Id);
         const therapyResponses = await chatGPTService.generateCouplesTherapyResponse(
           user1Name,
           user2Name,
           user1MessageContents,
-          user2FirstMessage
+          user2FirstMessage,
+          customPrompts
         );
 
         // Ensure we have an array

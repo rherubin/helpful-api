@@ -22,19 +22,53 @@ class RefreshToken {
       CREATE TABLE IF NOT EXISTS refresh_tokens (
         id VARCHAR(50) PRIMARY KEY,
         user_id VARCHAR(50) NOT NULL,
+        user_type ENUM('user', 'admin') DEFAULT 'user',
         token VARCHAR(500) UNIQUE NOT NULL,
         expires_at DATETIME NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_user_id (user_id),
+        INDEX idx_user_type (user_type),
         INDEX idx_token (token),
-        INDEX idx_expires_at (expires_at),
-        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        INDEX idx_expires_at (expires_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
 
     try {
       await this.query(createRefreshTokensTable);
       console.log('Refresh tokens table initialized successfully.');
+
+      // Migration: Add user_type column and drop old foreign key if it exists
+      try {
+        // Drop old foreign key constraint if it exists (references users table)
+        try {
+          await this.query('ALTER TABLE refresh_tokens DROP FOREIGN KEY refresh_tokens_ibfk_1');
+          console.log('Dropped old foreign key constraint from refresh_tokens');
+        } catch (fkErr) {
+          // Constraint might not exist, continue
+        }
+
+        // Check if user_type column exists
+        const columnExists = await this.queryOne(`
+          SELECT COLUMN_NAME
+          FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'refresh_tokens'
+            AND COLUMN_NAME = 'user_type'
+        `);
+
+        if (!columnExists) {
+          await this.query(`
+            ALTER TABLE refresh_tokens
+            ADD COLUMN user_type ENUM('user', 'admin') DEFAULT 'user'
+          `);
+          await this.query('ALTER TABLE refresh_tokens ADD INDEX idx_user_type (user_type)');
+          console.log('Migrated refresh_tokens table: added user_type column');
+        } else {
+          console.log('Refresh tokens table already has user_type column');
+        }
+      } catch (migrationErr) {
+        console.warn('Migration warning for refresh_tokens table:', migrationErr.message);
+      }
     } catch (err) {
       console.error('Error creating refresh_tokens table:', err.message);
       throw err;
@@ -65,7 +99,7 @@ class RefreshToken {
   }
 
   // Create refresh token
-  async createRefreshToken(userId, token, expiresAt) {
+  async createRefreshToken(userId, token, expiresAt, userType = 'user') {
     const tokenId = this.generateUniqueId();
 
     try {
@@ -73,11 +107,11 @@ class RefreshToken {
       const hashedToken = await this.hashToken(token);
 
       const insertToken = `
-        INSERT INTO refresh_tokens (id, user_id, token, expires_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO refresh_tokens (id, user_id, user_type, token, expires_at)
+        VALUES (?, ?, ?, ?, ?)
       `;
 
-      await this.query(insertToken, [tokenId, userId, hashedToken, expiresAt]);
+      await this.query(insertToken, [tokenId, userId, userType, hashedToken, expiresAt]);
       return tokenId;
     } catch (err) {
       console.error('Error creating refresh token:', err);
@@ -136,10 +170,23 @@ class RefreshToken {
     }
   }
 
-  // Delete all refresh tokens for a user
-  async deleteRefreshTokensByUserId(userId) {
+  // Get refresh token by user ID and type
+  async getTokenByUserId(userId, userType = 'user') {
     try {
-      const result = await this.query('DELETE FROM refresh_tokens WHERE user_id = ?', [userId]);
+      const row = await this.queryOne(
+        'SELECT * FROM refresh_tokens WHERE user_id = ? AND user_type = ? AND expires_at > NOW()',
+        [userId, userType]
+      );
+      return row;
+    } catch (err) {
+      throw new Error('Failed to get refresh token for user');
+    }
+  }
+
+  // Delete all refresh tokens for a user by type
+  async deleteRefreshTokensByUserId(userId, userType = 'user') {
+    try {
+      const result = await this.query('DELETE FROM refresh_tokens WHERE user_id = ? AND user_type = ?', [userId, userType]);
       return result.affectedRows > 0;
     } catch (err) {
       throw new Error('Failed to delete refresh tokens for user');

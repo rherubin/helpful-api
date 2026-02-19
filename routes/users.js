@@ -170,7 +170,7 @@ function createUserRoutes(userModel, authService, pairingService) {
         return res.status(403).json({ error: 'Not authorized to update this user' });
       }
 
-      const { email, user_name, partner_name, children } = req.body;
+      const { email, user_name, partner_name, children, org_code_id } = req.body;
       
       // Validate email format if provided
       if (email) {
@@ -186,7 +186,8 @@ function createUserRoutes(userModel, authService, pairingService) {
         email,
         user_name,
         partner_name,
-        children
+        children,
+        org_code_id
       });
 
       res.status(200).json({
