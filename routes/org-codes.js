@@ -48,7 +48,7 @@ function createOrgCodeRoutes(orgCodeModel, userModel, authService, adminAuthServ
   });
 
   // Get all org codes
-  router.get('/', authenticateToken, requireAdmin, async (req, res) => {
+  router.get('/', authenticateToken, async (req, res) => {
     try {
       const orgCodes = await orgCodeModel.getAllOrgCodes();
 
