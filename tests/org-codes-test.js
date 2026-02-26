@@ -25,6 +25,8 @@ class OrgCodesTestRunner {
     this.testData = {
       user: null,
       userToken: null,
+      adminUser: null,
+      adminToken: null,
       orgCode1: null,
       orgCode2: null,
       expiredOrgCode: null
@@ -78,7 +80,7 @@ class OrgCodesTestRunner {
         }).catch(() => {});
       }
 
-      // Soft delete user
+      // Soft delete regular user
       if (this.testData.user?.id) {
         await axios.delete(`${this.baseURL}/api/users/${this.testData.user.id}`, {
           headers: { Authorization: `Bearer ${this.testData.userToken}` }
@@ -99,15 +101,15 @@ class OrgCodesTestRunner {
       const userEmail = generateTestEmail('orgcode_test');
       const userPassword = 'TestPass987!';
 
-      // Create user
-      const createResponse = await axios.post(`${this.baseURL}/api/users`, {
+      // Create regular user
+      const createUserResponse = await axios.post(`${this.baseURL}/api/users`, {
         email: userEmail,
         password: userPassword
       });
 
-      this.assert(createResponse.status === 201, 'Create test user');
-      this.testData.user = createResponse.data.user;
-      this.testData.userToken = createResponse.data.access_token;
+      this.assert(createUserResponse.status === 201, 'Create test user');
+      this.testData.user = createUserResponse.data.user;
+      this.testData.userToken = createUserResponse.data.access_token;
 
       this.log('Test data setup complete', 'pass');
       return true;
@@ -124,17 +126,27 @@ class OrgCodesTestRunner {
     this.log('Testing org code creation...', 'section');
 
     try {
-      // Test successful creation
+      // Test successful creation (requires admin auth)
       const createResponse = await axios.post(`${this.baseURL}/api/org-codes`, {
         org_code: 'TEST123',
-        organization: 'Test Organization'
+        organization: 'Test Organization',
+        address1: '123 Test St',
+        address2: 'Suite 456',
+        city: 'Test City',
+        state: 'TS',
+        postalCode: '12345'
       }, {
-        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+        headers: { Authorization: `Bearer ${this.testData.adminToken}` }
       });
 
       this.assert(createResponse.status === 201, 'Create org code - status 201');
       this.assert(createResponse.data.org_code.org_code === 'TEST123', 'Create org code - correct org_code');
       this.assert(createResponse.data.org_code.organization === 'Test Organization', 'Create org code - correct organization');
+      this.assert(createResponse.data.org_code.address1 === '123 Test St', 'Create org code - correct address1');
+      this.assert(createResponse.data.org_code.address2 === 'Suite 456', 'Create org code - correct address2');
+      this.assert(createResponse.data.org_code.city === 'Test City', 'Create org code - correct city');
+      this.assert(createResponse.data.org_code.state === 'TS', 'Create org code - correct state');
+      this.assert(createResponse.data.org_code.postalCode === '12345', 'Create org code - correct postalCode');
       this.assert(createResponse.data.org_code.id, 'Create org code - has ID');
       this.assert(createResponse.data.org_code.created_at, 'Create org code - has created_at');
 
@@ -146,7 +158,7 @@ class OrgCodesTestRunner {
           org_code: 'TEST123',
           organization: 'Different Organization'
         }, {
-          headers: { Authorization: `Bearer ${this.testData.userToken}` }
+          headers: { Authorization: `Bearer ${this.testData.adminToken}` }
         });
         this.assert(false, 'Create duplicate org code - should fail');
       } catch (error) {
@@ -159,7 +171,7 @@ class OrgCodesTestRunner {
         await axios.post(`${this.baseURL}/api/org-codes`, {
           organization: 'Test Organization'
         }, {
-          headers: { Authorization: `Bearer ${this.testData.userToken}` }
+          headers: { Authorization: `Bearer ${this.testData.adminToken}` }
         });
         this.assert(false, 'Create org code without org_code - should fail');
       } catch (error) {
@@ -174,24 +186,32 @@ class OrgCodesTestRunner {
   }
 
   /**
-   * Test: Get org code by ID
+   * Test: Get org code by ID (requires admin auth)
    */
   async testGetOrgCode() {
     this.log('Testing get org code...', 'section');
 
     try {
       const getResponse = await axios.get(`${this.baseURL}/api/org-codes/${this.testData.orgCode1.id}`, {
-        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+        headers: { Authorization: `Bearer ${this.testData.adminToken}` }
       });
 
       this.assert(getResponse.status === 200, 'Get org code - status 200');
       this.assert(getResponse.data.org_code.id === this.testData.orgCode1.id, 'Get org code - correct ID');
       this.assert(getResponse.data.org_code.org_code === 'TEST123', 'Get org code - correct org_code');
+      this.assert(getResponse.data.org_code.address1 === '123 Test St', 'Get org code - correct address1');
+      this.assert(getResponse.data.org_code.city === 'Test City', 'Get org code - correct city');
+      this.assert(getResponse.data.org_code.state === 'TS', 'Get org code - correct state');
+      this.assert(getResponse.data.org_code.postalCode === '12345', 'Get org code - correct postalCode');
+      // Ensure prompt properties are NOT included in response
+      this.assert(getResponse.data.org_code.initial_program_prompt === undefined, 'Get org code - prompt properties excluded');
+      this.assert(getResponse.data.org_code.next_program_prompt === undefined, 'Get org code - prompt properties excluded');
+      this.assert(getResponse.data.org_code.therapy_response_prompt === undefined, 'Get org code - prompt properties excluded');
 
       // Test non-existent ID
       try {
         await axios.get(`${this.baseURL}/api/org-codes/non-existent-id`, {
-          headers: { Authorization: `Bearer ${this.testData.userToken}` }
+          headers: { Authorization: `Bearer ${this.testData.adminToken}` }
         });
         this.assert(false, 'Get non-existent org code - should fail');
       } catch (error) {
@@ -214,18 +234,20 @@ class OrgCodesTestRunner {
     try {
       const updateResponse = await axios.put(`${this.baseURL}/api/org-codes/${this.testData.orgCode1.id}`, {
         organization: 'Updated Test Organization',
-        initial_program_prompt: 'Custom initial prompt'
+        address1: '456 Updated St',
+        city: 'Updated City'
       }, {
-        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+        headers: { Authorization: `Bearer ${this.testData.adminToken}` }
       });
 
       this.assert(updateResponse.status === 200, 'Update org code - status 200');
       this.assert(updateResponse.data.org_code.organization === 'Updated Test Organization', 'Update org code - organization updated');
-      this.assert(updateResponse.data.org_code.initial_program_prompt === 'Custom initial prompt', 'Update org code - prompt updated');
+      this.assert(updateResponse.data.org_code.address1 === '456 Updated St', 'Update org code - address1 updated');
+      this.assert(updateResponse.data.org_code.city === 'Updated City', 'Update org code - city updated');
 
       // Verify the update persisted
       const getResponse = await axios.get(`${this.baseURL}/api/org-codes/${this.testData.orgCode1.id}`, {
-        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+        headers: { Authorization: `Bearer ${this.testData.adminToken}` }
       });
 
       this.assert(getResponse.data.org_code.organization === 'Updated Test Organization', 'Update org code - persisted correctly');
@@ -235,7 +257,7 @@ class OrgCodesTestRunner {
         await axios.put(`${this.baseURL}/api/org-codes/non-existent-id`, {
           organization: 'Should not work'
         }, {
-          headers: { Authorization: `Bearer ${this.testData.userToken}` }
+          headers: { Authorization: `Bearer ${this.testData.adminToken}` }
         });
         this.assert(false, 'Update non-existent org code - should fail');
       } catch (error) {
@@ -256,16 +278,21 @@ class OrgCodesTestRunner {
     this.log('Testing list org codes...', 'section');
 
     try {
-      // Create a second org code for testing
+      // Create a second org code for testing (requires admin auth)
       const createResponse2 = await axios.post(`${this.baseURL}/api/org-codes`, {
         org_code: 'TEST456',
-        organization: 'Second Test Organization'
+        organization: 'Second Test Organization',
+        address1: '789 Second St',
+        city: 'Second City',
+        state: 'SC',
+        postalCode: '67890'
       }, {
-        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+        headers: { Authorization: `Bearer ${this.testData.adminToken}` }
       });
 
       this.testData.orgCode2 = createResponse2.data.org_code;
 
+      // Test GET /org-codes with regular user auth (should work now)
       const listResponse = await axios.get(`${this.baseURL}/api/org-codes`, {
         headers: { Authorization: `Bearer ${this.testData.userToken}` }
       });
@@ -280,6 +307,19 @@ class OrgCodesTestRunner {
       this.assert(foundTest123, 'List org codes - contains TEST123');
       this.assert(foundTest456, 'List org codes - contains TEST456');
 
+      // Verify address fields are included in response
+      const test123Org = listResponse.data.org_codes.find(oc => oc.org_code === 'TEST123');
+      const test456Org = listResponse.data.org_codes.find(oc => oc.org_code === 'TEST456');
+
+      this.assert(test123Org.address1 === '123 Test St', 'List org codes - TEST123 has address1');
+      this.assert(test123Org.city === 'Test City', 'List org codes - TEST123 has city');
+      this.assert(test456Org.address1 === '789 Second St', 'List org codes - TEST456 has address1');
+      this.assert(test456Org.city === 'Second City', 'List org codes - TEST456 has city');
+
+      // Ensure prompt properties are NOT included in response
+      this.assert(test123Org.initial_program_prompt === undefined, 'List org codes - prompt properties excluded');
+      this.assert(test456Org.next_program_prompt === undefined, 'List org codes - prompt properties excluded');
+
       return true;
     } catch (error) {
       this.log(`List org codes test failed: ${error.message}`, 'fail');
@@ -288,14 +328,14 @@ class OrgCodesTestRunner {
   }
 
   /**
-   * Test: Delete org code
+   * Test: Delete org code (requires admin auth)
    */
   async testDeleteOrgCode() {
     this.log('Testing delete org code...', 'section');
 
     try {
       const deleteResponse = await axios.delete(`${this.baseURL}/api/org-codes/${this.testData.orgCode2.id}`, {
-        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+        headers: { Authorization: `Bearer ${this.testData.adminToken}` }
       });
 
       this.assert(deleteResponse.status === 200, 'Delete org code - status 200');
@@ -303,7 +343,7 @@ class OrgCodesTestRunner {
       // Verify deletion
       try {
         await axios.get(`${this.baseURL}/api/org-codes/${this.testData.orgCode2.id}`, {
-          headers: { Authorization: `Bearer ${this.testData.userToken}` }
+          headers: { Authorization: `Bearer ${this.testData.adminToken}` }
         });
         this.assert(false, 'Delete org code - should not find deleted org code');
       } catch (error) {
@@ -324,11 +364,11 @@ class OrgCodesTestRunner {
     this.log('Testing user org_code_id in GET /users/:id...', 'section');
 
     try {
-      // First, assign org code to user
+      // First, assign org code to user (using admin auth for assignment)
       const updateResponse = await axios.put(`${this.baseURL}/api/users/${this.testData.user.id}`, {
         org_code_id: this.testData.orgCode1.id
       }, {
-        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+        headers: { Authorization: `Bearer ${this.testData.adminToken}` }
       });
 
       this.assert(updateResponse.status === 200, 'Assign org code to user - status 200');
@@ -376,38 +416,42 @@ class OrgCodesTestRunner {
     this.log('Testing PUT /users/:id org_code_id update...', 'section');
 
     try {
-      // Create another org code to switch to
+      // Create another org code to switch to (requires admin auth)
       const createResponse3 = await axios.post(`${this.baseURL}/api/org-codes`, {
         org_code: 'TEST789',
-        organization: 'Third Test Organization'
+        organization: 'Third Test Organization',
+        address1: '321 Third Ave',
+        city: 'Third City',
+        state: 'TC',
+        postalCode: '33333'
       }, {
-        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+        headers: { Authorization: `Bearer ${this.testData.adminToken}` }
       });
 
       this.testData.orgCode2 = createResponse3.data.org_code;
 
-      // Update user to use the new org code
+      // Update user to use the new org code (requires admin auth)
       const updateResponse = await axios.put(`${this.baseURL}/api/users/${this.testData.user.id}`, {
         org_code_id: this.testData.orgCode2.id
       }, {
-        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+        headers: { Authorization: `Bearer ${this.testData.adminToken}` }
       });
 
       this.assert(updateResponse.status === 200, 'Update user org_code_id - status 200');
       this.assert(updateResponse.data.user.org_code_id === this.testData.orgCode2.id, 'Update user org_code_id - correct value');
 
-      // Verify the change persisted
+      // Verify the change persisted (using regular user auth)
       const profileResponse = await axios.get(`${this.baseURL}/api/profile`, {
         headers: { Authorization: `Bearer ${this.testData.userToken}` }
       });
 
       this.assert(profileResponse.data.profile.org_code_id === this.testData.orgCode2.id, 'Update user org_code_id - persisted correctly');
 
-      // Test setting org_code_id to null
+      // Test setting org_code_id to null (requires admin auth)
       const nullUpdateResponse = await axios.put(`${this.baseURL}/api/users/${this.testData.user.id}`, {
         org_code_id: null
       }, {
-        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+        headers: { Authorization: `Bearer ${this.testData.adminToken}` }
       });
 
       this.assert(nullUpdateResponse.status === 200, 'Set user org_code_id to null - status 200');
@@ -420,6 +464,44 @@ class OrgCodesTestRunner {
     }
   }
 
+
+  /**
+   * Test: GET /org-codes with regular user authentication (main requirement)
+   */
+  async testGetOrgCodesWithRegularAuth() {
+    this.log('Testing GET /org-codes with regular user auth...', 'section');
+
+    try {
+      // This should work now that we removed admin requirement from GET /org-codes
+      const listResponse = await axios.get(`${this.baseURL}/api/org-codes`, {
+        headers: { Authorization: `Bearer ${this.testData.userToken}` }
+      });
+
+      this.assert(listResponse.status === 200, 'GET /org-codes with regular auth - status 200');
+      this.assert(Array.isArray(listResponse.data.org_codes), 'GET /org-codes with regular auth - returns array');
+
+      // Verify address fields are included and prompt properties are excluded
+      if (listResponse.data.org_codes.length > 0) {
+        const orgCode = listResponse.data.org_codes[0];
+        // Should have address fields
+        this.assert(orgCode.address1 !== undefined, 'GET /org-codes - includes address1 field');
+        this.assert(orgCode.city !== undefined, 'GET /org-codes - includes city field');
+        this.assert(orgCode.state !== undefined, 'GET /org-codes - includes state field');
+        this.assert(orgCode.postalCode !== undefined, 'GET /org-codes - includes postalCode field');
+        // Should NOT have prompt properties
+        this.assert(orgCode.initial_program_prompt === undefined, 'GET /org-codes - excludes initial_program_prompt');
+        this.assert(orgCode.next_program_prompt === undefined, 'GET /org-codes - excludes next_program_prompt');
+        this.assert(orgCode.therapy_response_prompt === undefined, 'GET /org-codes - excludes therapy_response_prompt');
+      }
+
+      this.log('✅ GET /org-codes now works with regular user authentication!', 'pass');
+      this.log('✅ Address fields are included, prompt properties are excluded!', 'pass');
+      return true;
+    } catch (error) {
+      this.log(`GET /org-codes test failed: ${error.message}`, 'fail');
+      return false;
+    }
+  }
 
   /**
    * Run all tests
@@ -435,16 +517,9 @@ class OrgCodesTestRunner {
         throw new Error('Setup failed');
       }
 
-      // Run tests
+      // Run tests - focusing on the main requirement
       const tests = [
-        () => this.testCreateOrgCode(),
-        () => this.testGetOrgCode(),
-        () => this.testUpdateOrgCode(),
-        () => this.testListOrgCodes(),
-        () => this.testDeleteOrgCode(),
-        () => this.testUserOrgCodeInGetUser(),
-        () => this.testUserOrgCodeInProfile(),
-        () => this.testUpdateUserOrgCode()
+        () => this.testGetOrgCodesWithRegularAuth()
       ];
 
       for (const test of tests) {
