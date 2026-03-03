@@ -114,6 +114,10 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 - **`POST /api/pairing/request`** - Create partner code for pairing
 - **`POST /api/pairing/accept`** - Accept pairing with partner code
 - **`GET /api/pairings`** - Get all pairings (accepted + pending)
+- **`GET /api/org-codes`** - Get all organization codes (regular users)
+- **`POST /api/org-codes`** - Create organization code (admin only)
+- **`PUT /api/org-codes/:id`** - Update organization code (admin only)
+- **`DELETE /api/org-codes/:id`** - Delete organization code (admin only)
 - **`POST /api/subscription`** - Submit iOS/Android subscription receipts
 - **`GET /api/subscription`** - Get active subscription status
 - **`GET /api/subscription/receipts`** - Get stored receipts for current user
@@ -480,6 +484,157 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
     }
   }
   ```
+
+### Organization Code Management
+
+Organization codes are used to manage organizational access and configuration. They contain organization information and can include address details. Only admin users can create, update, or delete org codes, while regular authenticated users can list all org codes.
+
+#### Create Organization Code
+- **POST** `/api/org-codes`
+- **Headers:** `Authorization: Bearer {access_token}` (Admin required)
+- **Description:** Creates a new organization code with organization details and optional address information
+- **Body:**
+  ```json
+  {
+    "org_code": "ACME123",
+    "organization": "ACME Corporation",
+    "address1": "123 Business St",
+    "address2": "Suite 456",
+    "city": "Business City",
+    "state": "BC",
+    "postalCode": "12345",
+    "expires_at": "2025-12-31T23:59:59.000Z"
+  }
+  ```
+- **Required Fields:** `org_code`, `organization`
+- **Optional Fields:** `address1`, `address2`, `city`, `state`, `postalCode`, `expires_at`
+- **Response:**
+  ```json
+  {
+    "message": "Org code created successfully",
+    "org_code": {
+      "id": "unique_id",
+      "org_code": "ACME123",
+      "organization": "ACME Corporation",
+      "address1": "123 Business St",
+      "address2": "Suite 456",
+      "city": "Business City",
+      "state": "BC",
+      "postalCode": "12345",
+      "expires_at": "2025-12-31T23:59:59.000Z",
+      "created_at": "2024-01-01T00:00:00.000Z",
+      "updated_at": "2024-01-01T00:00:00.000Z"
+    }
+  }
+  ```
+- **Error Responses:**
+  - `400`: `org_code already exists` or `org_code and organization are required`
+  - `403`: Admin access required
+
+#### Get All Organization Codes
+- **GET** `/api/org-codes`
+- **Headers:** `Authorization: Bearer {access_token}` (Regular user authentication)
+- **Description:** Returns all organization codes with address information. Note: Prompt properties are excluded from responses for privacy
+- **Response:**
+  ```json
+  {
+    "message": "Org codes retrieved successfully",
+    "org_codes": [
+      {
+        "id": "unique_id",
+        "org_code": "ACME123",
+        "organization": "ACME Corporation",
+        "address1": "123 Business St",
+        "address2": "Suite 456",
+        "city": "Business City",
+        "state": "BC",
+        "postalCode": "12345",
+        "expires_at": "2025-12-31T23:59:59.000Z",
+        "created_at": "2024-01-01T00:00:00.000Z",
+        "updated_at": "2024-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+  ```
+
+#### Get Organization Code by ID
+- **GET** `/api/org-codes/:id`
+- **Headers:** `Authorization: Bearer {access_token}` (Admin required)
+- **Description:** Returns a specific organization code by its ID
+- **Response:**
+  ```json
+  {
+    "message": "Org code retrieved successfully",
+    "org_code": {
+      "id": "unique_id",
+      "org_code": "ACME123",
+      "organization": "ACME Corporation",
+      "address1": "123 Business St",
+      "address2": "Suite 456",
+      "city": "Business City",
+      "state": "BC",
+      "postalCode": "12345",
+      "expires_at": "2025-12-31T23:59:59.000Z",
+      "created_at": "2024-01-01T00:00:00.000Z",
+      "updated_at": "2024-01-01T00:00:00.000Z"
+    }
+  }
+  ```
+- **Error Responses:**
+  - `403`: Admin access required
+  - `404`: OrgCode not found
+
+#### Update Organization Code
+- **PUT** `/api/org-codes/:id`
+- **Headers:** `Authorization: Bearer {access_token}` (Admin required)
+- **Description:** Updates an organization code with new information. All fields are optional - only provided fields will be updated
+- **Body:**
+  ```json
+  {
+    "organization": "Updated ACME Corporation",
+    "address1": "456 Updated St",
+    "city": "Updated City",
+    "state": "UC",
+    "postalCode": "67890"
+  }
+  ```
+- **Response:**
+  ```json
+  {
+    "message": "Org code updated successfully",
+    "org_code": {
+      "id": "unique_id",
+      "org_code": "ACME123",
+      "organization": "Updated ACME Corporation",
+      "address1": "456 Updated St",
+      "address2": "Suite 456",
+      "city": "Updated City",
+      "state": "UC",
+      "postalCode": "67890",
+      "expires_at": "2025-12-31T23:59:59.000Z",
+      "created_at": "2024-01-01T00:00:00.000Z",
+      "updated_at": "2024-01-01T01:00:00.000Z"
+    }
+  }
+  ```
+- **Error Responses:**
+  - `403`: Admin access required
+  - `404`: OrgCode not found
+  - `400`: `org_code already exists`
+
+#### Delete Organization Code
+- **DELETE** `/api/org-codes/:id`
+- **Headers:** `Authorization: Bearer {access_token}` (Admin required)
+- **Description:** Deletes an organization code permanently
+- **Response:**
+  ```json
+  {
+    "message": "OrgCode deleted successfully"
+  }
+  ```
+- **Error Responses:**
+  - `403`: Admin access required
+  - `404`: OrgCode not found
 
 ### Pairing System
 

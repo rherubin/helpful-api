@@ -28,6 +28,7 @@ class User {
         children INT DEFAULT NULL,
         max_pairings INT DEFAULT 1,
         org_code_id VARCHAR(50) DEFAULT NULL,
+        is_premium TINYINT(1) NOT NULL DEFAULT 0,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -68,6 +69,26 @@ class User {
         }
       } catch (migrationErr) {
         console.warn('Migration warning for users table:', migrationErr.message);
+      }
+
+      // Migration: Add is_premium column if it doesn't exist
+      try {
+        const isPremiumExists = await this.queryOne(`
+          SELECT COLUMN_NAME
+          FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'users'
+            AND COLUMN_NAME = 'is_premium'
+        `);
+
+        if (!isPremiumExists) {
+          await this.query('ALTER TABLE users ADD COLUMN is_premium TINYINT(1) NOT NULL DEFAULT 0');
+          console.log('Migrated users table: added is_premium column');
+        } else {
+          console.log('Users table already has is_premium column');
+        }
+      } catch (migrationErr) {
+        console.warn('Migration warning for is_premium column:', migrationErr.message);
       }
     } catch (err) {
       console.error('Error creating users table:', err.message);
@@ -213,7 +234,7 @@ class User {
 
   // Update user
   async updateUser(id, updateData) {
-    const { email, max_pairings, user_name, partner_name, children, org_code_id } = updateData;
+    const { email, max_pairings, user_name, partner_name, children, org_code_id, is_premium } = updateData;
 
     // Build update query dynamically
     const updateFields = [];
@@ -246,6 +267,10 @@ class User {
     if (org_code_id !== undefined) {
       updateFields.push('org_code_id = ?');
       updateValues.push(org_code_id);
+    }
+    if (is_premium !== undefined) {
+      updateFields.push('is_premium = ?');
+      updateValues.push(is_premium ? 1 : 0);
     }
 
     // Check if at least one field is being updated
