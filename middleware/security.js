@@ -27,11 +27,11 @@ const strictLoginLimiter = rateLimit({
 
 // Rate limiting for PUT /users/:id to prevent org_code farming
 const userUpdateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 update attempts per 15 minutes per IP
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 3, // 3 update attempts per 5 minutes per IP
   message: {
     error: 'Too many update attempts, please try again later',
-    retryAfter: '15 minutes'
+    retryAfter: '5 minutes'
   },
   standardHeaders: true,
   legacyHeaders: false
