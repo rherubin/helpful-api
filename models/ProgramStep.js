@@ -207,8 +207,8 @@ class ProgramStep {
             programId,
             dayData.day,
             dayData.theme,
-            dayData.conversation_starter,
-            dayData.science_behind_it
+            dayData.conversation_starter || dayData.reflection,
+            dayData.science_behind_it || dayData.bible_verse
           );
 
           programSteps.push(step);

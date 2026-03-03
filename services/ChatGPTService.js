@@ -314,52 +314,50 @@ class ChatGPTService {
         throw new Error('User input must be between 10 and 2000 characters');
       }
 
-      const defaultPrompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
-      
-      Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
-      
-      A couple comes into your therapy room. Their names are ${sanitizedUserName} and ${sanitizedPartnerName}.
+      // Resolve org-level values for prompt interpolation
+      const orgName = (customPrompts && customPrompts.organizationName) || '';
+      const orgCityState = (customPrompts && customPrompts.organizationCity && customPrompts.organizationState)
+        ? `${customPrompts.organizationCity}, ${customPrompts.organizationState}`
+        : '';
 
-      ${sanitizedUserName} says the following to you:
+      const defaultPrompt = `You are a top-tier Christian couples therapist with deep expertise in research-based therapy methods. You are inspired by Christian theology and biblical wisdom. You go to ${orgName} in ${orgCityState}, and you are very aware of their statements of beliefs, wisdom, practices, teaching, and sermons. Your patient who goes to this church, too.
 
-      “${sanitizedUserInput}”
+Your goal is to help your patient reflect every day for 7 consecutive days in order to to experience greater closeness with God and reach their stated goal, which is:
 
-      Your goal, as their couples therapist, is to help them talk every day for 14 consecutive days in order to solve their primary issue and enable them to experience greater emotional connection together.
-      
-      Specifically, your task is to provide 1 conversation-starter per day for 14 consecutive days. Each conversation starter should have the following attributes:
+"${sanitizedUserInput}"
 
-      - Each conversation should build upon the one before it. They should all move towards a unified goal of helping the couple experience emotional connection together.
-      - Each conversation-starter should have a theme, which I'd like you to specifically identify as a separate data element.
-      - Each conversation-starter should help each person unpack what they're feeling; they should be designed so that each person is able to articulate their perspective.
-      - Each conversation-starter should feel very personalized. Please mention specifics about the couple throughout the program.
-      - The first conversation-starter should use both of their names, but the remainder of the conversation-starters should not, unless you're asking each person a different question and you need to.
-      - The conversation-starters should feel like they're coming from a therapist. Ask the questions like a friendly therapist would ask them to their couples therapy clients.
-      - Stylistically, have the entire conversation-starter in one line, with no paragraph breaks.
+Specifically, your task is to provide 1 reflection question per day for 7 consecutive days.
 
-      Together, all of the conversation-starters make up a two-week program, which should feel comprehensive.
+- Each reflection should use the teachings and beliefs of ${orgName} in ${orgCityState}.
+- Each reflection should have a theme, which I'd like you to specifically identify as a separate data element.
+- Each reflection should help each person unpack what they're feeling
+- Each reflection should feel very personalized. Please mention specifics about the user throughout the program.
+- The reflection should feel like they're coming from a pastor or therapist
 
-      Now, craft me the 14 conversation-starters, provide a theme for each one, and explain the science and research behind each question. Note that when you explain the science and research, act like you're talking directly to the couple and say it in a very accessible way. Label this science and research section: "The Science Behind It"
+- Whenever possible, embed the teachings of ${orgName} in ${orgCityState} in the reflections
 
-      Lastly, give the entire two-week program a name as well.
+- Stylistically, have the entire reflection in one line, with no paragraph breaks.
+Together, all of the reflections make up a one-week program, which should feel comprehensive.
+Now, craft me the 7 reflections, provide a theme for each one, and include a Bible verse with each one. The Bible verse should be related to the reflection question, helping the user reflect even more.
+The reflection, the theme, and the Bible verse should be isolated as separate data elements.
+Note: Don't ever reference any pastors by name.
 
-      Note: Don't ever reference Emotionally Focused Therapy or Gottman Couples Therapy. Instead of that, you can refer to it as a research-based couples therapy approach, or a therapy method that is scientifically backed.
-      
-      Please format your response as a JSON object with the following structure:
+Please format your response as a JSON object with the following structure:
 
+{
+  "program": {
+    "title": "7-Day Reflection Program",
+    "overview": "Brief description of the program goals, which should be a single sentence that captures the overall goal of the program.",
+    "days": [
       {
-        "program": {
-          "title": "14-Day Emotional Connection Program for ${sanitizedUserName} and ${sanitizedPartnerName}",
-          "overview": "Brief description of the program goals, which should be a single sentence that captures the overall goal of the program.",
-          "days": [
-            {
-              "day": 1,
-              "theme": "Theme name",
-              "conversation_starter": "The conversation starter text",
-              "science_behind_it": "Explanation of the research and science"
-            }
-          ]
-        }
-      }`;
+        "day": 1,
+        "theme": "Theme name",
+        "reflection": "The reflection question text",
+        "bible_verse": "The Bible verse"
+      }
+    ]
+  }
+}`;
       
       // Use org-code custom prompt when available, otherwise fall back to default
       const resolvedPrompt = (customPrompts && customPrompts.initialProgramPrompt)
@@ -367,6 +365,9 @@ class ChatGPTService {
             .replace(/\{\{userName\}\}/g, sanitizedUserName)
             .replace(/\{\{partnerName\}\}/g, sanitizedPartnerName)
             .replace(/\{\{userInput\}\}/g, sanitizedUserInput)
+            .replace(/\{\{Church Name\}\}/g, orgName)
+            .replace(/\{\{City, State\}\}/g, orgCityState)
+            .replace(/\{\{User Input\}\}/g, sanitizedUserInput)
         : defaultPrompt;
 
       const completion = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -380,7 +381,7 @@ class ChatGPTService {
           messages: [
             {
               role: "system",
-              content: "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content."
+              content: "You are a professional Christian therapist and pastoral counselor. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on faith-based reflective content."
             },
             {
               role: "user",
@@ -401,6 +402,8 @@ class ChatGPTService {
 
       const completionData = await completion.json();
       const response = completionData.choices[0].message.content;
+      console.log('DEBUG generateInitialProgram OpenAI response (first 500 chars):', typeof response, response ? response.substring(0, 500) : 'NULL/EMPTY');
+      console.log('DEBUG generateInitialProgram finish_reason:', completionData.choices[0].finish_reason);
       
       // Validate and sanitize the AI response
       if (!this.validateAIResponse(response)) {
@@ -691,61 +694,61 @@ Please format your response as a JSON object with the following structure:
   // Validate the structure of the therapy program response
   validateProgramStructure(programData) {
     try {
-      // Check top-level structure
       if (!programData || typeof programData !== 'object') return false;
       if (!programData.program || typeof programData.program !== 'object') return false;
       
       const program = programData.program;
       
-      // Check required fields
       if (!program.title || typeof program.title !== 'string') return false;
       if (!program.days || !Array.isArray(program.days)) return false;
       
-      // Validate days array
-      if (program.days.length !== 14) return false;
+      if (program.days.length !== 7 && program.days.length !== 14) return false;
       
       for (let i = 0; i < program.days.length; i++) {
         const day = program.days[i];
         
-        // Check required day fields
         if (typeof day !== 'object') return false;
         if (day.day !== (i + 1)) return false;
         if (!day.theme || typeof day.theme !== 'string') return false;
-        if (!day.conversation_starter || typeof day.conversation_starter !== 'string') return false;
-        if (!day.science_behind_it || typeof day.science_behind_it !== 'string') return false;
-        
-        // Validate content length (ensure substantial content, but be more lenient)
+
+        const hasReflectionFormat = typeof day.reflection === 'string' && typeof day.bible_verse === 'string';
+        const hasConversationFormat = typeof day.conversation_starter === 'string' && typeof day.science_behind_it === 'string';
+        if (!hasReflectionFormat && !hasConversationFormat) return false;
+
         if (day.theme.length < 3 || day.theme.length > 300) {
           console.warn(`Day ${day.day} theme length out of range: ${day.theme.length}`);
           return false;
         }
-        if (day.conversation_starter.length < 10 || day.conversation_starter.length > 2000) {
-          console.warn(`Day ${day.day} conversation_starter length out of range: ${day.conversation_starter.length}`);
+
+        const mainContent = day.reflection || day.conversation_starter;
+        if (mainContent.length < 10 || mainContent.length > 2000) {
+          console.warn(`Day ${day.day} main content length out of range: ${mainContent.length}`);
           return false;
         }
-        if (day.science_behind_it.length < 20 || day.science_behind_it.length > 5000) {
-          console.warn(`Day ${day.day} science_behind_it length out of range: ${day.science_behind_it.length}`);
+
+        const supportContent = day.bible_verse || day.science_behind_it;
+        if (supportContent.length < 5 || supportContent.length > 5000) {
+          console.warn(`Day ${day.day} support content length out of range: ${supportContent.length}`);
           return false;
         }
-        
-        // Additional content validation - ensure therapeutic content
-        // Check for broader therapeutic keywords to be more lenient
-        const therapeuticKeywords = [
-          /relationship/i, /couple/i, /partner/i, /communication/i, 
+
+        const contentKeywords = [
+          /relationship/i, /couple/i, /partner/i, /communication/i,
           /emotion/i, /feeling/i, /connect/i, /bond/i, /love/i, /trust/i,
           /together/i, /share/i, /understand/i, /listen/i, /support/i,
-          /care/i, /respect/i, /intimacy/i, /attachment/i, /secure/i
+          /care/i, /respect/i, /intimacy/i, /attachment/i, /secure/i,
+          /faith/i, /god/i, /prayer/i, /reflect/i, /grace/i, /spirit/i,
+          /church/i, /bible/i, /scripture/i, /worship/i, /heart/i
         ];
         
-        const hasTherapeuticContent = therapeuticKeywords.some(keyword => 
-          keyword.test(day.conversation_starter) || 
-          keyword.test(day.science_behind_it) || 
+        const hasRelevantContent = contentKeywords.some(keyword => 
+          keyword.test(mainContent) || 
+          keyword.test(supportContent) || 
           keyword.test(day.theme)
         );
         
-        // Only warn but don't fail validation - GPT-5 might use different therapeutic language
-        if (!hasTherapeuticContent) {
-          console.warn(`SECURITY: Day ${day.day} lacks common therapeutic keywords (but may still be valid)`);
+        if (!hasRelevantContent) {
+          console.warn(`SECURITY: Day ${day.day} lacks common content keywords (but may still be valid)`);
         }
       }
       
