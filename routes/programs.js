@@ -14,7 +14,10 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       return {
         initialProgramPrompt: orgCode.initial_program_prompt || null,
         nextProgramPrompt: orgCode.next_program_prompt || null,
-        therapyResponsePrompt: orgCode.therapy_response_prompt || null
+        therapyResponsePrompt: orgCode.therapy_response_prompt || null,
+        organizationName: orgCode.organization || null,
+        organizationCity: orgCode.city || null,
+        organizationState: orgCode.state || null
       };
     } catch {
       return null;

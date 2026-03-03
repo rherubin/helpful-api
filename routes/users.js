@@ -1,15 +1,16 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
+const { userUpdateLimiter } = require('../middleware/security');
 
 // Helper function to filter sensitive fields from user objects
 function filterUserData(user) {
   if (!user) return null;
-  // Remove password_hash and premium (premium should be set explicitly as boolean)
-  const { password_hash, premium, ...filteredUser } = user;
+  // Remove password_hash, is_premium (returned as computed `premium`), and premium
+  const { password_hash, premium, is_premium, ...filteredUser } = user;
   return filteredUser;
 }
 
-function createUserRoutes(userModel, authService, pairingService) {
+function createUserRoutes(userModel, authService, pairingService, orgCodeModel) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
 
@@ -106,12 +107,12 @@ function createUserRoutes(userModel, authService, pairingService) {
       const { id } = req.params;
       const user = await userModel.getUserById(id);
 
-      // Check if user has premium access (any premium pairings)
+      // Check if user has premium access via pairings or direct org_code assignment
       const hasPremiumPairing = await pairingService.pairingModel.userHasPremiumPairing(id);
 
       const userWithPremium = {
         ...filterUserData(user),
-        premium: hasPremiumPairing
+        premium: hasPremiumPairing || !!user.is_premium
       };
 
       res.status(200).json(userWithPremium);
@@ -160,7 +161,7 @@ function createUserRoutes(userModel, authService, pairingService) {
   });
 
   // Update user
-  router.put('/:id', authenticateToken, async (req, res) => {
+  router.put('/:id', userUpdateLimiter, authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
       const userId = req.user.id;
@@ -170,7 +171,7 @@ function createUserRoutes(userModel, authService, pairingService) {
         return res.status(403).json({ error: 'Not authorized to update this user' });
       }
 
-      const { email, user_name, partner_name, children, org_code_id } = req.body;
+      const { email, user_name, partner_name, children, org_code } = req.body;
       
       // Validate email format if provided
       if (email) {
@@ -182,17 +183,42 @@ function createUserRoutes(userModel, authService, pairingService) {
         }
       }
 
-      const updatedUser = await userModel.updateUser(id, {
-        email,
-        user_name,
-        partner_name,
-        children,
-        org_code_id
-      });
+      const updateData = { email, user_name, partner_name, children };
+
+      // Validate org_code if provided and grant premium status on success
+      if (org_code !== undefined) {
+        if (!orgCodeModel) {
+          return res.status(500).json({ error: 'Org code validation unavailable' });
+        }
+
+        let resolvedOrgCode;
+        try {
+          resolvedOrgCode = await orgCodeModel.getOrgCodeByCode(org_code);
+        } catch (err) {
+          return res.status(400).json({ error: 'Invalid org code' });
+        }
+
+        // Reject expired org codes
+        if (resolvedOrgCode.expires_at && new Date(resolvedOrgCode.expires_at) <= new Date()) {
+          return res.status(400).json({ error: 'Org code has expired' });
+        }
+
+        updateData.org_code_id = resolvedOrgCode.id;
+        updateData.is_premium = true;
+      }
+
+      const updatedUser = await userModel.updateUser(id, updateData);
+
+      // Compute premium status (org_code assignment or premium pairing)
+      const hasPremiumPairing = await pairingService.pairingModel.userHasPremiumPairing(id);
+      const userWithPremium = {
+        ...filterUserData(updatedUser),
+        premium: hasPremiumPairing || !!updatedUser.is_premium
+      };
 
       res.status(200).json({
         message: 'User updated successfully',
-        user: filterUserData(updatedUser)
+        user: userWithPremium
       });
     } catch (error) {
       if (error.message === 'User not found') {

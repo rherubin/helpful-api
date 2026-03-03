@@ -25,6 +25,18 @@ const strictLoginLimiter = rateLimit({
   skipSuccessfulRequests: true
 });
 
+// Rate limiting for PUT /users/:id to prevent org_code farming
+const userUpdateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 update attempts per 15 minutes per IP
+  message: {
+    error: 'Too many update attempts, please try again later',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // General API rate limiting (consistent across all environments)
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -121,6 +133,7 @@ function securityLogger(req, res, next) {
 module.exports = {
   loginLimiter,
   strictLoginLimiter,
+  userUpdateLimiter,
   apiLimiter,
   isAccountLocked,
   recordFailedAttempt,
