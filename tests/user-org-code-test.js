@@ -29,7 +29,8 @@ class UserOrgCodeTestRunner {
       userToken: null,
       adminToken: null,
       activeOrgCode: null,
-      expiredOrgCode: null
+      expiredOrgCode: null,
+      createdAutoOrgCodeIds: [] // auto-generated org codes from Path B tests
     };
   }
 
@@ -86,7 +87,9 @@ class UserOrgCodeTestRunner {
       if (this.testData.adminToken) {
         const activeOrgRes = await axios.post(`${this.baseURL}/api/org-codes`, {
           org_code: 'TESTORG_ACTIVE',
-          organization: 'Test Active Org'
+          organization: 'Test Active Org',
+          city: 'Test City',
+          state: 'TC'
         }, { headers: { Authorization: `Bearer ${this.testData.adminToken}` } });
 
         this.assert(activeOrgRes.status === 201, 'Setup - create active org code');
@@ -427,10 +430,20 @@ class UserOrgCodeTestRunner {
   }
 
   /**
-   * Rate limiter returns 429 after 10 rapid attempts
+   * Rate limiter returns 429 after exceeding the configured limit.
+   * Skipped automatically when USER_UPDATE_RATE_LIMIT env var is set to a high
+   * value (>= 20), since that mode is intended to bypass rate limits for other tests.
+   * Run this test in isolation with the default server config to validate the limit.
    */
   async testRateLimiting() {
     this.log('Testing PUT /users/:id rate limiting...', 'section');
+
+    const configuredLimit = parseInt(process.env.USER_UPDATE_RATE_LIMIT || '3', 10);
+    if (configuredLimit >= 20) {
+      this.log(`Skipping - server running with USER_UPDATE_RATE_LIMIT=${configuredLimit} (high-limit mode for other tests)`, 'warn');
+      this.log('Run without USER_UPDATE_RATE_LIMIT to test the rate limiter in isolation', 'warn');
+      return;
+    }
 
     let rlUser = null;
     let rlToken = null;
@@ -449,8 +462,8 @@ class UserOrgCodeTestRunner {
     let hitRateLimit = false;
     let requestCount = 0;
 
-    // Fire 12 rapid sequential requests (limit is 10 per 15 min)
-    for (let i = 0; i < 12; i++) {
+    // Fire configuredLimit + 2 requests to ensure we exceed the threshold
+    for (let i = 0; i < configuredLimit + 2; i++) {
       try {
         await axios.put(
           `${this.baseURL}/api/users/${rlUser.id}`,
@@ -469,7 +482,7 @@ class UserOrgCodeTestRunner {
 
     this.assert(
       hitRateLimit,
-      'Rate limiter - 429 received after exceeding 10 requests per 15 min',
+      `Rate limiter - 429 received after exceeding ${configuredLimit} requests per 5 min`,
       hitRateLimit ? 'Rate limit triggered correctly' : 'Rate limit was NOT triggered'
     );
 
@@ -516,6 +529,302 @@ class UserOrgCodeTestRunner {
     }
   }
 
+  /**
+   * Path B: all 3 of org_name + org_city + org_state creates a new org record,
+   * sets premium, and returns org fields in response + persists on GET
+   */
+  async testOrgDetailsCreation() {
+    this.log('Testing org_name + org_city + org_state creates new org record...', 'section');
+
+    let freshUser = null;
+    let freshToken = null;
+    try {
+      const res = await axios.post(`${this.baseURL}/api/users`, {
+        email: generateTestEmail('orgcode_pathb'),
+        password: 'TestPass987!'
+      });
+      freshUser = res.data.user;
+      freshToken = res.data.access_token;
+    } catch (err) {
+      this.assert(false, 'Path B test - fresh user creation', `Error: ${err.message}`);
+      return;
+    }
+
+    try {
+      const res = await axios.put(
+        `${this.baseURL}/api/users/${freshUser.id}`,
+        { org_name: 'Fresh Test Org', org_city: 'Fresh City', org_state: 'FC' },
+        { headers: { Authorization: `Bearer ${freshToken}` }, timeout: this.timeout }
+      );
+
+      this.assert(res.status === 200, 'Path B - status 200', `Status: ${res.status}`);
+      this.assert(res.data.user.premium === true, 'Path B - premium is true');
+      this.assert(
+        res.data.user.org_code_id !== null && res.data.user.org_code_id !== undefined,
+        'Path B - org_code_id is set',
+        `org_code_id: ${res.data.user.org_code_id}`
+      );
+      this.assert(
+        res.data.user.org_name === 'Fresh Test Org',
+        'Path B - org_name returned in response',
+        `org_name: ${res.data.user.org_name}`
+      );
+      this.assert(
+        res.data.user.org_city === 'Fresh City',
+        'Path B - org_city returned in response',
+        `org_city: ${res.data.user.org_city}`
+      );
+      this.assert(
+        res.data.user.org_state === 'FC',
+        'Path B - org_state returned in response',
+        `org_state: ${res.data.user.org_state}`
+      );
+
+      // Track auto-generated org code for cleanup
+      if (res.data.user.org_code_id) {
+        this.testData.createdAutoOrgCodeIds.push(res.data.user.org_code_id);
+      }
+
+      // Verify premium and org_code_id persist on GET /users/:id
+      const getRes = await axios.get(
+        `${this.baseURL}/api/users/${freshUser.id}`,
+        { headers: { Authorization: `Bearer ${freshToken}` }, timeout: this.timeout }
+      );
+
+      this.assert(
+        getRes.data.premium === true,
+        'Path B - premium persists on GET /users/:id',
+        `premium: ${getRes.data.premium}`
+      );
+      this.assert(
+        getRes.data.org_code_id === res.data.user.org_code_id,
+        'Path B - org_code_id persists on GET /users/:id',
+        `org_code_id: ${getRes.data.org_code_id}`
+      );
+    } catch (error) {
+      this.assert(false, 'Path B org details creation test', `Error: ${error.response?.data?.error || error.message}`);
+    } finally {
+      if (!this.keepData && freshUser) {
+        await axios.delete(`${this.baseURL}/api/users/${freshUser.id}`, {
+          headers: { Authorization: `Bearer ${freshToken}` }
+        }).catch(() => {});
+      }
+    }
+  }
+
+  /**
+   * Partial org details (fewer than all 3 fields) have no org side-effect
+   */
+  async testPartialOrgDetails() {
+    this.log('Testing partial org details have no side-effect...', 'section');
+
+    let freshUser = null;
+    let freshToken = null;
+    try {
+      const res = await axios.post(`${this.baseURL}/api/users`, {
+        email: generateTestEmail('orgcode_partial'),
+        password: 'TestPass987!'
+      });
+      freshUser = res.data.user;
+      freshToken = res.data.access_token;
+    } catch (err) {
+      this.assert(false, 'Partial org test - fresh user creation', `Error: ${err.message}`);
+      return;
+    }
+
+    try {
+      // Only org_name — missing org_city and org_state (include user_name so there is a valid field to update)
+      const res1 = await axios.put(
+        `${this.baseURL}/api/users/${freshUser.id}`,
+        { org_name: 'Only Name', user_name: 'Partial Test' },
+        { headers: { Authorization: `Bearer ${freshToken}` }, timeout: this.timeout }
+      );
+
+      this.assert(res1.status === 200, 'Partial org (name only) - status 200');
+      this.assert(
+        res1.data.user.premium === false,
+        'Partial org (name only) - premium remains false',
+        `premium: ${res1.data.user.premium}`
+      );
+      this.assert(
+        res1.data.user.org_code_id === null || res1.data.user.org_code_id === undefined,
+        'Partial org (name only) - org_code_id not set',
+        `org_code_id: ${res1.data.user.org_code_id}`
+      );
+      this.assert(
+        res1.data.user.org_name === null,
+        'Partial org (name only) - org_name null in response',
+        `org_name: ${res1.data.user.org_name}`
+      );
+
+      // org_name + org_city — missing org_state
+      const res2 = await axios.put(
+        `${this.baseURL}/api/users/${freshUser.id}`,
+        { org_name: 'Two Fields', org_city: 'Two City', user_name: 'Partial Test 2' },
+        { headers: { Authorization: `Bearer ${freshToken}` }, timeout: this.timeout }
+      );
+
+      this.assert(res2.status === 200, 'Partial org (name + city) - status 200');
+      this.assert(
+        res2.data.user.premium === false,
+        'Partial org (name + city) - premium remains false',
+        `premium: ${res2.data.user.premium}`
+      );
+      this.assert(
+        res2.data.user.org_code_id === null || res2.data.user.org_code_id === undefined,
+        'Partial org (name + city) - org_code_id not set',
+        `org_code_id: ${res2.data.user.org_code_id}`
+      );
+    } catch (error) {
+      this.assert(false, 'Partial org details test', `Error: ${error.response?.data?.error || error.message}`);
+    } finally {
+      if (!this.keepData && freshUser) {
+        await axios.delete(`${this.baseURL}/api/users/${freshUser.id}`, {
+          headers: { Authorization: `Bearer ${freshToken}` }
+        }).catch(() => {});
+      }
+    }
+  }
+
+  /**
+   * Path B alongside other profile fields — all apply in one request
+   */
+  async testOrgDetailsAlongsideOtherFields() {
+    this.log('Testing Path B org details alongside other profile fields...', 'section');
+
+    let freshUser = null;
+    let freshToken = null;
+    try {
+      const res = await axios.post(`${this.baseURL}/api/users`, {
+        email: generateTestEmail('orgcode_pathb_combo'),
+        password: 'TestPass987!'
+      });
+      freshUser = res.data.user;
+      freshToken = res.data.access_token;
+    } catch (err) {
+      this.assert(false, 'Path B combo test - fresh user creation', `Error: ${err.message}`);
+      return;
+    }
+
+    try {
+      const res = await axios.put(
+        `${this.baseURL}/api/users/${freshUser.id}`,
+        {
+          org_name: 'Combo Org',
+          org_city: 'Combo City',
+          org_state: 'CO',
+          user_name: 'Combo User',
+          partner_name: 'Combo Partner'
+        },
+        { headers: { Authorization: `Bearer ${freshToken}` }, timeout: this.timeout }
+      );
+
+      this.assert(res.status === 200, 'Path B combo - status 200', `Status: ${res.status}`);
+      this.assert(res.data.user.premium === true, 'Path B combo - premium is true');
+      this.assert(
+        res.data.user.org_code_id !== null && res.data.user.org_code_id !== undefined,
+        'Path B combo - org_code_id set',
+        `org_code_id: ${res.data.user.org_code_id}`
+      );
+      this.assert(
+        res.data.user.org_name === 'Combo Org',
+        'Path B combo - org_name correct',
+        `org_name: ${res.data.user.org_name}`
+      );
+      this.assert(
+        res.data.user.org_city === 'Combo City',
+        'Path B combo - org_city correct',
+        `org_city: ${res.data.user.org_city}`
+      );
+      this.assert(
+        res.data.user.org_state === 'CO',
+        'Path B combo - org_state correct',
+        `org_state: ${res.data.user.org_state}`
+      );
+      this.assert(
+        res.data.user.user_name === 'Combo User',
+        'Path B combo - user_name set',
+        `user_name: ${res.data.user.user_name}`
+      );
+      this.assert(
+        res.data.user.partner_name === 'Combo Partner',
+        'Path B combo - partner_name set',
+        `partner_name: ${res.data.user.partner_name}`
+      );
+
+      if (res.data.user.org_code_id) {
+        this.testData.createdAutoOrgCodeIds.push(res.data.user.org_code_id);
+      }
+    } catch (error) {
+      this.assert(false, 'Path B combo test', `Error: ${error.response?.data?.error || error.message}`);
+    } finally {
+      if (!this.keepData && freshUser) {
+        await axios.delete(`${this.baseURL}/api/users/${freshUser.id}`, {
+          headers: { Authorization: `Bearer ${freshToken}` }
+        }).catch(() => {});
+      }
+    }
+  }
+
+  /**
+   * Path A response includes org_name, org_city, org_state populated from the org record
+   */
+  async testOrgFieldsInResponse() {
+    this.log('Testing Path A response includes org_name, org_city, org_state...', 'section');
+
+    if (!this.testData.activeOrgCode) {
+      this.log('Skipping - no active org code available', 'warn');
+      return;
+    }
+
+    let freshUser = null;
+    let freshToken = null;
+    try {
+      const res = await axios.post(`${this.baseURL}/api/users`, {
+        email: generateTestEmail('orgcode_fields'),
+        password: 'TestPass987!'
+      });
+      freshUser = res.data.user;
+      freshToken = res.data.access_token;
+    } catch (err) {
+      this.assert(false, 'Org fields response test - fresh user creation', `Error: ${err.message}`);
+      return;
+    }
+
+    try {
+      const res = await axios.put(
+        `${this.baseURL}/api/users/${freshUser.id}`,
+        { org_code: this.testData.activeOrgCode.org_code },
+        { headers: { Authorization: `Bearer ${freshToken}` }, timeout: this.timeout }
+      );
+
+      this.assert(res.status === 200, 'Org fields response - status 200');
+      this.assert(
+        res.data.user.org_name === 'Test Active Org',
+        'Org fields response - org_name matches org record',
+        `org_name: ${res.data.user.org_name}`
+      );
+      this.assert(
+        res.data.user.org_city === 'Test City',
+        'Org fields response - org_city matches org record',
+        `org_city: ${res.data.user.org_city}`
+      );
+      this.assert(
+        res.data.user.org_state === 'TC',
+        'Org fields response - org_state matches org record',
+        `org_state: ${res.data.user.org_state}`
+      );
+    } catch (error) {
+      this.assert(false, 'Org fields in response test', `Error: ${error.response?.data?.error || error.message}`);
+    } finally {
+      if (!this.keepData && freshUser) {
+        await axios.delete(`${this.baseURL}/api/users/${freshUser.id}`, {
+          headers: { Authorization: `Bearer ${freshToken}` }
+        }).catch(() => {});
+      }
+    }
+  }
+
   // ─── Cleanup ──────────────────────────────────────────────────────────────
 
   async cleanup() {
@@ -542,13 +851,20 @@ class UserOrgCodeTestRunner {
           }).catch(() => {});
         }
       }
+
+      // Delete auto-generated org codes created by Path B tests
+      for (const orgCodeId of this.testData.createdAutoOrgCodeIds) {
+        await axios.delete(`${this.baseURL}/api/org-codes/${orgCodeId}`, {
+          headers: { Authorization: `Bearer ${this.testData.adminToken}` }
+        }).catch(() => {});
+      }
     }
   }
 
   printKeepDataInfo() {
     this.log('─── Keep-data SQL queries ───────────────────────────────────────────', 'data');
     this.log("SELECT id, email, org_code_id, is_premium FROM users WHERE email LIKE 'orgcode_%@example.com';", 'data');
-    this.log("SELECT id, org_code, organization, expires_at FROM org_codes WHERE org_code LIKE 'TESTORG%';", 'data');
+    this.log("SELECT id, org_code, organization, city, state, expires_at FROM org_codes WHERE org_code LIKE 'TESTORG%' OR org_code LIKE 'ORG-%';", 'data');
     this.log('────────────────────────────────────────────────────────────────────', 'data');
   }
 
@@ -588,15 +904,23 @@ class UserOrgCodeTestRunner {
       }
 
       const tests = [
+        // Path A: existing org_code string
         () => this.testValidOrgCode(),
         () => this.testInvalidOrgCode(),
         () => this.testExpiredOrgCode(),
         () => this.testOrgCodeAlongsideOtherFields(),
+        () => this.testOrgFieldsInResponse(),
+        // Path B: org_name + org_city + org_state auto-creates org record
+        () => this.testOrgDetailsCreation(),
+        () => this.testPartialOrgDetails(),
+        () => this.testOrgDetailsAlongsideOtherFields(),
+        // General
         () => this.testUpdateWithoutOrgCode(),
         () => this.testAuthenticationRequired(),
         () => this.testCannotUpdateOtherUser(),
-        () => this.testRateLimiting(),
-        () => this.testSensitiveFieldsNotExposed()
+        () => this.testSensitiveFieldsNotExposed(),
+        // Rate limit test last — exhausts the IP's remaining request allowance
+        () => this.testRateLimiting()
       ];
 
       for (const test of tests) {

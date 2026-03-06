@@ -171,7 +171,7 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
         return res.status(403).json({ error: 'Not authorized to update this user' });
       }
 
-      const { email, user_name, partner_name, children, org_code } = req.body;
+      const { email, user_name, partner_name, children, org_code, org_name, org_city, org_state } = req.body;
       
       // Validate email format if provided
       if (email) {
@@ -205,15 +205,48 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
 
         updateData.org_code_id = resolvedOrgCode.id;
         updateData.is_premium = true;
+      } else if (org_name && org_city && org_state) {
+        // No org_code provided but all 3 org details present — create a new org record
+        if (!orgCodeModel) {
+          return res.status(500).json({ error: 'Org code service unavailable' });
+        }
+
+        const generatedCode = `ORG-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+        const newOrgCode = await orgCodeModel.createOrgCode({
+          org_code: generatedCode,
+          organization: org_name,
+          city: org_city,
+          state: org_state
+        });
+
+        updateData.org_code_id = newOrgCode.id;
+        updateData.is_premium = true;
       }
 
       const updatedUser = await userModel.updateUser(id, updateData);
 
       // Compute premium status (org_code assignment or premium pairing)
       const hasPremiumPairing = await pairingService.pairingModel.userHasPremiumPairing(id);
+
+      // Fetch org details to include in response
+      let orgDetails = { org_name: null, org_city: null, org_state: null };
+      if (updatedUser.org_code_id && orgCodeModel) {
+        try {
+          const orgCode = await orgCodeModel.getOrgCodeById(updatedUser.org_code_id);
+          orgDetails = {
+            org_name: orgCode.organization || null,
+            org_city: orgCode.city || null,
+            org_state: orgCode.state || null
+          };
+        } catch (err) {
+          // Non-fatal — org code may have been deleted; leave fields null
+        }
+      }
+
       const userWithPremium = {
         ...filterUserData(updatedUser),
-        premium: hasPremiumPairing || !!updatedUser.is_premium
+        premium: hasPremiumPairing || !!updatedUser.is_premium,
+        ...orgDetails
       };
 
       res.status(200).json({
