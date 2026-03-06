@@ -62,6 +62,30 @@ function createOrgCodeRoutes(orgCodeModel, userModel, authService, adminAuthServ
     }
   });
 
+  // Get org-code linkage audit logs (admin only)
+  router.get('/audit/org-linkages', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      if (!userModel || typeof userModel.getOrgCodeLinkAuditLogs !== 'function') {
+        return res.status(500).json({ error: 'Audit log service unavailable' });
+      }
+
+      const { user_id, limit, offset } = req.query;
+      const auditLogs = await userModel.getOrgCodeLinkAuditLogs({
+        userId: user_id || null,
+        limit,
+        offset
+      });
+
+      res.status(200).json({
+        message: 'Org linkage audit logs retrieved successfully',
+        audit_logs: auditLogs
+      });
+    } catch (error) {
+      console.error('Get org linkage audit logs error:', error.message);
+      return res.status(500).json({ error: 'Failed to fetch org linkage audit logs' });
+    }
+  });
+
   // Get org code by ID
   router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
     try {
