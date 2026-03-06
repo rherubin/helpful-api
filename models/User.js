@@ -40,10 +40,32 @@ class User {
           ON DELETE SET NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
+    const createUserOrgCodeAuditTable = `
+      CREATE TABLE IF NOT EXISTS user_org_code_audit_logs (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) NOT NULL,
+        changed_by_user_id VARCHAR(50) NOT NULL,
+        previous_org_code_id VARCHAR(50) DEFAULT NULL,
+        new_org_code_id VARCHAR(50) DEFAULT NULL,
+        change_type VARCHAR(20) NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_user_org_audit_user_id (user_id),
+        INDEX idx_user_org_audit_changed_by (changed_by_user_id),
+        INDEX idx_user_org_audit_created_at (created_at),
+        CONSTRAINT fk_user_org_audit_user
+          FOREIGN KEY (user_id) REFERENCES users(id)
+          ON DELETE CASCADE,
+        CONSTRAINT fk_user_org_audit_changed_by_user
+          FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
+          ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `;
 
     try {
       await this.query(createUsersTable);
       console.log('Users table initialized successfully.');
+      await this.query(createUserOrgCodeAuditTable);
+      console.log('User org code audit table initialized successfully.');
 
       // Migration: Add org_code_id column if it doesn't exist
       try {
@@ -299,6 +321,71 @@ class User {
         throw new Error('Failed to update user');
       }
     }
+  }
+
+  async logOrgCodeLinkChange(userId, changedByUserId, previousOrgCodeId, newOrgCodeId) {
+    const changeType =
+      !previousOrgCodeId && newOrgCodeId ? 'attach' :
+      previousOrgCodeId && !newOrgCodeId ? 'detach' :
+      previousOrgCodeId && newOrgCodeId && previousOrgCodeId !== newOrgCodeId ? 'switch' :
+      'noop';
+
+    if (changeType === 'noop') {
+      return null;
+    }
+
+    const id = this.generateUniqueId();
+    const insertAuditLog = `
+      INSERT INTO user_org_code_audit_logs (
+        id, user_id, changed_by_user_id, previous_org_code_id, new_org_code_id, change_type, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, NOW())
+    `;
+
+    await this.query(insertAuditLog, [
+      id,
+      userId,
+      changedByUserId,
+      previousOrgCodeId || null,
+      newOrgCodeId || null,
+      changeType
+    ]);
+
+    return { id, change_type: changeType };
+  }
+
+  async getOrgCodeLinkAuditLogs({ userId = null, limit = 100, offset = 0 } = {}) {
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
+    const safeOffset = Math.max(parseInt(offset, 10) || 0, 0);
+
+    const params = [];
+    let whereClause = '';
+
+    if (userId) {
+      whereClause = 'WHERE l.user_id = ?';
+      params.push(userId);
+    }
+
+    const query = `
+      SELECT
+        l.id,
+        l.user_id,
+        l.changed_by_user_id,
+        l.previous_org_code_id,
+        prev_oc.org_code AS previous_org_code,
+        l.new_org_code_id,
+        new_oc.org_code AS new_org_code,
+        l.change_type,
+        l.created_at
+      FROM user_org_code_audit_logs l
+      LEFT JOIN org_codes prev_oc ON prev_oc.id = l.previous_org_code_id
+      LEFT JOIN org_codes new_oc ON new_oc.id = l.new_org_code_id
+      ${whereClause}
+      ORDER BY l.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    params.push(safeLimit, safeOffset);
+    return this.query(query, params);
   }
 
   // Verify password

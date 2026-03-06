@@ -17,7 +17,7 @@ function filterUserData(user) {
   return filteredUser;
 }
 
-function createAuthRoutes(authService, userModel, pairingService) {
+function createAuthRoutes(authService, userModel, pairingService, orgCodeModel) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
 
@@ -187,11 +187,28 @@ function createAuthRoutes(authService, userModel, pairingService) {
       // Extract all pairing codes from the user's pairings
       const pairingCodes = pairingsResult.pairings.map(pairing => pairing.partner_code).filter(code => code);
 
+      // Fetch org details if user has a linked org code
+      let orgDetails = { org_id: null, org_name: null, org_city: null, org_state: null };
+      if (user.org_code_id && orgCodeModel) {
+        try {
+          const orgCode = await orgCodeModel.getOrgCodeById(user.org_code_id);
+          orgDetails = {
+            org_id: orgCode.id || null,
+            org_name: orgCode.organization || null,
+            org_city: orgCode.city || null,
+            org_state: orgCode.state || null
+          };
+        } catch (err) {
+          // Non-fatal — org code may have been deleted; leave fields null
+        }
+      }
+
       const profile = {
         ...filterUserData(user),
         premium: hasPremiumPairing,
         pairings: pairingsResult.pairings,
-        pairing_codes: pairingCodes
+        pairing_codes: pairingCodes,
+        ...orgDetails
       };
 
       res.status(200).json({

@@ -189,7 +189,14 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
         return res.status(403).json({ error: 'Not authorized to update this user' });
       }
 
-      const { email, user_name, partner_name, children, org_code, org_name, org_city, org_state } = req.body;
+      const { email, user_name, partner_name, children, org_code } = req.body;
+
+      // Org metadata is admin-managed only; users can only attach/detach via org_code.
+      if (req.body.org_name !== undefined || req.body.org_city !== undefined || req.body.org_state !== undefined) {
+        return res.status(403).json({
+          error: 'org_name, org_city, and org_state are read-only for users. Please contact an admin.'
+        });
+      }
       
       // Validate email format if provided
       if (email) {
@@ -201,60 +208,55 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
         }
       }
 
+      const currentUser = await userModel.getUserById(id);
       const updateData = { email, user_name, partner_name, children };
 
-      // Validate org_code if provided and grant premium status on success
+      // Users may only attach/detach org link through org_code.
       if (org_code !== undefined) {
         if (!orgCodeModel) {
           return res.status(500).json({ error: 'Org code validation unavailable' });
         }
 
-        let resolvedOrgCode;
-        try {
-          resolvedOrgCode = await orgCodeModel.getOrgCodeByCode(org_code);
-        } catch (err) {
-          return res.status(400).json({ error: 'Invalid org code' });
-        }
-
-        // Reject expired org codes
-        if (resolvedOrgCode.expires_at && new Date(resolvedOrgCode.expires_at) <= new Date()) {
-          return res.status(400).json({ error: 'Org code has expired' });
-        }
-
-        updateData.org_code_id = resolvedOrgCode.id;
-        updateData.is_premium = true;
-
-        // Backfill any org details that are missing on the stored record
-        const orgCodeUpdates = {};
-        if (org_name && !resolvedOrgCode.organization) orgCodeUpdates.organization = org_name;
-        if (org_city && !resolvedOrgCode.city) orgCodeUpdates.city = org_city;
-        if (org_state && !resolvedOrgCode.state) orgCodeUpdates.state = org_state;
-        if (Object.keys(orgCodeUpdates).length > 0) {
-          try {
-            await orgCodeModel.updateOrgCode(resolvedOrgCode.id, orgCodeUpdates);
-          } catch (err) {
-            console.warn('Could not backfill org code details:', err.message);
+        const isDetachRequest = org_code === null || (typeof org_code === 'string' && org_code.trim() === '');
+        if (isDetachRequest) {
+          updateData.org_code_id = null;
+          updateData.is_premium = false;
+        } else {
+          if (typeof org_code !== 'string') {
+            return res.status(400).json({ error: 'Invalid org code' });
           }
-        }
-      } else if (org_name && org_city && org_state) {
-        // No org_code provided but all 3 org details present — create a new org record
-        if (!orgCodeModel) {
-          return res.status(500).json({ error: 'Org code service unavailable' });
-        }
 
-        const generatedCode = `ORG-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
-        const newOrgCode = await orgCodeModel.createOrgCode({
-          org_code: generatedCode,
-          organization: org_name,
-          city: org_city,
-          state: org_state
-        });
+          let resolvedOrgCode;
+          try {
+            resolvedOrgCode = await orgCodeModel.getOrgCodeByCode(org_code.trim());
+          } catch (err) {
+            return res.status(400).json({ error: 'Invalid org code' });
+          }
 
-        updateData.org_code_id = newOrgCode.id;
-        updateData.is_premium = true;
+          // Reject expired org codes
+          if (resolvedOrgCode.expires_at && new Date(resolvedOrgCode.expires_at) <= new Date()) {
+            return res.status(400).json({ error: 'Org code has expired' });
+          }
+
+          updateData.org_code_id = resolvedOrgCode.id;
+          updateData.is_premium = true;
+        }
       }
 
       const updatedUser = await userModel.updateUser(id, updateData);
+
+      if (currentUser.org_code_id !== updatedUser.org_code_id) {
+        try {
+          await userModel.logOrgCodeLinkChange(
+            id,
+            userId,
+            currentUser.org_code_id,
+            updatedUser.org_code_id
+          );
+        } catch (auditError) {
+          console.warn('Failed to write org code linkage audit log:', auditError.message);
+        }
+      }
 
       // Compute premium status (org_code assignment or premium pairing)
       const hasPremiumPairing = await pairingService.pairingModel.userHasPremiumPairing(id);
