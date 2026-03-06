@@ -287,18 +287,20 @@ class ChatGPTService {
     try {
       // Sanitize all inputs
       const sanitizedUserName = this.sanitizePromptInput(userName);
-      const sanitizedPartnerName = this.sanitizePromptInput(partnerName);
+      const sanitizedPartnerName = partnerName ? this.sanitizePromptInput(partnerName) : '';
       const sanitizedUserInput = this.sanitizePromptInput(userInput);
 
       // Validate input safety
-      if (!this.validateInputSafety(sanitizedUserInput) || 
-          !this.validateInputSafety(sanitizedUserName) || 
-          !this.validateInputSafety(sanitizedPartnerName)) {
+      const safetyChecks = [sanitizedUserInput, sanitizedUserName];
+      if (sanitizedPartnerName) safetyChecks.push(sanitizedPartnerName);
+      if (safetyChecks.some(input => !this.validateInputSafety(input))) {
         throw new Error('Input contains potentially unsafe content');
       }
 
-      // Validate that user names are not generic placeholders
-      const nameValidation = this.validateUserNames([sanitizedUserName, sanitizedPartnerName]);
+      // Validate that user name is not a generic placeholder
+      const namesToValidate = [sanitizedUserName];
+      if (sanitizedPartnerName) namesToValidate.push(sanitizedPartnerName);
+      const nameValidation = this.validateUserNames(namesToValidate);
       if (!nameValidation.valid) {
         throw new Error(nameValidation.error);
       }
@@ -307,8 +309,8 @@ class ChatGPTService {
       if (sanitizedUserName.length < 1 || sanitizedUserName.length > 50) {
         throw new Error('User name must be between 1 and 50 characters');
       }
-      if (sanitizedPartnerName.length < 1 || sanitizedPartnerName.length > 50) {
-        throw new Error('Partner name must be between 1 and 50 characters');
+      if (sanitizedPartnerName && sanitizedPartnerName.length > 50) {
+        throw new Error('Partner name must be 50 characters or fewer');
       }
       if (sanitizedUserInput.length < 10 || sanitizedUserInput.length > 2000) {
         throw new Error('User input must be between 10 and 2000 characters');

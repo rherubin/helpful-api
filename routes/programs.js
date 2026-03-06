@@ -88,15 +88,14 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         }
       }
 
-      // Validate that both user names are set
-      if (!userName || !partnerName) {
+      // Validate that user name is set
+      if (!userName) {
         return res.status(400).json({
-          error: 'User names are required to generate therapy content',
+          error: 'User name is required to generate therapy content',
           details: {
-            user_name_set: !!userName,
-            partner_name_set: !!partnerName
+            user_name_set: !!userName
           },
-          hint: 'Please update your profile with user_name and partner_name before generating a program'
+          hint: 'Please update your profile with user_name before generating a program'
         });
       }
 
@@ -239,15 +238,14 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         }
       }
 
-      // Validate that both user names are set
-      if (!userName || !partnerName) {
+      // Validate that user name is set
+      if (!userName) {
         return res.status(400).json({
-          error: 'User names are required to generate therapy content',
+          error: 'User name is required to generate therapy content',
           details: {
-            user_name_set: !!userName,
-            partner_name_set: !!partnerName
+            user_name_set: !!userName
           },
-          hint: 'Please update your profile with user_name and partner_name before generating a program'
+          hint: 'Please update your profile with user_name before generating a program'
         });
       }
 
@@ -340,15 +338,14 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         }
       }
 
-      // Validate that both user names are set
-      if (!userName || !partnerName) {
+      // Validate that user name is set
+      if (!userName) {
         return res.status(400).json({
-          error: 'User names are required to generate therapy content',
+          error: 'User name is required to generate therapy content',
           details: {
-            user_name_set: !!userName,
-            partner_name_set: !!partnerName
+            user_name_set: !!userName
           },
-          hint: 'Please update your profile with user_name and partner_name before generating a program'
+          hint: 'Please update your profile with user_name before generating a program'
         });
       }
 

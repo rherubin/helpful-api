@@ -26,9 +26,10 @@ const strictLoginLimiter = rateLimit({
 });
 
 // Rate limiting for PUT /users/:id to prevent org_code farming
+// USER_UPDATE_RATE_LIMIT env var allows overriding the limit (e.g. for test environments)
 const userUpdateLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 3, // 3 update attempts per 5 minutes per IP
+  max: parseInt(process.env.USER_UPDATE_RATE_LIMIT || '3', 10),
   message: {
     error: 'Too many update attempts, please try again later',
     retryAfter: '5 minutes'

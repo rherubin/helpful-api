@@ -14,7 +14,8 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 
 ### Advanced Features  
 - **Smart Pairing Responses**: Pending requests show `partner: null`, accepted pairings show full partner data
-- **Rate Limiting**: Configurable limits (1000 req/15min general, 100 req/15min login)
+- **Org Code Premium**: Users can gain premium status by validating an org code or self-registering org details — no iOS/Android subscription required
+- **Rate Limiting**: Configurable limits (1000 req/15min general, 100 req/15min login, 3 req/5min for user updates)
 - **Comprehensive Testing**: 95+ tests across multiple test suites with 98%+ success rates
 - **Complete Pairing System**: Full end-to-end pairing workflow with acceptance, rejection, and profile integration
 - **Password Security**: Bcrypt hashing with strict password requirements (uppercase, lowercase, number, special char)
@@ -411,7 +412,8 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 #### Update User
 - **PUT** `/api/users/:id`
 - **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Update user profile including relationship details. Users can only update their own profile.
+- **Rate Limit:** 3 requests per 5 minutes per IP
+- **Description:** Update user profile including relationship details and org association. Users can only update their own profile.
 - **Body:**
   ```json
   {
@@ -432,12 +434,60 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
       "partner_name": "Sarah",
       "children": 2,
       "max_pairings": 1,
+      "premium": false,
+      "org_code_id": null,
+      "org_name": null,
+      "org_city": null,
+      "org_state": null,
       "created_at": "2024-01-01T00:00:00.000Z",
       "updated_at": "2024-01-01T01:00:00.000Z"
     }
   }
   ```
   **Note**: All fields are optional. Only provided fields will be updated. The `children` field must be a non-negative integer if provided.
+
+##### Associating an Org Code (Premium via Org)
+
+Passing a valid `org_code` string activates premium status on the user record without requiring an iOS/Android subscription. This is an alternative premium pathway for users affiliated with an organization.
+
+**Path A — Validate an existing org code:**
+- Pass the `org_code` string. The API looks it up, checks it is not expired, links it to the user, and sets `premium: true`.
+  ```json
+  {
+    "org_code": "ACME2024"
+  }
+  ```
+  - `400 Invalid org code` — code does not exist
+  - `400 Org code has expired` — code exists but its `expires_at` has passed
+
+**Path B — Create a new org record on the fly:**
+- Omit `org_code` but supply all three of `org_name`, `org_city`, and `org_state`. The API creates a new org_codes record with a generated unique code, links it to the user, and sets `premium: true`. All three fields are required together; providing fewer than three has no org side-effect.
+  ```json
+  {
+    "org_name": "Acme Health",
+    "org_city": "Austin",
+    "org_state": "TX"
+  }
+  ```
+
+**Response when premium is granted (either path):**
+```json
+{
+  "message": "User updated successfully",
+  "user": {
+    "id": "unique_id",
+    "premium": true,
+    "org_code_id": "abc123",
+    "org_name": "Acme Health",
+    "org_city": "Austin",
+    "org_state": "TX",
+    "created_at": "2024-01-01T00:00:00.000Z",
+    "updated_at": "2024-01-01T01:00:00.000Z"
+  }
+}
+```
+
+**Rate limiting note:** This endpoint is throttled at 3 requests per 5 minutes per IP to prevent org code farming/enumeration attacks. Exceeding the limit returns `429 Too Many Requests`.
 
 #### Get User Profile with Pairings & Requests (Combined)
 - **GET** `/api/profile`
