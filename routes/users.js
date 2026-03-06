@@ -110,9 +110,27 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
       // Check if user has premium access via pairings or direct org_code assignment
       const hasPremiumPairing = await pairingService.pairingModel.userHasPremiumPairing(id);
 
+      // Fetch org details to include in response
+      let orgDetails = { org_name: null, org_city: null, org_state: null, duration_start: null, duration_end: null };
+      if (user.org_code_id && orgCodeModel) {
+        try {
+          const orgCode = await orgCodeModel.getOrgCodeById(user.org_code_id);
+          orgDetails = {
+            org_name: orgCode.organization || null,
+            org_city: orgCode.city || null,
+            org_state: orgCode.state || null,
+            duration_start: orgCode.duration_start || null,
+            duration_end: orgCode.duration_end || null
+          };
+        } catch (err) {
+          // Non-fatal — org code may have been deleted; leave fields null
+        }
+      }
+
       const userWithPremium = {
         ...filterUserData(user),
-        premium: hasPremiumPairing || !!user.is_premium
+        premium: hasPremiumPairing || !!user.is_premium,
+        ...orgDetails
       };
 
       res.status(200).json(userWithPremium);
@@ -205,6 +223,19 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
 
         updateData.org_code_id = resolvedOrgCode.id;
         updateData.is_premium = true;
+
+        // Backfill any org details that are missing on the stored record
+        const orgCodeUpdates = {};
+        if (org_name && !resolvedOrgCode.organization) orgCodeUpdates.organization = org_name;
+        if (org_city && !resolvedOrgCode.city) orgCodeUpdates.city = org_city;
+        if (org_state && !resolvedOrgCode.state) orgCodeUpdates.state = org_state;
+        if (Object.keys(orgCodeUpdates).length > 0) {
+          try {
+            await orgCodeModel.updateOrgCode(resolvedOrgCode.id, orgCodeUpdates);
+          } catch (err) {
+            console.warn('Could not backfill org code details:', err.message);
+          }
+        }
       } else if (org_name && org_city && org_state) {
         // No org_code provided but all 3 org details present — create a new org record
         if (!orgCodeModel) {
@@ -229,14 +260,16 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
       const hasPremiumPairing = await pairingService.pairingModel.userHasPremiumPairing(id);
 
       // Fetch org details to include in response
-      let orgDetails = { org_name: null, org_city: null, org_state: null };
+      let orgDetails = { org_name: null, org_city: null, org_state: null, duration_start: null, duration_end: null };
       if (updatedUser.org_code_id && orgCodeModel) {
         try {
           const orgCode = await orgCodeModel.getOrgCodeById(updatedUser.org_code_id);
           orgDetails = {
             org_name: orgCode.organization || null,
             org_city: orgCode.city || null,
-            org_state: orgCode.state || null
+            org_state: orgCode.state || null,
+            duration_start: orgCode.duration_start || null,
+            duration_end: orgCode.duration_end || null
           };
         } catch (err) {
           // Non-fatal — org code may have been deleted; leave fields null

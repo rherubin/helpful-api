@@ -28,6 +28,8 @@ class OrgCode {
         next_program_prompt TEXT DEFAULT NULL,
         therapy_response_prompt TEXT DEFAULT NULL,
         expires_at DATETIME DEFAULT NULL,
+        duration_start DATETIME DEFAULT NULL,
+        duration_end DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_org_code (org_code)
@@ -48,6 +50,31 @@ class OrgCode {
       ];
 
       for (const column of addressColumns) {
+        try {
+          const columnExists = await this.queryOne(`
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'org_codes'
+              AND COLUMN_NAME = '${column.name}'
+          `);
+
+          if (!columnExists) {
+            await this.query(`ALTER TABLE org_codes ADD COLUMN ${column.name} ${column.type}`);
+            console.log(`Added ${column.name} column to org_codes table`);
+          }
+        } catch (colErr) {
+          console.warn(`Warning adding ${column.name} column:`, colErr.message);
+        }
+      }
+
+      // Migration: Add duration columns if they don't exist
+      const durationColumns = [
+        { name: 'duration_start', type: 'DATETIME DEFAULT NULL' },
+        { name: 'duration_end', type: 'DATETIME DEFAULT NULL' }
+      ];
+
+      for (const column of durationColumns) {
         try {
           const columnExists = await this.queryOne(`
             SELECT COLUMN_NAME
@@ -116,7 +143,9 @@ class OrgCode {
       initial_program_prompt = null,
       next_program_prompt = null,
       therapy_response_prompt = null,
-      expires_at = null
+      expires_at = null,
+      duration_start = null,
+      duration_end = null
     } = data;
 
     if (!org_code || !organization) {
@@ -128,9 +157,9 @@ class OrgCode {
     try {
       await this.query(
         `INSERT INTO org_codes
-          (id, org_code, organization, address1, address2, city, state, postalCode, initial_program_prompt, next_program_prompt, therapy_response_prompt, expires_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-        [id, org_code, organization, address1, address2, city, state, postalCode, initial_program_prompt, next_program_prompt, therapy_response_prompt, expires_at]
+          (id, org_code, organization, address1, address2, city, state, postalCode, initial_program_prompt, next_program_prompt, therapy_response_prompt, expires_at, duration_start, duration_end, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [id, org_code, organization, address1, address2, city, state, postalCode, initial_program_prompt, next_program_prompt, therapy_response_prompt, expires_at, duration_start, duration_end]
       );
 
       return this.getOrgCodeById(id);
@@ -145,13 +174,13 @@ class OrgCode {
   }
 
   async getOrgCodeById(id) {
-    const row = await this.queryOne('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, created_at, updated_at FROM org_codes WHERE id = ?', [id]);
+    const row = await this.queryOne('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM org_codes WHERE id = ?', [id]);
     if (!row) throw new Error('OrgCode not found');
     return row;
   }
 
   async getOrgCodeByCode(orgCode) {
-    const row = await this.queryOne('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, created_at, updated_at FROM org_codes WHERE org_code = ?', [orgCode]);
+    const row = await this.queryOne('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM org_codes WHERE org_code = ?', [orgCode]);
     if (!row) throw new Error('OrgCode not found');
     return row;
   }
@@ -170,7 +199,7 @@ class OrgCode {
   }
 
   async updateOrgCode(id, updateData) {
-    const allowed = ['org_code', 'organization', 'address1', 'address2', 'city', 'state', 'postalCode', 'initial_program_prompt', 'next_program_prompt', 'therapy_response_prompt', 'expires_at'];
+    const allowed = ['org_code', 'organization', 'address1', 'address2', 'city', 'state', 'postalCode', 'initial_program_prompt', 'next_program_prompt', 'therapy_response_prompt', 'expires_at', 'duration_start', 'duration_end'];
     const fields = [];
     const values = [];
 
@@ -216,7 +245,7 @@ class OrgCode {
   }
 
   async getAllOrgCodes() {
-    return this.query('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, created_at, updated_at FROM org_codes ORDER BY created_at DESC');
+    return this.query('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM org_codes ORDER BY created_at DESC');
   }
 }
 
