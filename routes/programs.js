@@ -4,6 +4,88 @@ const { createAuthenticateToken } = require('../middleware/auth');
 function createProgramRoutes(programModel, chatGPTService, programStepModel = null, userModel = null, pairingModel = null, authService = null, userModelForOrgCode = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
+  const GENERATION_FOLLOWUP_ENABLED = process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED !== 'false';
+  const GENERATION_FOLLOWUP_DELAY_MS = Number(process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS || 60000);
+
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  async function hasProgramSteps(programId) {
+    if (!programStepModel) return false;
+    const steps = await programStepModel.getProgramSteps(programId);
+    return Array.isArray(steps) && steps.length > 0;
+  }
+
+  async function generateAndPersistProgramContent({ programId, generateResponse, successLogPrefix }) {
+    // If steps already exist, treat as already-completed work.
+    if (await hasProgramSteps(programId)) {
+      console.log(`${successLogPrefix} Program steps already exist, skipping generation for:`, programId);
+      return;
+    }
+
+    const therapyResponse = await generateResponse();
+    const therapyResponseString = typeof therapyResponse === 'object'
+      ? JSON.stringify(therapyResponse)
+      : therapyResponse;
+
+    // Persist raw response for backward compatibility and diagnostics.
+    await programModel.updateTherapyResponse(programId, therapyResponseString);
+
+    if (programStepModel) {
+      // Check again to avoid duplicate step creation in rare concurrent trigger races.
+      if (!(await hasProgramSteps(programId))) {
+        await programStepModel.createProgramSteps(programId, therapyResponseString);
+      }
+      console.log(`${successLogPrefix} Program steps created for program:`, programId);
+    }
+
+    console.log(`${successLogPrefix} ChatGPT response generated and saved for program:`, programId);
+  }
+
+  async function runGenerationWithFollowUp({ programId, generateResponse, logPrefix }) {
+    const attemptLogs = [];
+
+    try {
+      await generateAndPersistProgramContent({
+        programId,
+        generateResponse,
+        successLogPrefix: logPrefix
+      });
+      return;
+    } catch (firstError) {
+      attemptLogs.push(`attempt_1: ${firstError.message}`);
+      console.error(`${logPrefix} Initial generation attempt failed for program ${programId}:`, firstError.message);
+    }
+
+    if (GENERATION_FOLLOWUP_ENABLED) {
+      try {
+        console.log(`${logPrefix} Scheduling follow-up generation attempt in ${GENERATION_FOLLOWUP_DELAY_MS}ms for program:`, programId);
+        await sleep(GENERATION_FOLLOWUP_DELAY_MS);
+
+        // If the first attempt eventually completed asynchronously elsewhere, do not regenerate.
+        if (await hasProgramSteps(programId)) {
+          console.log(`${logPrefix} Follow-up skipped; program already has steps:`, programId);
+          return;
+        }
+
+        await generateAndPersistProgramContent({
+          programId,
+          generateResponse,
+          successLogPrefix: `${logPrefix} [follow-up]`
+        });
+        return;
+      } catch (followUpError) {
+        attemptLogs.push(`attempt_2: ${followUpError.message}`);
+        console.error(`${logPrefix} Follow-up generation attempt failed for program ${programId}:`, followUpError.message);
+      }
+    }
+
+    const combinedError = `Program generation failed after ${GENERATION_FOLLOWUP_ENABLED ? '2 attempts' : '1 attempt'} (${attemptLogs.join(' | ')})`;
+    try {
+      await programModel.updateGenerationError(programId, combinedError);
+    } catch (saveError) {
+      console.error(`${logPrefix} Failed to save generation error for program ${programId}:`, saveError.message);
+    }
+  }
 
   // Fetch org context and custom prompts for a user.
   // Priority: linked admin org code → user's custom org fields → null.
@@ -142,41 +224,21 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       if (chatGPTService && chatGPTService.isConfigured()) {
         // Don't await this - let it run in the background
         (async () => {
-          try {
-            console.log('Generating next program ChatGPT response for program:', newProgram.id);
-            const customPrompts = await getCustomPrompts(previousProgram.user_id);
-            const therapyResponse = await chatGPTService.generateNextCouplesProgram(
-              userName, 
-              partnerName, 
-              previousConversationStarters,
-              user_input,
-              customPrompts
-            );
-            
-            // Convert response to string if it's an object
-            const therapyResponseString = typeof therapyResponse === 'object' 
-              ? JSON.stringify(therapyResponse) 
-              : therapyResponse;
-            
-            // Update the program with the therapy response (for backward compatibility)
-            await programModel.updateTherapyResponse(newProgram.id, therapyResponseString);
-            
-            // Also save to program_steps table if available (create program steps)
-            if (programStepModel) {
-              await programStepModel.createProgramSteps(newProgram.id, therapyResponseString);
-              console.log('Program steps created for next program:', newProgram.id);
+          console.log('Generating next program ChatGPT response for program:', newProgram.id);
+          await runGenerationWithFollowUp({
+            programId: newProgram.id,
+            logPrefix: '[next_program]',
+            generateResponse: async () => {
+              const customPrompts = await getCustomPrompts(previousProgram.user_id);
+              return chatGPTService.generateNextCouplesProgram(
+                userName,
+                partnerName,
+                previousConversationStarters,
+                user_input,
+                customPrompts
+              );
             }
-            
-            console.log('ChatGPT response generated and saved for next program:', newProgram.id);
-          } catch (chatGPTError) {
-            console.error('Failed to generate ChatGPT response for next program', newProgram.id, ':', chatGPTError.message);
-            // Save the error to the database
-            try {
-              await programModel.updateGenerationError(newProgram.id, chatGPTError.message);
-            } catch (saveError) {
-              console.error('Failed to save generation error:', saveError.message);
-            }
-          }
+          });
         })();
       } else {
         console.log('ChatGPT service not configured, skipping therapy response generation');
@@ -275,35 +337,15 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
 
       // Generate ChatGPT response asynchronously in the background
       (async () => {
-        try {
-          console.log('Manually generating ChatGPT response for program:', program_id);
-          const customPrompts = await getCustomPrompts(program.user_id);
-          const therapyResponse = await chatGPTService.generateCouplesProgram(userName, partnerName, program.user_input, customPrompts);
-          
-          // Convert response to string if it's an object
-          const therapyResponseString = typeof therapyResponse === 'object' 
-            ? JSON.stringify(therapyResponse) 
-            : therapyResponse;
-          
-          // Update the program with the therapy response (for backward compatibility)
-          await programModel.updateTherapyResponse(program_id, therapyResponseString);
-          
-          // Also save to program_steps table if available (create program steps)
-          if (programStepModel) {
-            await programStepModel.createProgramSteps(program_id, therapyResponseString);
-            console.log('Program steps created for program:', program_id);
+        console.log('Manually generating ChatGPT response for program:', program_id);
+        await runGenerationWithFollowUp({
+          programId: program_id,
+          logPrefix: '[manual_therapy_response]',
+          generateResponse: async () => {
+            const customPrompts = await getCustomPrompts(program.user_id);
+            return chatGPTService.generateCouplesProgram(userName, partnerName, program.user_input, customPrompts);
           }
-          
-          console.log('ChatGPT response generated and saved for program:', program_id);
-        } catch (chatGPTError) {
-          console.error('Failed to generate ChatGPT response for program', program_id, ':', chatGPTError.message);
-          // Save the error to the database
-          try {
-            await programModel.updateGenerationError(program_id, chatGPTError.message);
-          } catch (saveError) {
-            console.error('Failed to save generation error:', saveError.message);
-          }
-        }
+        });
       })();
     } catch (error) {
       console.error('Error in manual therapy response generation:', error.message);
@@ -383,35 +425,15 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       if (chatGPTService && chatGPTService.isConfigured()) {
         // Don't await this - let it run in the background
         (async () => {
-          try {
-            console.log('Generating ChatGPT response for program:', program.id);
-            const customPrompts = await getCustomPrompts(userId);
-            const therapyResponse = await chatGPTService.generateCouplesProgram(userName, partnerName, user_input, customPrompts);
-            
-            // Convert response to string if it's an object
-            const therapyResponseString = typeof therapyResponse === 'object' 
-              ? JSON.stringify(therapyResponse) 
-              : therapyResponse;
-            
-            // Update the program with the therapy response (for backward compatibility)
-            await programModel.updateTherapyResponse(program.id, therapyResponseString);
-            
-            // Also save to program_steps table if available (create program steps)
-            if (programStepModel) {
-              await programStepModel.createProgramSteps(program.id, therapyResponseString);
-              console.log('Program steps created for program:', program.id);
+          console.log('Generating ChatGPT response for program:', program.id);
+          await runGenerationWithFollowUp({
+            programId: program.id,
+            logPrefix: '[create_program]',
+            generateResponse: async () => {
+              const customPrompts = await getCustomPrompts(userId);
+              return chatGPTService.generateCouplesProgram(userName, partnerName, user_input, customPrompts);
             }
-            
-            console.log('ChatGPT response generated and saved for program:', program.id);
-          } catch (chatGPTError) {
-            console.error('Failed to generate ChatGPT response for program', program.id, ':', chatGPTError.message);
-            // Save the error to the database
-            try {
-              await programModel.updateGenerationError(program.id, chatGPTError.message);
-            } catch (saveError) {
-              console.error('Failed to save generation error:', saveError.message);
-            }
-          }
+          });
         })();
       } else {
         console.log('ChatGPT service not configured, skipping therapy response generation');

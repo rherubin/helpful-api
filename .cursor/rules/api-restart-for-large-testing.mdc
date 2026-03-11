@@ -1,0 +1,27 @@
+---
+description: Restart API before larger API/integration testing
+alwaysApply: true
+---
+
+# API Restart For Large Testing
+
+Before running larger API/integration validation (multi-scenario runs, high-concurrency batches, route-level verification), restart the API so latest backend route/service code is loaded.
+
+When this applies:
+- Running broad API verification across many scenarios.
+- Running high-pressure or parallel API generation tests.
+- Validating behavior changes in routes, middleware, or background generation flows.
+
+When this does not apply:
+- Pure unit tests or test suites that do not require a live API process restart.
+- Quick/local test reruns where no server code changed.
+
+Default restart pattern:
+- Stop the existing API process.
+- Start the API process with the environment needed for the run.
+- Verify health endpoint before starting the larger API test run.
+
+Example:
+- `kill $(lsof -ti:9000) 2>/dev/null`
+- `USER_UPDATE_RATE_LIMIT=100 npm start`
+- `curl http://127.0.0.1:9000/health`

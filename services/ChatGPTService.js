@@ -280,9 +280,10 @@ class ChatGPTService {
   }
 
   // Internal method that does the actual OpenAI call for programs
-  async generateInitialProgram({ userName, partnerName, userInput, customPrompts }, retryCount = 0) {
+  async generateInitialProgram({ userName, partnerName, userInput, customPrompts }, retryCount = 0, parseRetryCount = 0) {
     const MAX_RETRIES = 2;
     const BASE_DELAY = 1000; // 1 second
+    const MAX_PARSE_RETRIES = 1;
     
     try {
       // Sanitize all inputs
@@ -404,9 +405,19 @@ Respond only with a valid JSON object in exactly this structure:
       }
 
       const completionData = await completion.json();
-      const response = completionData.choices[0].message.content;
+      const responseChoice = completionData && Array.isArray(completionData.choices) ? completionData.choices[0] : null;
+      const response = responseChoice && responseChoice.message ? responseChoice.message.content : '';
+      const finishReason = responseChoice ? responseChoice.finish_reason : 'unknown';
+      const responseMetadata = {
+        model: completionData?.model || 'unknown',
+        id: completionData?.id || 'unknown',
+        finish_reason: finishReason,
+        prompt_tokens: completionData?.usage?.prompt_tokens ?? null,
+        completion_tokens: completionData?.usage?.completion_tokens ?? null,
+        total_tokens: completionData?.usage?.total_tokens ?? null
+      };
       console.log('DEBUG generateInitialProgram OpenAI response (first 500 chars):', typeof response, response ? response.substring(0, 500) : 'NULL/EMPTY');
-      console.log('DEBUG generateInitialProgram finish_reason:', completionData.choices[0].finish_reason);
+      console.log('DEBUG generateInitialProgram response metadata:', responseMetadata);
       
       // Validate and sanitize the AI response
       if (!this.validateAIResponse(response)) {
@@ -414,7 +425,7 @@ Respond only with a valid JSON object in exactly this structure:
         throw new Error('AI response contains potentially unsafe content');
       }
       
-      // Try to parse JSON response, fallback to raw text if parsing fails
+      // Parse and validate JSON response; retry once on partial/invalid output.
       try {
         const parsedResponse = JSON.parse(response);
         
@@ -425,8 +436,30 @@ Respond only with a valid JSON object in exactly this structure:
         
         return parsedResponse;
       } catch (parseError) {
-        console.warn('Failed to parse ChatGPT JSON response, returning raw text:', parseError.message);
-        return response;
+        console.warn('Failed to parse/validate generateInitialProgram response:', {
+          parse_retry_attempt: parseRetryCount + 1,
+          max_parse_retries: MAX_PARSE_RETRIES,
+          parse_error: parseError.message,
+          response_preview: response ? response.substring(0, 300) : 'EMPTY',
+          response_length: response ? response.length : 0,
+          ...responseMetadata
+        });
+
+        if (parseRetryCount < MAX_PARSE_RETRIES) {
+          const retryDelay = 500;
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+          return this.generateInitialProgram(
+            { userName, partnerName, userInput, customPrompts },
+            retryCount,
+            parseRetryCount + 1
+          );
+        }
+
+        throw new Error(
+          `Invalid therapy response format after retry ` +
+          `(finish_reason=${finishReason}, model=${responseMetadata.model}, ` +
+          `response_length=${response ? response.length : 0}): ${parseError.message}`
+        );
       }
     } catch (error) {
       // Implement exponential backoff for rate limiting
@@ -435,7 +468,7 @@ Respond only with a valid JSON object in exactly this structure:
         console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
         
         await new Promise(resolve => setTimeout(resolve, delay));
-        return this.generateInitialProgram({ userName, partnerName, userInput, customPrompts }, retryCount + 1);
+        return this.generateInitialProgram({ userName, partnerName, userInput, customPrompts }, retryCount + 1, parseRetryCount);
       }
 
       // Enhanced error logging for security monitoring

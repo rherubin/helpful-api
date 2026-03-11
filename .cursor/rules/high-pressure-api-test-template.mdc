@@ -1,0 +1,41 @@
+---
+description: Standard template for high-pressure API validation runs
+alwaysApply: true
+---
+
+# High-Pressure API Test Template
+
+Use this standard sequence for stress-style API validation to keep results comparable run to run.
+
+## 1) Restart + readiness
+- Stop existing API process on the target port.
+- Start API with explicit env for the run.
+- Confirm readiness via health check before testing.
+
+Suggested baseline:
+- `kill $(lsof -ti:9000) 2>/dev/null`
+- `USER_UPDATE_RATE_LIMIT=100 PROGRAM_GENERATION_FOLLOWUP_DELAY_MS=5000 npm start`
+- `curl -s http://127.0.0.1:9000/health`
+
+## 2) Run configuration
+- Use explicit concurrency for pressure runs.
+- Decide whether runner-level follow-up is enabled (for isolation, disable it when validating backend-only follow-up).
+
+Examples:
+- Backend-only follow-up validation:
+  - `ENABLE_TIMEOUT_FOLLOWUP=false node tests/run-initial-prompt-batch.js 8`
+- End-to-end resilience (runner + backend):
+  - `node tests/run-initial-prompt-batch.js 8`
+
+## 3) Capture and report
+- Report pass/fail counts and all generated program IDs.
+- For any timeout/failure, include SQL query for `generation_error` and `therapy_response` preview.
+- Check server logs for:
+  - first-attempt failure,
+  - follow-up attempt scheduled,
+  - follow-up success or final persisted error.
+
+## 4) Tuning guidance
+- If API/rate limiting appears, reduce concurrency first (e.g., 8 -> 6 -> 4).
+- If follow-up latency is too high, adjust `PROGRAM_GENERATION_FOLLOWUP_DELAY_MS`.
+- Keep one variable change per run so comparisons remain meaningful.
