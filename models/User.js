@@ -28,6 +28,9 @@ class User {
         children INT DEFAULT NULL,
         max_pairings INT DEFAULT 1,
         org_code_id VARCHAR(50) DEFAULT NULL,
+        org_name VARCHAR(255) DEFAULT NULL,
+        org_city VARCHAR(100) DEFAULT NULL,
+        org_state VARCHAR(50) DEFAULT NULL,
         is_premium TINYINT(1) NOT NULL DEFAULT 0,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -91,6 +94,32 @@ class User {
         }
       } catch (migrationErr) {
         console.warn('Migration warning for users table:', migrationErr.message);
+      }
+
+      // Migration: Add custom org fields if they don't exist
+      const customOrgColumns = [
+        { name: 'org_name', type: 'VARCHAR(255) DEFAULT NULL' },
+        { name: 'org_city', type: 'VARCHAR(100) DEFAULT NULL' },
+        { name: 'org_state', type: 'VARCHAR(50) DEFAULT NULL' }
+      ];
+
+      for (const column of customOrgColumns) {
+        try {
+          const columnExists = await this.queryOne(`
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'users'
+              AND COLUMN_NAME = '${column.name}'
+          `);
+
+          if (!columnExists) {
+            await this.query(`ALTER TABLE users ADD COLUMN ${column.name} ${column.type}`);
+            console.log(`Migrated users table: added ${column.name} column`);
+          }
+        } catch (migrationErr) {
+          console.warn(`Migration warning for ${column.name} column:`, migrationErr.message);
+        }
       }
 
       // Migration: Add is_premium column if it doesn't exist
@@ -256,7 +285,7 @@ class User {
 
   // Update user
   async updateUser(id, updateData) {
-    const { email, max_pairings, user_name, partner_name, children, org_code_id, is_premium } = updateData;
+    const { email, max_pairings, user_name, partner_name, children, org_code_id, org_name, org_city, org_state, is_premium } = updateData;
 
     // Build update query dynamically
     const updateFields = [];
@@ -289,6 +318,18 @@ class User {
     if (org_code_id !== undefined) {
       updateFields.push('org_code_id = ?');
       updateValues.push(org_code_id);
+    }
+    if (org_name !== undefined) {
+      updateFields.push('org_name = ?');
+      updateValues.push(org_name);
+    }
+    if (org_city !== undefined) {
+      updateFields.push('org_city = ?');
+      updateValues.push(org_city);
+    }
+    if (org_state !== undefined) {
+      updateFields.push('org_state = ?');
+      updateValues.push(org_state);
     }
     if (is_premium !== undefined) {
       updateFields.push('is_premium = ?');

@@ -322,34 +322,35 @@ class ChatGPTService {
         ? `${customPrompts.organizationCity}, ${customPrompts.organizationState}`
         : '';
 
-      const defaultPrompt = `You are a top-tier Christian couples therapist with deep expertise in research-based therapy methods. You are inspired by Christian theology and biblical wisdom. You go to ${orgName} in ${orgCityState}, and you are very aware of their statements of beliefs, wisdom, practices, teaching, and sermons. Your patient who goes to this church, too.
+      const orgContext = orgName
+        ? `The user attends ${orgName}${orgCityState ? ` in ${orgCityState}` : ''}. Wherever possible, draw on the values, beliefs, and teachings of that community to make each reflection feel rooted in their specific faith home.`
+        : 'Ground each reflection in broadly shared Christian values and scripture.';
 
-Your goal is to help your patient reflect every day for 7 consecutive days in order to to experience greater closeness with God and reach their stated goal, which is:
+      const defaultPrompt = `You are a faith-based spiritual wellness guide who creates personalized 7-day reflection programs rooted in Christian values and scripture.
+
+${orgContext}
+
+The user has shared the following goal:
 
 "${sanitizedUserInput}"
 
-Specifically, your task is to provide 1 reflection question per day for 7 consecutive days.
+Create a 7-day daily reflection program to help this person grow closer to God and make progress toward their goal. Each day should include one focused reflection question, a unifying theme, and a related Bible verse.
 
-- Each reflection should use the teachings and beliefs of ${orgName} in ${orgCityState}.
-- Each reflection should have a theme, which I'd like you to specifically identify as a separate data element.
-- Each reflection should help each person unpack what they're feeling
-- Each reflection should feel very personalized. Please mention specifics about the user throughout the program.
-- The reflection should feel like they're coming from a pastor or therapist
+Guidelines:
+- Each reflection question should be deeply personal and help the user examine their own heart, motivations, and relationship with God.
+- Each reflection should feel warm and pastoral in tone — like guidance from a trusted spiritual mentor.
+- The theme should capture the spiritual focus for that day in a few words.
+- The Bible verse should directly reinforce the reflection, not just be tangentially related.
+- Write each reflection as a single flowing sentence with no paragraph breaks.
+- Do not reference any specific pastor or church leader by name.
+- Together the 7 days should form a cohesive journey — not 7 independent prompts.
 
-- Whenever possible, embed the teachings of ${orgName} in ${orgCityState} in the reflections
-
-- Stylistically, have the entire reflection in one line, with no paragraph breaks.
-Together, all of the reflections make up a one-week program, which should feel comprehensive.
-Now, craft me the 7 reflections, provide a theme for each one, and include a Bible verse with each one. The Bible verse should be related to the reflection question, helping the user reflect even more.
-The reflection, the theme, and the Bible verse should be isolated as separate data elements.
-Note: Don't ever reference any pastors by name.
-
-Please format your response as a JSON object with the following structure:
+Respond only with a valid JSON object in exactly this structure:
 
 {
   "program": {
     "title": "7-Day Reflection Program",
-    "overview": "Brief description of the program goals, which should be a single sentence that captures the overall goal of the program.",
+    "overview": "A single sentence describing the overall arc and goal of this program.",
     "days": [
       {
         "day": 1,
@@ -383,7 +384,7 @@ Please format your response as a JSON object with the following structure:
           messages: [
             {
               role: "system",
-              content: "You are a professional Christian therapist and pastoral counselor. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on faith-based reflective content."
+              content: "You are a faith-based spiritual wellness program creator. Respond only with valid JSON in the exact format specified. Do not include any text, explanation, or markdown outside the JSON structure."
             },
             {
               role: "user",

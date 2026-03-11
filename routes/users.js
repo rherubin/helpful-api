@@ -125,6 +125,14 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
         } catch (err) {
           // Non-fatal — org code may have been deleted; leave fields null
         }
+      } else {
+        orgDetails = {
+          org_name: user.org_name || null,
+          org_city: user.org_city || null,
+          org_state: user.org_state || null,
+          duration_start: null,
+          duration_end: null
+        };
       }
 
       const userWithPremium = {
@@ -189,14 +197,7 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
         return res.status(403).json({ error: 'Not authorized to update this user' });
       }
 
-      const { email, user_name, partner_name, children, org_code } = req.body;
-
-      // Org metadata is admin-managed only; users can only attach/detach via org_code.
-      if (req.body.org_name !== undefined || req.body.org_city !== undefined || req.body.org_state !== undefined) {
-        return res.status(403).json({
-          error: 'org_name, org_city, and org_state are read-only for users. Please contact an admin.'
-        });
-      }
+      const { email, user_name, partner_name, children, org_code, org_name, org_city, org_state } = req.body;
       
       // Validate email format if provided
       if (email) {
@@ -211,7 +212,7 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
       const currentUser = await userModel.getUserById(id);
       const updateData = { email, user_name, partner_name, children };
 
-      // Users may only attach/detach org link through org_code.
+      // Admin org selection via org_code (attach/detach)
       if (org_code !== undefined) {
         if (!orgCodeModel) {
           return res.status(500).json({ error: 'Org code validation unavailable' });
@@ -220,6 +221,9 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
         const isDetachRequest = org_code === null || (typeof org_code === 'string' && org_code.trim() === '');
         if (isDetachRequest) {
           updateData.org_code_id = null;
+          updateData.org_name = null;
+          updateData.org_city = null;
+          updateData.org_state = null;
           updateData.is_premium = false;
         } else {
           if (typeof org_code !== 'string') {
@@ -239,8 +243,22 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
           }
 
           updateData.org_code_id = resolvedOrgCode.id;
+          updateData.org_name = null;
+          updateData.org_city = null;
+          updateData.org_state = null;
           updateData.is_premium = true;
         }
+      }
+
+      // Custom user-managed organization details (detaches admin org selection)
+      const hasCustomOrgField =
+        org_name !== undefined || org_city !== undefined || org_state !== undefined;
+      if (org_code === undefined && hasCustomOrgField) {
+        updateData.org_code_id = null;
+        if (org_name !== undefined) updateData.org_name = org_name;
+        if (org_city !== undefined) updateData.org_city = org_city;
+        if (org_state !== undefined) updateData.org_state = org_state;
+        updateData.is_premium = false;
       }
 
       const updatedUser = await userModel.updateUser(id, updateData);
@@ -276,6 +294,14 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
         } catch (err) {
           // Non-fatal — org code may have been deleted; leave fields null
         }
+      } else {
+        orgDetails = {
+          org_name: updatedUser.org_name || null,
+          org_city: updatedUser.org_city || null,
+          org_state: updatedUser.org_state || null,
+          duration_start: null,
+          duration_end: null
+        };
       }
 
       const userWithPremium = {

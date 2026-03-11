@@ -5,20 +5,37 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
 
-  // Fetch active org-code custom prompts for a user, or null if none
+  // Fetch org context and custom prompts for a user.
+  // Priority: linked admin org code → user's custom org fields → null.
   async function getCustomPrompts(userId) {
     if (!userModelForOrgCode) return null;
     try {
       const orgCode = await userModelForOrgCode.getUserOrgCode(userId);
-      if (!orgCode) return null;
-      return {
-        initialProgramPrompt: orgCode.initial_program_prompt || null,
-        nextProgramPrompt: orgCode.next_program_prompt || null,
-        therapyResponsePrompt: orgCode.therapy_response_prompt || null,
-        organizationName: orgCode.organization || null,
-        organizationCity: orgCode.city || null,
-        organizationState: orgCode.state || null
-      };
+      if (orgCode) {
+        return {
+          initialProgramPrompt: orgCode.initial_program_prompt || null,
+          nextProgramPrompt: orgCode.next_program_prompt || null,
+          therapyResponsePrompt: orgCode.therapy_response_prompt || null,
+          organizationName: orgCode.organization || null,
+          organizationCity: orgCode.city || null,
+          organizationState: orgCode.state || null
+        };
+      }
+
+      // No linked admin org — fall back to custom org fields on the user record
+      const user = await userModelForOrgCode.getUserById(userId);
+      if (user && (user.org_name || user.org_city || user.org_state)) {
+        return {
+          initialProgramPrompt: null,
+          nextProgramPrompt: null,
+          therapyResponsePrompt: null,
+          organizationName: user.org_name || null,
+          organizationCity: user.org_city || null,
+          organizationState: user.org_state || null
+        };
+      }
+
+      return null;
     } catch {
       return null;
     }

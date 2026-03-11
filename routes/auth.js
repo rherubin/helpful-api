@@ -201,6 +201,13 @@ function createAuthRoutes(authService, userModel, pairingService, orgCodeModel) 
         } catch (err) {
           // Non-fatal — org code may have been deleted; leave fields null
         }
+      } else {
+        orgDetails = {
+          org_id: null,
+          org_name: user.org_name || null,
+          org_city: user.org_city || null,
+          org_state: user.org_state || null
+        };
       }
 
       const profile = {
