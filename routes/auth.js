@@ -212,7 +212,7 @@ function createAuthRoutes(authService, userModel, pairingService, orgCodeModel) 
 
       const profile = {
         ...filterUserData(user),
-        premium: hasPremiumPairing,
+        premium: hasPremiumPairing || !!user.is_premium,
         pairings: pairingsResult.pairings,
         pairing_codes: pairingCodes,
         ...orgDetails

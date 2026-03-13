@@ -10,7 +10,8 @@
  *
  *   Path B – custom user org fields (org_name / org_city / org_state)
  *     Providing these without org_code stores values on the user row directly,
- *     detaches any existing org_code_id, and does NOT grant premium.
+ *     detaches any existing org_code_id, and grants premium when all three fields
+ *     are populated with non-empty values.
  *     Any subset of the three fields may be updated independently.
  *
  * Run with:           node tests/user-org-code-test.js
@@ -444,7 +445,7 @@ class UserOrgCodeTestRunner {
   // ─── Path B: custom user org fields ───────────────────────────────────────
 
   /**
-   * org_name + org_city + org_state saves to user columns, no org_code_id, no premium.
+   * org_name + org_city + org_state saves to user columns, no org_code_id, premium true.
    */
   async testCustomOrgFieldsSavedToUser() {
     this.log('Testing custom org fields are saved directly on the user record...', 'section');
@@ -482,8 +483,8 @@ class UserOrgCodeTestRunner {
         `org_code_id: ${res.data.user.org_code_id}`
       );
       this.assert(
-        res.data.user.premium === false,
-        'Custom org - premium NOT granted',
+        res.data.user.premium === true,
+        'Custom org - premium granted when all custom org fields are set',
         `premium: ${res.data.user.premium}`
       );
     } catch (error) {
@@ -579,7 +580,7 @@ class UserOrgCodeTestRunner {
         res.data.user.org_code_id === null || res.data.user.org_code_id === undefined,
         'Custom org combo - org_code_id null'
       );
-      this.assert(res.data.user.premium === false, 'Custom org combo - premium false');
+      this.assert(res.data.user.premium === true, 'Custom org combo - premium true');
     } catch (error) {
       this.assert(false, 'Custom org combo test', `Error: ${error.response?.data?.error || error.message}`);
     } finally {
@@ -661,6 +662,11 @@ class UserOrgCodeTestRunner {
       );
 
       this.assert(profileRes.status === 200, 'Profile custom org - status 200');
+      this.assert(
+        profileRes.data.profile.premium === true,
+        'Profile custom org - premium true when all custom org fields are set',
+        `premium: ${profileRes.data.profile.premium}`
+      );
       this.assert(
         profileRes.data.profile.org_name === 'Profile Church',
         'Profile custom org - org_name returned',

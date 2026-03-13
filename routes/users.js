@@ -211,6 +211,8 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
 
       const currentUser = await userModel.getUserById(id);
       const updateData = { email, user_name, partner_name, children };
+      const hasNonEmptyText = (value) =>
+        typeof value === 'string' && value.trim().length > 0;
 
       // Admin org selection via org_code (attach/detach)
       if (org_code !== undefined) {
@@ -258,7 +260,16 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
         if (org_name !== undefined) updateData.org_name = org_name;
         if (org_city !== undefined) updateData.org_city = org_city;
         if (org_state !== undefined) updateData.org_state = org_state;
-        updateData.is_premium = false;
+
+        const nextOrgName = org_name !== undefined ? org_name : currentUser.org_name;
+        const nextOrgCity = org_city !== undefined ? org_city : currentUser.org_city;
+        const nextOrgState = org_state !== undefined ? org_state : currentUser.org_state;
+        const hasCompleteCustomOrg =
+          hasNonEmptyText(nextOrgName) &&
+          hasNonEmptyText(nextOrgCity) &&
+          hasNonEmptyText(nextOrgState);
+
+        updateData.is_premium = hasCompleteCustomOrg;
       }
 
       const updatedUser = await userModel.updateUser(id, updateData);
