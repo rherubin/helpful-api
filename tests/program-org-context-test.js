@@ -558,7 +558,7 @@ class ProgramOrgContextTestRunner {
   printKeepDataInfo() {
     this.log('─── Keep-data SQL queries ───────────────────────────────────────────', 'data');
     this.log("SELECT id, email, org_code_id, org_name, org_city, org_state FROM users WHERE email LIKE 'progorg_%@example.com';", 'data');
-    this.log("SELECT id, org_code, organization, city, state FROM org_codes WHERE org_code LIKE 'TESTORGCTX%';", 'data');
+    this.log("SELECT id, org_code, organization, city, state FROM organizations WHERE org_code LIKE 'TESTORGCTX%';", 'data');
     this.log("SELECT p.id, p.user_id, p.user_input, COUNT(ps.id) AS step_count FROM programs p LEFT JOIN program_steps ps ON ps.program_id = p.id WHERE p.user_id IN (SELECT id FROM users WHERE email LIKE 'progorg_%@example.com') GROUP BY p.id;", 'data');
     this.log('────────────────────────────────────────────────────────────────────', 'data');
   }

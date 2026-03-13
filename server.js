@@ -140,6 +140,7 @@ async function initializeApp() {
     const adminUserModelInstance = new AdminUser(db);
     
     // Initialize database tables
+    await orgCodeModelInstance.initDatabase();
     await userModelInstance.initDatabase();
     await refreshTokenModelInstance.initDatabase();
     await pairingModelInstance.initDatabase();
@@ -148,7 +149,6 @@ async function initializeApp() {
     await messageModelInstance.initDatabase();
     await iosSubscriptionModelInstance.initDatabase();
     await androidSubscriptionModelInstance.initDatabase();
-    await orgCodeModelInstance.initDatabase();
     await adminUserModelInstance.initDatabase();
     
     // Assign to global variables after successful initialization

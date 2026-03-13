@@ -3,6 +3,10 @@ class OrgCode {
     this.db = db;
   }
 
+  get tableName() {
+    return 'organizations';
+  }
+
   async query(sql, params = []) {
     const [results] = await this.db.execute(sql, params);
     return results;
@@ -13,9 +17,19 @@ class OrgCode {
     return results[0] || null;
   }
 
+  async tableExists(tableName) {
+    const row = await this.queryOne(`
+      SELECT TABLE_NAME
+      FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+    `, [tableName]);
+    return Boolean(row);
+  }
+
   async initDatabase() {
     const createOrgCodesTable = `
-      CREATE TABLE IF NOT EXISTS org_codes (
+      CREATE TABLE IF NOT EXISTS organizations (
         id VARCHAR(50) PRIMARY KEY,
         org_code VARCHAR(100) UNIQUE NOT NULL,
         organization VARCHAR(255) NOT NULL,
@@ -37,8 +51,16 @@ class OrgCode {
     `;
 
     try {
+      const legacyTableExists = await this.tableExists('org_codes');
+      const organizationsTableExists = await this.tableExists(this.tableName);
+
+      if (legacyTableExists && !organizationsTableExists) {
+        await this.query('RENAME TABLE org_codes TO organizations');
+        console.log('Renamed org_codes table to organizations.');
+      }
+
       await this.query(createOrgCodesTable);
-      console.log('OrgCodes table initialized successfully.');
+      console.log('Organizations table initialized successfully.');
 
       // Migration: Add new address columns if they don't exist
       const addressColumns = [
@@ -55,13 +77,13 @@ class OrgCode {
             SELECT COLUMN_NAME
             FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'org_codes'
+              AND TABLE_NAME = ?
               AND COLUMN_NAME = '${column.name}'
-          `);
+          `, [this.tableName]);
 
           if (!columnExists) {
-            await this.query(`ALTER TABLE org_codes ADD COLUMN ${column.name} ${column.type}`);
-            console.log(`Added ${column.name} column to org_codes table`);
+            await this.query(`ALTER TABLE organizations ADD COLUMN ${column.name} ${column.type}`);
+            console.log(`Added ${column.name} column to organizations table`);
           }
         } catch (colErr) {
           console.warn(`Warning adding ${column.name} column:`, colErr.message);
@@ -80,13 +102,13 @@ class OrgCode {
             SELECT COLUMN_NAME
             FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'org_codes'
+              AND TABLE_NAME = ?
               AND COLUMN_NAME = '${column.name}'
-          `);
+          `, [this.tableName]);
 
           if (!columnExists) {
-            await this.query(`ALTER TABLE org_codes ADD COLUMN ${column.name} ${column.type}`);
-            console.log(`Added ${column.name} column to org_codes table`);
+            await this.query(`ALTER TABLE organizations ADD COLUMN ${column.name} ${column.type}`);
+            console.log(`Added ${column.name} column to organizations table`);
           }
         } catch (colErr) {
           console.warn(`Warning adding ${column.name} column:`, colErr.message);
@@ -100,29 +122,29 @@ class OrgCode {
           SELECT COLUMN_NAME
           FROM INFORMATION_SCHEMA.COLUMNS
           WHERE TABLE_SCHEMA = DATABASE()
-            AND TABLE_NAME = 'org_codes'
+            AND TABLE_NAME = ?
             AND COLUMN_NAME = 'user_id'
-        `);
+        `, [this.tableName]);
 
         if (columnExists) {
           // Drop foreign key constraint first
           try {
-            await this.query('ALTER TABLE org_codes DROP FOREIGN KEY fk_org_codes_user');
+            await this.query('ALTER TABLE organizations DROP FOREIGN KEY fk_org_codes_user');
             console.log('Dropped foreign key constraint fk_org_codes_user');
           } catch (fkErr) {
             console.warn('Could not drop foreign key (might not exist):', fkErr.message);
           }
           // Then drop the column
-          await this.query('ALTER TABLE org_codes DROP COLUMN user_id');
-          console.log('Migrated org_codes table: dropped user_id column and foreign key');
+          await this.query('ALTER TABLE organizations DROP COLUMN user_id');
+          console.log('Migrated organizations table: dropped user_id column and foreign key');
         } else {
-          console.log('Org_codes table does not have user_id column (already migrated)');
+          console.log('Organizations table does not have user_id column (already migrated)');
         }
       } catch (migrationErr) {
-        console.warn('Migration warning for org_codes table:', migrationErr.message);
+        console.warn('Migration warning for organizations table:', migrationErr.message);
       }
     } catch (err) {
-      console.error('Error creating org_codes table:', err.message);
+      console.error('Error creating organizations table:', err.message);
       throw err;
     }
   }
@@ -156,7 +178,7 @@ class OrgCode {
 
     try {
       await this.query(
-        `INSERT INTO org_codes
+        `INSERT INTO organizations
           (id, org_code, organization, address1, address2, city, state, postalCode, initial_program_prompt, next_program_prompt, therapy_response_prompt, expires_at, duration_start, duration_end, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
         [id, org_code, organization, address1, address2, city, state, postalCode, initial_program_prompt, next_program_prompt, therapy_response_prompt, expires_at, duration_start, duration_end]
@@ -174,13 +196,13 @@ class OrgCode {
   }
 
   async getOrgCodeById(id) {
-    const row = await this.queryOne('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM org_codes WHERE id = ?', [id]);
+    const row = await this.queryOne('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM organizations WHERE id = ?', [id]);
     if (!row) throw new Error('OrgCode not found');
     return row;
   }
 
   async getOrgCodeByCode(orgCode) {
-    const row = await this.queryOne('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM org_codes WHERE org_code = ?', [orgCode]);
+    const row = await this.queryOne('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM organizations WHERE org_code = ?', [orgCode]);
     if (!row) throw new Error('OrgCode not found');
     return row;
   }
@@ -218,7 +240,7 @@ class OrgCode {
 
     try {
       const result = await this.query(
-        `UPDATE org_codes SET ${fields.join(', ')} WHERE id = ?`,
+        `UPDATE organizations SET ${fields.join(', ')} WHERE id = ?`,
         values
       );
       if (result.affectedRows === 0) throw new Error('OrgCode not found');
@@ -239,13 +261,13 @@ class OrgCode {
   }
 
   async deleteOrgCode(id) {
-    const result = await this.query('DELETE FROM org_codes WHERE id = ?', [id]);
+    const result = await this.query('DELETE FROM organizations WHERE id = ?', [id]);
     if (result.affectedRows === 0) throw new Error('OrgCode not found');
     return { message: 'OrgCode deleted successfully' };
   }
 
   async getAllOrgCodes() {
-    return this.query('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM org_codes ORDER BY created_at DESC');
+    return this.query('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM organizations ORDER BY created_at DESC');
   }
 }
 

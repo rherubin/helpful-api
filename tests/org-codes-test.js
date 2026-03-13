@@ -1,6 +1,6 @@
 /**
  * Org Codes Test Suite
- * Tests all CRUD operations on org_codes and related user functionality
+ * Tests all CRUD operations on organizations and related user functionality
  *
  * Run with: node tests/org-codes-test.js
  *

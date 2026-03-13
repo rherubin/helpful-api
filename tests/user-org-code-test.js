@@ -5,7 +5,7 @@
  *
  *   Path A – admin org_code string
  *     Linking an admin-created org code sets org_code_id, grants premium,
- *     clears any custom org fields, and returns org details from the org_codes table.
+ *     clears any custom org fields, and returns org details from the organizations table.
  *     Detaching (org_code: null | '') reverses all of that.
  *
  *   Path B – custom user org fields (org_name / org_city / org_state)
@@ -19,7 +19,7 @@
  *
  *   SELECT id, email, org_code_id, org_name, org_city, org_state, is_premium
  *     FROM users WHERE email LIKE 'orgcode_%@example.com';
- *   SELECT id, org_code, organization, city, state FROM org_codes
+ *   SELECT id, org_code, organization, city, state FROM organizations
  *     WHERE org_code LIKE 'TESTORG%';
  */
 
@@ -694,7 +694,7 @@ class UserOrgCodeTestRunner {
   }
 
   /**
-   * GET /profile returns admin org details (from org_codes table) when org_code_id is set.
+   * GET /profile returns admin org details (from organizations table) when org_code_id is set.
    */
   async testAdminOrgFieldsInProfile() {
     this.log('Testing admin org fields returned in GET /profile when org_code linked...', 'section');
@@ -1166,7 +1166,7 @@ class UserOrgCodeTestRunner {
   printKeepDataInfo() {
     this.log('─── Keep-data SQL queries ───────────────────────────────────────────', 'data');
     this.log("SELECT id, email, org_code_id, org_name, org_city, org_state, is_premium FROM users WHERE email LIKE 'orgcode_%@example.com';", 'data');
-    this.log("SELECT id, org_code, organization, city, state, expires_at FROM org_codes WHERE org_code LIKE 'TESTORG%';", 'data');
+    this.log("SELECT id, org_code, organization, city, state, expires_at FROM organizations WHERE org_code LIKE 'TESTORG%';", 'data');
     this.log("SELECT * FROM user_org_code_audit_logs ORDER BY created_at DESC LIMIT 20;", 'data');
     this.log('────────────────────────────────────────────────────────────────────', 'data');
   }

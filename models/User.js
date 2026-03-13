@@ -16,6 +16,32 @@ class User {
     return results[0] || null;
   }
 
+  async ensureOrgCodeForeignKey() {
+    const foreignKey = await this.queryOne(`
+      SELECT CONSTRAINT_NAME, REFERENCED_TABLE_NAME
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'users'
+        AND COLUMN_NAME = 'org_code_id'
+        AND REFERENCED_TABLE_NAME IS NOT NULL
+      LIMIT 1
+    `);
+
+    if (foreignKey?.CONSTRAINT_NAME && foreignKey.REFERENCED_TABLE_NAME !== 'organizations') {
+      await this.query(`ALTER TABLE users DROP FOREIGN KEY ${foreignKey.CONSTRAINT_NAME}`);
+    }
+
+    if (!foreignKey || foreignKey.REFERENCED_TABLE_NAME !== 'organizations') {
+      await this.query(`
+        ALTER TABLE users ADD CONSTRAINT fk_users_org_code
+        FOREIGN KEY (org_code_id) REFERENCES organizations(id) ON DELETE SET NULL
+      `);
+      console.log('Ensured users.org_code_id foreign key references organizations.');
+    } else {
+      console.log('Users org_code_id foreign key already references organizations.');
+    }
+  }
+
   // Initialize database tables
   async initDatabase() {
     const createUsersTable = `
@@ -39,7 +65,7 @@ class User {
         INDEX idx_deleted_at (deleted_at),
         INDEX idx_org_code_id (org_code_id),
         CONSTRAINT fk_users_org_code
-          FOREIGN KEY (org_code_id) REFERENCES org_codes(id)
+          FOREIGN KEY (org_code_id) REFERENCES organizations(id)
           ON DELETE SET NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
@@ -84,14 +110,12 @@ class User {
         if (!columnExists) {
           await this.query('ALTER TABLE users ADD COLUMN org_code_id VARCHAR(50) DEFAULT NULL');
           await this.query('ALTER TABLE users ADD INDEX idx_org_code_id (org_code_id)');
-          await this.query(`
-            ALTER TABLE users ADD CONSTRAINT fk_users_org_code
-            FOREIGN KEY (org_code_id) REFERENCES org_codes(id) ON DELETE SET NULL
-          `);
           console.log('Migrated users table: added org_code_id column and foreign key');
         } else {
           console.log('Users table already has org_code_id column');
         }
+
+        await this.ensureOrgCodeForeignKey();
       } catch (migrationErr) {
         console.warn('Migration warning for users table:', migrationErr.message);
       }
@@ -418,8 +442,8 @@ class User {
         l.change_type,
         l.created_at
       FROM user_org_code_audit_logs l
-      LEFT JOIN org_codes prev_oc ON prev_oc.id = l.previous_org_code_id
-      LEFT JOIN org_codes new_oc ON new_oc.id = l.new_org_code_id
+      LEFT JOIN organizations prev_oc ON prev_oc.id = l.previous_org_code_id
+      LEFT JOIN organizations new_oc ON new_oc.id = l.new_org_code_id
       ${whereClause}
       ORDER BY l.created_at DESC
       LIMIT ? OFFSET ?
@@ -536,7 +560,7 @@ class User {
 
       // Then check if the org code is active
       const orgCodeQuery = `
-        SELECT * FROM org_codes
+        SELECT * FROM organizations
         WHERE id = ?
         AND (expires_at IS NULL OR expires_at > NOW())
       `;

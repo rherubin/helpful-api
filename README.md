@@ -461,7 +461,7 @@ Passing a valid `org_code` string activates premium status on the user record wi
   - `400 Org code has expired` — code exists but its `expires_at` has passed
 
 **Path B — Create a new org record on the fly:**
-- Omit `org_code` but supply all three of `org_name`, `org_city`, and `org_state`. The API creates a new org_codes record with a generated unique code, links it to the user, and sets `premium: true`. All three fields are required together; providing fewer than three has no org side-effect.
+- Omit `org_code` but supply all three of `org_name`, `org_city`, and `org_state`. The API creates a new `organizations` record with a generated unique code, links it to the user, and sets `premium: true`. All three fields are required together; providing fewer than three has no org side-effect.
   ```json
   {
     "org_name": "Acme Health",
