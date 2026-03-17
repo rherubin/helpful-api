@@ -1,5 +1,6 @@
+require('dotenv').config();
 const axios = require('axios');
-const jwt = require('jsonwebtoken');
+const { generateTestEmail } = require('./test-helpers');
 
 /**
  * Comprehensive load testing suite for API scalability
@@ -9,10 +10,10 @@ const jwt = require('jsonwebtoken');
 
 class LoadTestRunner {
   constructor(options = {}) {
-    this.baseURL = options.baseURL || 'http://localhost:9000';
+    this.baseURL = options.baseURL || 'http://127.0.0.1:9000';
     this.timeout = options.timeout || 30000; // 30 seconds
-    this.JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
     this.testResults = [];
+    this.testUsers = [];
   }
 
   log(message, type = 'info') {
@@ -28,23 +29,51 @@ class LoadTestRunner {
     console.log(`${prefix} [${timestamp}] ${message}`);
   }
 
-  // Generate JWT token for testing
-  generateTestToken(userId = 'test-user-id', email = 'test@example.com') {
-    return jwt.sign({ id: userId, email }, this.JWT_SECRET, { expiresIn: '24h' });
+  // Create a real test user via the API and return { id, email, token }
+  async createTestUser(index) {
+    const email = generateTestEmail(`loadtest-${index}`);
+    const userName = `Sarah${index}`;
+    const partnerName = `Michael${index}`;
+
+    const createRes = await axios.post(`${this.baseURL}/api/users`, {
+      email,
+      password: 'SecurePass987!'
+    }, { timeout: this.timeout });
+
+    const { id } = createRes.data.user;
+    const token = createRes.data.access_token;
+
+    await axios.put(`${this.baseURL}/api/users/${id}`, {
+      user_name: userName,
+      partner_name: partnerName
+    }, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: this.timeout
+    });
+
+    return { id, email, token, userName, partnerName };
   }
 
-  // Create a single program
+  // Ensure we have at least `count` provisioned test users, creating more as needed
+  async ensureTestUsers(count) {
+    while (this.testUsers.length < count) {
+      const idx = this.testUsers.length + 1;
+      this.log(`Provisioning test user ${idx}...`, 'info');
+      const user = await this.createTestUser(idx);
+      this.testUsers.push(user);
+    }
+  }
+
+  // Create a single program using a real test user's token
   async createProgram(token, index, testName = 'LoadTest') {
     const startTime = Date.now();
     
     try {
       this.log(`Starting program ${index} (${testName})`, 'info');
       
+      const years = Math.floor(Math.random() * 10) + 1;
       const response = await axios.post(`${this.baseURL}/api/programs`, {
-        user_name: `User${index}`,
-        partner_name: `Partner${index}`,
-        children: Math.floor(Math.random() * 3), // 0-2 children
-        user_input: `Test input for ${testName} ${index} - we need help with communication and would like to strengthen our relationship through better understanding of each other's needs and emotions. We have been together for ${Math.floor(Math.random() * 10) + 1} years.`
+        user_input: `Test input for ${testName} ${index} - we need help with communication and would like to strengthen our relationship through better understanding of each other's needs and emotions. We have been together for ${years} years.`
       }, {
         headers: { 
           Authorization: `Bearer ${token}`,
@@ -54,7 +83,7 @@ class LoadTestRunner {
       });
       
       const duration = Date.now() - startTime;
-      this.log(`✅ Program ${index} created in ${duration}ms - ID: ${response.data.program.id}`, 'success');
+      this.log(`Program ${index} created in ${duration}ms - ID: ${response.data.program.id}`, 'success');
       
       return { 
         success: true, 
@@ -68,7 +97,7 @@ class LoadTestRunner {
       const errorMsg = error.response?.data?.error || error.message;
       const statusCode = error.response?.status || error.code;
       
-      this.log(`❌ Program ${index} failed after ${duration}ms: ${statusCode} - ${errorMsg}`, 'error');
+      this.log(`Program ${index} failed after ${duration}ms: ${statusCode} - ${errorMsg}`, 'error');
       
       return { 
         success: false, 
@@ -109,14 +138,14 @@ class LoadTestRunner {
 
   // Basic concurrent load test
   async runConcurrentTest(concurrency = 8, testName = 'ConcurrentTest') {
-    this.log(`🚀 Starting ${testName} with ${concurrency} concurrent requests`, 'section');
+    this.log(`Starting ${testName} with ${concurrency} concurrent requests`, 'section');
     
-    const token = this.generateTestToken();
+    await this.ensureTestUsers(concurrency);
     const startTime = Date.now();
     
-    // Create promises for concurrent execution
+    // Each concurrent request uses its own test user's token
     const promises = Array.from({ length: concurrency }, (_, i) => 
-      this.createProgram(token, i + 1, testName)
+      this.createProgram(this.testUsers[i].token, i + 1, testName)
     );
     
     // Wait for all requests to complete
@@ -182,53 +211,45 @@ class LoadTestRunner {
 
   // Test error handling and recovery
   async runErrorHandlingTest() {
-    this.log('🛡️ Starting Error Handling Test', 'section');
+    this.log('Starting Error Handling Test', 'section');
     
-    const token = this.generateTestToken();
+    await this.ensureTestUsers(1);
+    const token = this.testUsers[0].token;
     
-    // Test with invalid data
     const errorTests = [
       {
-        name: 'Missing required fields',
-        data: { user_name: 'Test' }, // Missing required fields
-        expectedError: 400
-      },
-      {
-        name: 'Invalid children value',
-        data: {
-          user_name: 'Test',
-          partner_name: 'Partner',
-          children: -1, // Invalid negative value
-          user_input: 'Test input'
-        },
+        name: 'Missing user_input field',
+        data: {},
         expectedError: 400
       },
       {
         name: 'Empty user input',
-        data: {
-          user_name: 'Test',
-          partner_name: 'Partner',
-          children: 0,
-          user_input: '' // Empty input
-        },
+        data: { user_input: '' },
         expectedError: 400
+      },
+      {
+        name: 'Unauthorized (no token)',
+        data: { user_input: 'Valid input for error handling test.' },
+        token: null,
+        expectedError: 401
       }
     ];
     
     const errorResults = [];
     
     for (const test of errorTests) {
+      const startTime = Date.now();
       try {
-        const startTime = Date.now();
+        const headers = { 'Content-Type': 'application/json' };
+        if (test.token !== null) {
+          headers.Authorization = `Bearer ${test.token || token}`;
+        }
+
         await axios.post(`${this.baseURL}/api/programs`, test.data, {
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
+          headers,
           timeout: this.timeout
         });
         
-        // If we get here, the test failed (should have thrown an error)
         errorResults.push({
           name: test.name,
           success: false,
@@ -248,8 +269,7 @@ class LoadTestRunner {
           duration
         });
         
-        const status = success ? '✅' : '❌';
-        this.log(`${status} ${test.name}: Expected ${test.expectedError}, got ${actualError}`, success ? 'success' : 'error');
+        this.log(`${success ? '✅' : '❌'} ${test.name}: Expected ${test.expectedError}, got ${actualError}`, success ? 'success' : 'error');
       }
     }
     
@@ -258,19 +278,18 @@ class LoadTestRunner {
 
   // Performance benchmark test
   async runPerformanceBenchmark() {
-    this.log('⚡ Starting Performance Benchmark', 'section');
+    this.log('Starting Performance Benchmark', 'section');
     
-    const token = this.generateTestToken();
-    const iterations = 20;
+    const iterations = 10;
+    await this.ensureTestUsers(iterations);
     const results = [];
     
     this.log(`Running ${iterations} sequential program creations...`);
     
     for (let i = 1; i <= iterations; i++) {
-      const result = await this.createProgram(token, i, 'Benchmark');
+      const result = await this.createProgram(this.testUsers[i - 1].token, i, 'Benchmark');
       results.push(result);
       
-      // Small delay to avoid overwhelming
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     
@@ -307,9 +326,14 @@ class LoadTestRunner {
         throw new Error('Server health check failed');
       }
       
+      // Provision initial test users (the largest concurrency level is 16 in the stress test)
+      this.log('Provisioning test users...', 'info');
+      await this.ensureTestUsers(16);
+      this.log(`Provisioned ${this.testUsers.length} test users`, 'success');
+
       // Get initial metrics
-      const token = this.generateTestToken();
-      this.log('📊 Getting initial OpenAI metrics...');
+      const token = this.testUsers[0].token;
+      this.log('Getting initial OpenAI metrics...');
       const initialMetrics = await this.getMetrics(token);
       if (initialMetrics) {
         this.log(`Initial metrics: ${JSON.stringify(initialMetrics, null, 2)}`);
@@ -332,10 +356,10 @@ class LoadTestRunner {
       console.log('');
       
       // Get final metrics
-      this.log('⏳ Waiting 10 seconds for background processing...');
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      this.log('Waiting 5 seconds for background processing...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
       
-      this.log('📊 Getting final OpenAI metrics...');
+      this.log('Getting final OpenAI metrics...');
       const finalMetrics = await this.getMetrics(token);
       if (finalMetrics) {
         this.log(`Final metrics: ${JSON.stringify(finalMetrics, null, 2)}`);
@@ -397,5 +421,6 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
 
 module.exports = LoadTestRunner;

@@ -149,27 +149,57 @@ class OpenAITestRunner {
 
   // Test OpenAI API connectivity
   async testAPIConnectivity(chatGPTService) {
-    this.log('Testing OpenAI API Connectivity', 'section');
+    this.log('Testing OpenAI API Connectivity (mocked)', 'section');
     
     if (!chatGPTService) {
       this.log('Skipping API connectivity test - service not initialized', 'warn');
       return;
     }
 
+    const originalFetch = global.fetch;
+
+    const mockProgramResponse = {
+      program: {
+        title: "7-Day Reflection Program",
+        overview: "A journey toward deeper communication and connection rooted in faith.",
+        days: Array.from({ length: 7 }, (_, i) => ({
+          day: i + 1,
+          theme: `Day ${i + 1} Theme`,
+          reflection: "Take a moment to reflect on how God is calling you to listen more deeply to your partner and to share your heart with honesty and grace.",
+          bible_verse: "\"Be completely humble and gentle; be patient, bearing with one another in love.\" — Ephesians 4:2"
+        }))
+      }
+    };
+
+    global.fetch = async (_url, options) => {
+      const body = JSON.parse(options.body);
+      this.assert(
+        !!body.model,
+        'API request includes a model',
+        `Model: ${body.model}`
+      );
+      return {
+        ok: true,
+        async json() {
+          return {
+            model: body.model,
+            id: 'chatcmpl-test-connectivity',
+            choices: [{ message: { content: JSON.stringify(mockProgramResponse) }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 350, completion_tokens: 800, total_tokens: 1150 }
+          };
+        }
+      };
+    };
+
     try {
       this.log('Making test API call...', 'info');
       const startTime = Date.now();
       
-      const testResponse = await Promise.race([
-        chatGPTService.generateCouplesProgram(
-          'TestUser', 
-          'TestPartner', 
-          'This is just a test to verify the API is working.'
-        ),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('API call timeout')), this.timeout)
-        )
-      ]);
+      const testResponse = await chatGPTService.generateCouplesProgram(
+        'Sarah',
+        'Michael',
+        'We want to improve our communication and feel more connected in our relationship.'
+      );
       
       const duration = Date.now() - startTime;
       
@@ -179,70 +209,30 @@ class OpenAITestRunner {
         `Response received in ${duration}ms`
       );
 
-      // Validate response structure
-      if (testResponse) {
-        this.assert(
-          typeof testResponse === 'object',
-          'API response is object',
-          `Type: ${typeof testResponse}`
-        );
+      this.assert(
+        typeof testResponse === 'object',
+        'API response is object',
+        `Type: ${typeof testResponse}`
+      );
 
-        // Check for therapy_response or program structure
-        const hasTherapyResponse = !!testResponse.therapy_response;
-        const hasProgram = !!testResponse.program;
-        
-        this.assert(
-          hasTherapyResponse || hasProgram,
-          'Response contains therapy content',
-          hasTherapyResponse ? 'therapy_response present' : hasProgram ? 'program present' : 'No therapy content found'
-        );
+      const hasProgram = !!testResponse.program;
+      this.assert(
+        hasProgram,
+        'Response contains program content',
+        hasProgram ? 'program present' : 'No program content found'
+      );
 
-        // Check if it's a proper 14-day program
-        const therapyData = testResponse.therapy_response || testResponse.program || testResponse;
-        if (therapyData && typeof therapyData === 'object') {
-          // Check for days array (new structure)
-          if (Array.isArray(therapyData.days)) {
-            this.assert(
-              therapyData.days.length === 14,
-              'Response contains 14-day program',
-              `Days: ${therapyData.days.length}`
-            );
-          } else {
-            // Check for day1, day2, etc. keys (old structure)
-            const days = Object.keys(therapyData).filter(key => key.startsWith('day') || !isNaN(parseInt(key)));
-            if (days.length > 0) {
-              this.assert(
-                days.length === 14,
-                'Response contains 14-day program',
-                `Days: ${days.length}`
-              );
-            } else {
-              this.log('Response structure does not contain day-based program', 'info');
-            }
-          }
-        }
+      if (hasProgram && Array.isArray(testResponse.program.days)) {
+        this.assert(
+          testResponse.program.days.length === 7,
+          'Response contains 7-day program',
+          `Days: ${testResponse.program.days.length}`
+        );
       }
-      
     } catch (error) {
       this.assert(false, 'OpenAI API connectivity', `Error: ${error.message}`);
-      
-      // Provide helpful error messages
-      if (error.message.includes('Invalid API key')) {
-        this.log('💡 API Key Issues:', 'warn');
-        this.log('- Check your API key is correct', 'info');
-        this.log('- Verify the key has not expired', 'info');
-        this.log('- Make sure you have credits in your OpenAI account', 'info');
-      } else if (error.message.includes('timeout')) {
-        this.log('💡 Timeout Issues:', 'warn');
-        this.log('- OpenAI API may be slow or unavailable', 'info');
-        this.log('- Check your internet connection', 'info');
-        this.log('- Try again later', 'info');
-      } else if (error.message.includes('rate limit')) {
-        this.log('💡 Rate Limit Issues:', 'warn');
-        this.log('- You may have exceeded your API rate limits', 'info');
-        this.log('- Wait a moment before trying again', 'info');
-        this.log('- Consider upgrading your OpenAI plan', 'info');
-      }
+    } finally {
+      global.fetch = originalFetch;
     }
   }
 

@@ -78,8 +78,8 @@ class Program {
       // Add steps_required_for_unlock if it doesn't exist
       if (!columnNames.includes('steps_required_for_unlock')) {
         await this.query(`
-          ALTER TABLE programs 
-          ADD COLUMN steps_required_for_unlock INT DEFAULT 7 
+          ALTER TABLE programs
+          ADD COLUMN steps_required_for_unlock INT DEFAULT 0
           AFTER therapy_response
         `);
         console.log('Added steps_required_for_unlock column to programs table.');
@@ -158,13 +158,13 @@ class Program {
 
   // Create a program
   async createProgram(userId, programData) {
-    const { user_input, pairing_id, previous_program_id, steps_required_for_unlock = 7 } = programData;
+    const { user_input, pairing_id, previous_program_id, steps_required_for_unlock = 0 } = programData;
     const programId = this.generateUniqueId();
 
     try {
       const insertProgram = `
         INSERT INTO programs (id, user_id, user_input, pairing_id, previous_program_id, therapy_response, steps_required_for_unlock, next_program_unlocked, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, NOW(), NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, NOW(), NOW())
       `;
 
       await this.query(insertProgram, [
@@ -346,7 +346,7 @@ class Program {
     }
   }
 
-  // Get count of program steps that have at least one message (legacy method for backward compatibility)
+  // Legacy method - no longer used since unlock requirements are removed
   async getStepsWithMessages(programId) {
     try {
       const query = `
@@ -364,53 +364,14 @@ class Program {
     }
   }
 
-  // Check if unlock threshold is met and update status
+  // Check if unlock threshold is met and update status (always unlocked now)
   async checkAndUpdateUnlockStatus(programId) {
     try {
-      // Get the program to check current status and threshold
-      const program = await this.getProgramById(programId);
-      
-      // If already unlocked, no need to check again (program.next_program_unlocked is already a boolean from getProgramById)
-      if (program.next_program_unlocked) {
-        return {
-          already_unlocked: true,
-          next_program_unlocked: true,
-          started_steps: null,
-          steps_required: program.steps_required_for_unlock
-        };
-      }
-
-      // Get count of started steps
-      const startedSteps = await this.getStartedStepsCount(programId);
-      
-      // Check if threshold is met
-      const thresholdMet = startedSteps >= program.steps_required_for_unlock;
-      
-      if (thresholdMet) {
-        // Update the unlock status
-        const updateQuery = `
-          UPDATE programs 
-          SET next_program_unlocked = TRUE, updated_at = NOW()
-          WHERE id = ? AND deleted_at IS NULL
-        `;
-        
-        await this.query(updateQuery, [programId]);
-        
-        console.log(`Program ${programId} unlocked! ${startedSteps}/${program.steps_required_for_unlock} steps started.`);
-        
-        return {
-          unlocked: true,
-          next_program_unlocked: true,
-          started_steps: startedSteps,
-          steps_required: program.steps_required_for_unlock
-        };
-      }
-      
+      // Programs are now always unlocked by default
       return {
-        unlocked: false,
-        next_program_unlocked: false,
-        started_steps: startedSteps,
-        steps_required: program.steps_required_for_unlock
+        next_program_unlocked: true,
+        started_steps: null,
+        steps_required: 0
       };
     } catch (err) {
       console.error('Error checking unlock status:', err.message);

@@ -1,10 +1,19 @@
 class ChatGPTService {
   constructor() {
-    // Validate API key format and security
+    // LLM provider: "openai" (default) or "claude"
+    this.provider = (process.env.LLM_PROVIDER || 'openai').toLowerCase();
+
+    if (this.provider === 'claude') {
+      this.apiKey = process.env.ANTHROPIC_API_KEY || null;
+      this.model = process.env.LLM_MODEL || 'claude-sonnet-4-6';
+      this.apiUrl = 'https://api.anthropic.com/v1/messages';
+    } else {
+      this.apiKey = process.env.OPENAI_API_KEY || null;
+      this.model = process.env.LLM_MODEL || 'gpt-5.4';
+      this.apiUrl = 'https://api.openai.com/v1/chat/completions';
+    }
+
     this.validateApiKey();
-    
-    // Store API key for direct fetch calls
-    this.apiKey = process.env.OPENAI_API_KEY || null;
 
     // Request queue management for production scalability
     this.requestQueue = [];
@@ -12,6 +21,7 @@ class ChatGPTService {
     this.lastRequestTime = 0;
     this.MIN_REQUEST_INTERVAL = 200; // 200ms between requests (5 req/sec max)
     this.MAX_CONCURRENT = 3; // Max 3 concurrent requests
+    this.QUEUE_TIMEOUT = this.provider === 'claude' ? 120000 : 30000;
     this.activeRequests = 0;
     this.metrics = {
       totalRequests: 0,
@@ -22,30 +32,114 @@ class ChatGPTService {
     };
   }
 
-  // Validate API key without logging the actual key
   validateApiKey() {
-    const apiKey = process.env.OPENAI_API_KEY;
-    
-    if (!apiKey) {
-      console.warn('OPENAI_API_KEY not configured - ChatGPT features will be disabled');
+    const keyName = this.provider === 'claude' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+
+    if (!this.apiKey) {
+      console.warn(`${keyName} not configured - LLM features will be disabled`);
       return;
     }
 
-    // Basic format validation without exposing the key format
-    if (apiKey.length < 20 || apiKey.length > 200) {
-      console.error('OPENAI_API_KEY appears to have invalid length - check your configuration');
+    if (this.apiKey.length < 20 || this.apiKey.length > 200) {
+      console.error(`${keyName} appears to have invalid length - check your configuration`);
       return;
     }
 
-    // Check for common mistakes without revealing expected format
-    if (apiKey.includes(' ') || apiKey.includes('\n') || apiKey.includes('\t')) {
-      console.error('OPENAI_API_KEY contains whitespace - check for copy/paste errors');
+    if (this.apiKey.includes(' ') || this.apiKey.includes('\n') || this.apiKey.includes('\t')) {
+      console.error(`${keyName} contains whitespace - check for copy/paste errors`);
       return;
     }
 
-    // Log successful configuration with minimal information
-    const maskedKey = `***${apiKey.slice(-4)}`;
-    console.log(`OpenAI API key configured successfully: ${maskedKey}`);
+    const maskedKey = `***${this.apiKey.slice(-4)}`;
+    console.log(`LLM configured: provider=${this.provider}, model=${this.model}, key=${maskedKey}`);
+  }
+
+  // Unified LLM call — routes to OpenAI or Claude based on this.provider
+  async callLLM(systemPrompt, userPrompt, options = {}) {
+    const { maxTokens, temperature = 0.7, jsonMode = false } = options;
+
+    if (this.provider === 'claude') {
+      return this._callClaude(systemPrompt, userPrompt, { maxTokens, temperature });
+    }
+    return this._callOpenAI(systemPrompt, userPrompt, { maxTokens, temperature, jsonMode });
+  }
+
+  async _callOpenAI(systemPrompt, userPrompt, { maxTokens, temperature, jsonMode }) {
+    const body = {
+      model: this.model,
+      messages: [
+        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+        { role: 'user', content: userPrompt }
+      ],
+      temperature
+    };
+    if (maxTokens) body.max_tokens = maxTokens;
+    if (jsonMode) body.response_format = { type: 'json_object' };
+
+    const res = await fetch(this.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      const error = new Error(errorData.error?.message || 'OpenAI API request failed');
+      error.status = res.status;
+      throw error;
+    }
+
+    const data = await res.json();
+    const choice = data.choices?.[0];
+    return {
+      content: choice?.message?.content || '',
+      finishReason: choice?.finish_reason || 'unknown',
+      model: data.model || this.model,
+      id: data.id || 'unknown',
+      usage: data.usage || {}
+    };
+  }
+
+  async _callClaude(systemPrompt, userPrompt, { maxTokens, temperature }) {
+    const body = {
+      model: this.model,
+      max_tokens: maxTokens || 4096,
+      temperature,
+      messages: [{ role: 'user', content: userPrompt }]
+    };
+    if (systemPrompt) body.system = systemPrompt;
+
+    const res = await fetch(this.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      const error = new Error(errorData.error?.message || 'Claude API request failed');
+      error.status = res.status;
+      throw error;
+    }
+
+    const data = await res.json();
+    let text = data.content?.[0]?.text || '';
+    // Claude often wraps JSON in markdown code fences — strip them
+    text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+    return {
+      content: text,
+      finishReason: data.stop_reason || 'unknown',
+      model: data.model || this.model,
+      id: data.id || 'unknown',
+      usage: data.usage || {}
+    };
   }
 
   // Sanitize input to prevent prompt injection
@@ -156,9 +250,8 @@ class ChatGPTService {
     while (this.requestQueue.length > 0 && this.activeRequests < this.MAX_CONCURRENT) {
       const { requestData, resolve, reject, timestamp } = this.requestQueue.shift();
       
-      // Check if request has been waiting too long (30 seconds timeout)
-      if (Date.now() - timestamp > 30000) {
-        reject(new Error('Request timeout - OpenAI queue processing took too long'));
+      if (Date.now() - timestamp > this.QUEUE_TIMEOUT) {
+        reject(new Error(`Request timeout - ${this.provider} queue processing took too long`));
         continue;
       }
       
@@ -226,7 +319,7 @@ class ChatGPTService {
   // customPrompts.therapyResponsePrompt overrides the default chime-in prompt when provided
   async generateCouplesTherapyResponse(user1Name, user2Name, user1Messages, user2FirstMessage, customPrompts = null) {
     if (!this.apiKey) {
-      throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY or ANTHROPIC_API_KEY');
     }
 
     return this.queueOpenAIRequest({ 
@@ -242,7 +335,7 @@ class ChatGPTService {
   // Public interface - queue the request
   async generateChimeInPrompt(userName, conversationStarter, userMessages, customPrompts = null) {
     if (!this.apiKey) {
-      throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY or ANTHROPIC_API_KEY');
     }
 
     return this.queueOpenAIRequest({
@@ -258,7 +351,7 @@ class ChatGPTService {
   // customPrompts.initialProgramPrompt overrides the default initial program prompt when provided
   async generateCouplesProgram(userName, partnerName, userInput, customPrompts = null) {
     if (!this.apiKey) {
-      throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY or ANTHROPIC_API_KEY');
     }
 
     return this.queueOpenAIRequest({ type: 'program', userName, partnerName, userInput, customPrompts });
@@ -268,7 +361,7 @@ class ChatGPTService {
   // customPrompts.nextProgramPrompt overrides the default next program prompt when provided
   async generateNextCouplesProgram(userName, partnerName, previousConversationStarters, userInput, customPrompts = null) {
     if (!this.apiKey) {
-      throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY or ANTHROPIC_API_KEY');
     }
 
     return this.queueOpenAIRequest({ 
@@ -344,7 +437,7 @@ class ChatGPTService {
         ? `The user attends ${orgName}${orgCityState ? ` in ${orgCityState}` : ''}. Wherever possible, draw on the values, beliefs, and teachings of that community to make each reflection feel rooted in their specific faith home.`
         : 'Ground each reflection in broadly shared Christian values and scripture.';
 
-      const defaultPrompt = `You are a faith-based spiritual wellness guide who is also trained in research-based therapy methods and who creates personalized 7-day reflection programs rooted in Christian values and scripture.
+      const defaultPrompt = `You are a top-tier Christian couples therapist with deep expertise in research-based therapy methods. You are inspired by Christian theology and biblical wisdom.
 
 ${orgContext}
 
@@ -391,49 +484,23 @@ Respond only with a valid JSON object in exactly this structure:
             .replace(/\{\{User Input\}\}/g, sanitizedUserInput)
         : defaultPrompt;
 
-      const completion = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${this.apiKey}`
-        },
-        body: JSON.stringify({
-          model: "gpt-5.4",
-          messages: [
-            {
-              role: "system",
-              content: "You are a faith-based spiritual wellness program creator. Respond only with valid JSON in the exact format specified. Do not include any text, explanation, or markdown outside the JSON structure."
-            },
-            {
-              role: "user",
-              content: resolvedPrompt
-            }
-          ],
-          temperature: 0.7,
-          response_format: { type: "json_object" }
-        })
-      });
+      const llmResult = await this.callLLM(
+        "You are a faith-based spiritual wellness program creator. Respond only with valid JSON in the exact format specified. Do not include any text, explanation, or markdown outside the JSON structure.",
+        resolvedPrompt,
+        { temperature: 0.7, jsonMode: true }
+      );
 
-      if (!completion.ok) {
-        const errorData = await completion.json().catch(() => ({}));
-        const error = new Error(errorData.error?.message || 'OpenAI API request failed');
-        error.status = completion.status;
-        throw error;
-      }
-
-      const completionData = await completion.json();
-      const responseChoice = completionData && Array.isArray(completionData.choices) ? completionData.choices[0] : null;
-      const response = responseChoice && responseChoice.message ? responseChoice.message.content : '';
-      const finishReason = responseChoice ? responseChoice.finish_reason : 'unknown';
+      const response = llmResult.content;
+      const finishReason = llmResult.finishReason;
       const responseMetadata = {
-        model: completionData?.model || 'unknown',
-        id: completionData?.id || 'unknown',
+        model: llmResult.model,
+        id: llmResult.id,
         finish_reason: finishReason,
-        prompt_tokens: completionData?.usage?.prompt_tokens ?? null,
-        completion_tokens: completionData?.usage?.completion_tokens ?? null,
-        total_tokens: completionData?.usage?.total_tokens ?? null
+        prompt_tokens: llmResult.usage?.prompt_tokens ?? llmResult.usage?.input_tokens ?? null,
+        completion_tokens: llmResult.usage?.completion_tokens ?? llmResult.usage?.output_tokens ?? null,
+        total_tokens: llmResult.usage?.total_tokens ?? null
       };
-      console.log('DEBUG generateInitialProgram OpenAI response (first 500 chars):', typeof response, response ? response.substring(0, 500) : 'NULL/EMPTY');
+      console.log('DEBUG generateInitialProgram response (first 500 chars):', typeof response, response ? response.substring(0, 500) : 'NULL/EMPTY');
       console.log('DEBUG generateInitialProgram response metadata:', responseMetadata);
       
       // Validate and sanitize the AI response
@@ -617,39 +684,13 @@ Please format your response as a JSON object with the following structure:
             .replace(/\{\{previousQuestions\}\}/g, previousQuestionsText)
         : defaultPrompt;
 
-      const completion = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${this.apiKey}`
-        },
-        body: JSON.stringify({
-          model: "gpt-5.4",
-          messages: [
-            {
-              role: "system",
-              content: "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content."
-            },
-            {
-              role: "user",
-              content: resolvedPrompt
-            }
-          ],
-          max_tokens: 4000,
-          temperature: 0.7,
-          response_format: { type: "json_object" }
-        })
-      });
+      const llmResult = await this.callLLM(
+        "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content.",
+        resolvedPrompt,
+        { maxTokens: 4000, temperature: 0.7, jsonMode: true }
+      );
 
-      if (!completion.ok) {
-        const errorData = await completion.json().catch(() => ({}));
-        const error = new Error(errorData.error?.message || 'OpenAI API request failed');
-        error.status = completion.status;
-        throw error;
-      }
-
-      const completionData = await completion.json();
-      const response = completionData.choices[0].message.content;
+      const response = llmResult.content;
       
       // Validate and sanitize the AI response
       if (!this.validateAIResponse(response)) {
@@ -702,9 +743,8 @@ Please format your response as a JSON object with the following structure:
     }
   }
 
-  // Check if OpenAI API key is configured
   isConfigured() {
-    return !!process.env.OPENAI_API_KEY;
+    return !!this.apiKey;
   }
 
   // Validate AI response for potentially unsafe content
@@ -860,38 +900,13 @@ ${sanitizedUserName} says:
 
 Your goal, as their couples therapist, is to ask one follow-up question that enables the user to keep reflecting and journaling.`;
 
-      const completion = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${this.apiKey}`
-        },
-        body: JSON.stringify({
-          model: "gpt-5.4",
-          messages: [
-            {
-              role: "system",
-              content: "You are a faith-based spiritual wellness guide. Respond with exactly one warm follow-up reflection question and no extra explanation."
-            },
-            {
-              role: "user",
-              content: defaultPrompt
-            }
-          ],
-          max_tokens: 300,
-          temperature: 0.7
-        })
-      });
+      const llmResult = await this.callLLM(
+        "You are a faith-based spiritual wellness guide. Respond with exactly one warm follow-up reflection question and no extra explanation.",
+        defaultPrompt,
+        { maxTokens: 300, temperature: 0.7 }
+      );
 
-      if (!completion.ok) {
-        const errorData = await completion.json().catch(() => ({}));
-        const error = new Error(errorData.error?.message || 'OpenAI API request failed');
-        error.status = completion.status;
-        throw error;
-      }
-
-      const completionData = await completion.json();
-      const response = completionData.choices[0].message.content;
+      const response = llmResult.content;
 
       if (!this.validateAIResponse(response, 20)) {
         console.warn('SECURITY: AI response failed validation checks');
@@ -983,34 +998,13 @@ When you create the follow-up conversation-starter for the couple, please do not
             .replace(/\{\{user2FirstMessage\}\}/g, sanitizedUser2FirstMessage)
         : defaultPrompt;
 
-      const completion = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${this.apiKey}`
-        },
-        body: JSON.stringify({
-          model: "gpt-5.4",
-          messages: [
-            {
-              role: "user",
-              content: resolvedPrompt
-            }
-          ],
-          max_tokens: 2000,
-          temperature: 0.7
-        })
-      });
+      const llmResult = await this.callLLM(
+        null,
+        resolvedPrompt,
+        { maxTokens: 2000, temperature: 0.7 }
+      );
 
-      if (!completion.ok) {
-        const errorData = await completion.json().catch(() => ({}));
-        const error = new Error(errorData.error?.message || 'OpenAI API request failed');
-        error.status = completion.status;
-        throw error;
-      }
-
-      const completionData = await completion.json();
-      const response = completionData.choices[0].message.content;
+      const response = llmResult.content;
       
       // Validate and sanitize the AI response
       if (!this.validateAIResponse(response, 20)) {

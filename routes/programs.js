@@ -148,16 +148,7 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       // Get the previous program
       const previousProgram = await programModel.getProgramById(previousProgramId);
 
-      // Check if the previous program is unlocked
-      if (!previousProgram.next_program_unlocked) {
-        return res.status(403).json({ 
-          error: 'Previous program must be unlocked before generating next program',
-          current_unlock_status: {
-            next_program_unlocked: false,
-            steps_required_for_unlock: previousProgram.steps_required_for_unlock
-          }
-        });
-      }
+      // Programs are now always unlocked by default - no unlock check needed
 
       // Get user names for the prompt
       let userName = null;
