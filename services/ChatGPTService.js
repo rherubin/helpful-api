@@ -398,7 +398,7 @@ Respond only with a valid JSON object in exactly this structure:
           "Authorization": `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: "gpt-4o",
+          model: "gpt-5.4",
           messages: [
             {
               role: "system",
@@ -624,7 +624,7 @@ Please format your response as a JSON object with the following structure:
           "Authorization": `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: "gpt-4o",
+          model: "gpt-5.4",
           messages: [
             {
               role: "system",
@@ -867,7 +867,7 @@ Your goal, as their couples therapist, is to ask one follow-up question that ena
           "Authorization": `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: "gpt-4o",
+          model: "gpt-5.4",
           messages: [
             {
               role: "system",
@@ -990,7 +990,7 @@ When you create the follow-up conversation-starter for the couple, please do not
           "Authorization": `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: "gpt-4o",
+          model: "gpt-5.4",
           messages: [
             {
               role: "user",
