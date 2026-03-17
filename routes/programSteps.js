@@ -57,6 +57,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
       // Filter user messages only
       const userMessages = messages.filter(msg => msg.message_type === 'user_message');
+      const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
 
       // Check if this is the very first message in the first step of the first program ever
       // Only show welcome message for day 1 of a program that has no previous_program_id
@@ -78,6 +79,61 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
         console.log(`Welcome system message added to step ${stepId}`);
         return; // Don't continue with therapy response logic for first message
+      }
+
+      const isHopefulMessage = latestMessage &&
+        latestMessage.message_type === 'user_message' &&
+        latestMessage.sender_id === currentUserId &&
+        typeof latestMessage.content === 'string' &&
+        latestMessage.content.trim().toLowerCase() === 'hopeful';
+
+      const currentUserMessages = userMessages.filter(msg => msg.sender_id === currentUserId);
+      const priorUserMessages = currentUserMessages.slice(0, -1);
+      const hasPriorUserMessageInStep = priorUserMessages.length > 0;
+
+      if (isHopefulMessage && hasPriorUserMessageInStep) {
+        console.log(`[THERAPY_TRIGGER] Hopeful trigger detected for step ${stepId}, user ${currentUserId}`);
+
+        const currentUser = await userModel.getUserById(currentUserId);
+        const currentUserName = currentUser?.user_name;
+
+        if (!currentUserName) {
+          console.error(`[THERAPY_TRIGGER] Cannot generate hopeful chime-in prompt - user name not set for user ${currentUserId}`);
+          return;
+        }
+
+        const customPrompts = await getCustomPrompts(currentUserId);
+        const hopefulPrompt = await chatGPTService.generateChimeInPrompt(
+          currentUserName,
+          step.conversation_starter,
+          priorUserMessages.map(msg => msg.content),
+          customPrompts
+        );
+
+        const hopefulMessages = Array.isArray(hopefulPrompt) ? hopefulPrompt : [hopefulPrompt];
+
+        for (const hopefulMessage of hopefulMessages) {
+          const content = (hopefulMessage || '')
+            .replace(/^\[|\]$/g, '')
+            .replace(/\\n/g, ' ')
+            .replace(/\.\s*["']+\s*$/, '.')
+            .replace(/^["']+/, '')
+            .replace(/["']+\.?\s*$/, '')
+            .trim();
+
+          const hasActualContent = content.length > 0 && /[a-zA-Z0-9]/.test(content);
+          if (hasActualContent) {
+            await messageModel.addSystemMessage(stepId, content, {
+              type: 'chime_in_prompt',
+              triggered_by: 'hopeful_message',
+              step_day: step.day,
+              step_theme: step.theme
+            });
+          }
+        }
+
+        console.log(`[THERAPY_TRIGGER] Hopeful chime-in prompt added to step ${stepId}`);
+        return;
       }
 
       // Only trigger therapy response if program has a pairing

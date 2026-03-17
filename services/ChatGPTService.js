@@ -240,6 +240,21 @@ class ChatGPTService {
   }
 
   // Public interface - queue the request
+  async generateChimeInPrompt(userName, conversationStarter, userMessages, customPrompts = null) {
+    if (!this.apiKey) {
+      throw new Error('ChatGPT service is not configured - OPENAI_API_KEY is required');
+    }
+
+    return this.queueOpenAIRequest({
+      type: 'single_user_chime_in',
+      userName,
+      conversationStarter,
+      userMessages,
+      customPrompts
+    });
+  }
+
+  // Public interface - queue the request
   // customPrompts.initialProgramPrompt overrides the default initial program prompt when provided
   async generateCouplesProgram(userName, partnerName, userInput, customPrompts = null) {
     if (!this.apiKey) {
@@ -270,6 +285,8 @@ class ChatGPTService {
   async processOpenAIRequest(requestData, retryCount = 0) {
     if (requestData.type === 'chime_in_response_1') {
       return this.generateFirstChimeInPrompt(requestData, retryCount);
+    } else if (requestData.type === 'single_user_chime_in') {
+      return this.generateSingleUserChimeInPrompt(requestData, retryCount);
     } else if (requestData.type === 'chime_in_response_2') {
       return this.generateSecondChimeInPrompt(requestData, retryCount);
     } else if (requestData.type === 'next_program') {
@@ -691,7 +708,7 @@ Please format your response as a JSON object with the following structure:
   }
 
   // Validate AI response for potentially unsafe content
-  validateAIResponse(response) {
+  validateAIResponse(response, minLength = 100) {
     if (typeof response !== 'string') return false;
     
     // Check for signs of prompt injection success
@@ -719,7 +736,7 @@ Please format your response as a JSON object with the following structure:
     }
 
     // Check response length (too short might indicate refusal)
-    if (response.length < 100) {
+    if (response.length < minLength) {
       console.warn('SECURITY: AI response too short, possible refusal');
       return false;
     }
@@ -792,6 +809,120 @@ Please format your response as a JSON object with the following structure:
     } catch (error) {
       console.error('Error validating program structure:', error.message);
       return false;
+    }
+  }
+
+  // Internal method for generating a single-user follow-up reflection
+  async generateSingleUserChimeInPrompt({ userName, conversationStarter, userMessages, customPrompts }, retryCount = 0) {
+    const MAX_RETRIES = 2;
+    const BASE_DELAY = 1000; // 1 second
+
+    try {
+      const sanitizedUserName = this.sanitizePromptInput(userName);
+      const sanitizedConversationStarter = this.sanitizePromptInput(conversationStarter);
+      const sanitizedUserMessages = Array.isArray(userMessages)
+        ? this.sanitizePromptInput(userMessages.map(msg => this.sanitizePromptInput(msg)).join('\n'))
+        : this.sanitizePromptInput(userMessages);
+
+      if (!this.validateInputSafety(sanitizedUserName) ||
+          !this.validateInputSafety(sanitizedConversationStarter) ||
+          !this.validateInputSafety(sanitizedUserMessages)) {
+        throw new Error('Input contains potentially unsafe content');
+      }
+
+      const nameValidation = this.validateUserNames([sanitizedUserName]);
+      if (!nameValidation.valid) {
+        throw new Error(nameValidation.error);
+      }
+
+      if (!sanitizedConversationStarter) {
+        throw new Error('Conversation starter is required');
+      }
+
+      if (!sanitizedUserMessages) {
+        throw new Error('At least one user message is required');
+      }
+
+      const orgName = (customPrompts && customPrompts.organizationName) || 'their local church';
+      const orgCityState = (customPrompts && customPrompts.organizationCity && customPrompts.organizationState)
+        ? `${customPrompts.organizationCity}, ${customPrompts.organizationState}`
+        : 'their city';
+
+      const defaultPrompt = `You are a top-tier faith-based spiritual wellness guide with deep expertise in research-based therapy methods. You are inspired by Christian theology and biblical wisdom. You go to ${orgName} in ${orgCityState}, and you are very aware of their statements of beliefs, wisdom, practices, teaching, and sermons.
+
+A user comes into your therapy room.
+
+Your first question to them is: "${sanitizedConversationStarter}"
+
+${sanitizedUserName} says:
+
+"${sanitizedUserMessages}"
+
+Your goal, as their couples therapist, is to ask one follow-up question that enables the user to keep reflecting and journaling.`;
+
+      const completion = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "system",
+              content: "You are a faith-based spiritual wellness guide. Respond with exactly one warm follow-up reflection question and no extra explanation."
+            },
+            {
+              role: "user",
+              content: defaultPrompt
+            }
+          ],
+          max_tokens: 300,
+          temperature: 0.7
+        })
+      });
+
+      if (!completion.ok) {
+        const errorData = await completion.json().catch(() => ({}));
+        const error = new Error(errorData.error?.message || 'OpenAI API request failed');
+        error.status = completion.status;
+        throw error;
+      }
+
+      const completionData = await completion.json();
+      const response = completionData.choices[0].message.content;
+
+      if (!this.validateAIResponse(response, 20)) {
+        console.warn('SECURITY: AI response failed validation checks');
+        throw new Error('AI response contains potentially unsafe content');
+      }
+
+      return this.cleanMessageText(response);
+    } catch (error) {
+      if (error.status === 429 && retryCount < MAX_RETRIES) {
+        const delay = BASE_DELAY * Math.pow(2, retryCount);
+        console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.generateSingleUserChimeInPrompt({ userName, conversationStarter, userMessages, customPrompts }, retryCount + 1);
+      }
+
+      if (error.message.includes('unsafe content') || error.message.includes('validation')) {
+        console.error('SECURITY ERROR in ChatGPT therapy service:', error.message);
+      } else {
+        if (error.status === 401) {
+          console.error('ChatGPT API Error: Invalid API key - check your OPENAI_API_KEY configuration');
+        } else if (error.status === 429) {
+          console.error(`ChatGPT API Error: Rate limit exceeded (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+        } else if (error.status === 403) {
+          console.error('ChatGPT API Error: Access forbidden - check API key permissions');
+        } else {
+          console.error('ChatGPT API Error:', error.message || 'Unknown error');
+        }
+      }
+
+      throw new Error('Failed to generate chime-in prompt');
     }
   }
 
@@ -882,7 +1013,7 @@ When you create the follow-up conversation-starter for the couple, please do not
       const response = completionData.choices[0].message.content;
       
       // Validate and sanitize the AI response
-      if (!this.validateAIResponse(response)) {
+      if (!this.validateAIResponse(response, 20)) {
         console.warn('SECURITY: AI response failed validation checks');
         throw new Error('AI response contains potentially unsafe content');
       }

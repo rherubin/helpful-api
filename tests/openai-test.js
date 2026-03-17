@@ -116,6 +116,12 @@ class OpenAITestRunner {
       );
 
       this.assert(
+        typeof chatGPTService.generateChimeInPrompt === 'function',
+        'generateChimeInPrompt method exists',
+        'Method is available'
+      );
+
+      this.assert(
         typeof chatGPTService.validateInputSafety === 'function',
         'validateInputSafety method exists',
         'Method is available'
@@ -393,6 +399,92 @@ class OpenAITestRunner {
     }
   }
 
+  // Test single-user hopeful chime-in prompt generation
+  async testGenerateChimeInPrompt(chatGPTService) {
+    this.log('Testing generateChimeInPrompt Prompt Construction', 'section');
+
+    if (!chatGPTService) {
+      this.log('Skipping generateChimeInPrompt test - service not initialized', 'warn');
+      return;
+    }
+
+    const originalFetch = global.fetch;
+    let capturedRequestBody = null;
+
+    global.fetch = async (_url, options) => {
+      capturedRequestBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        async json() {
+          return {
+            choices: [
+              {
+                message: {
+                  content: 'What part of what you are feeling right now seems most hopeful, and how might God be inviting you to stay with it a little longer?'
+                }
+              }
+            ]
+          };
+        }
+      };
+    };
+
+    try {
+      const response = await chatGPTService.generateChimeInPrompt(
+        'Ava',
+        'Where do you most need God to meet you today?',
+        ['I feel tired and stretched thin lately.'],
+        {
+          organizationName: 'Grace Church',
+          organizationCity: 'Nashville',
+          organizationState: 'TN'
+        }
+      );
+
+      this.assert(
+        typeof response === 'string' && response.length > 0,
+        'generateChimeInPrompt returns a follow-up question',
+        `Response: ${response.substring(0, 80)}`
+      );
+
+      const prompt = capturedRequestBody?.messages?.[1]?.content || '';
+
+      this.assert(
+        prompt.includes('Grace Church in Nashville, TN'),
+        'generateChimeInPrompt includes org context',
+        prompt.includes('Grace Church in Nashville, TN') ? 'Org context present' : 'Org context missing'
+      );
+
+      this.assert(
+        prompt.includes('Your first question to them is: "Where do you most need God to meet you today?"'),
+        'generateChimeInPrompt includes the conversation starter',
+        'Conversation starter interpolated'
+      );
+
+      this.assert(
+        prompt.includes('I feel tired and stretched thin lately.'),
+        'generateChimeInPrompt includes newline-separated user messages',
+        'User messages interpolated'
+      );
+
+      this.assert(
+        prompt.includes('Ava says:'),
+        'generateChimeInPrompt includes the user name',
+        'User name interpolated'
+      );
+
+      this.assert(
+        !prompt.includes('\nHopeful'),
+        'generateChimeInPrompt test input excludes literal Hopeful trigger message',
+        'Prompt does not contain Hopeful trigger'
+      );
+    } catch (error) {
+      this.assert(false, 'generateChimeInPrompt test', `Error: ${error.message}`);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  }
+
   // Test method signatures and parameter handling
   async testMethodSignatures(chatGPTService) {
     this.log('Testing Method Signatures and Parameter Handling', 'section');
@@ -492,6 +584,9 @@ class OpenAITestRunner {
         console.log('');
 
         await this.testGenerateNextProgramStructure(chatGPTService);
+        console.log('');
+
+        await this.testGenerateChimeInPrompt(chatGPTService);
         console.log('');
 
         await this.testMethodSignatures(chatGPTService);

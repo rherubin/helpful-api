@@ -906,6 +906,41 @@ class MessagesTestRunner {
     return { found: false, messages: [] };
   }
 
+  async pollForSystemMessageType(stepId, token, metadataType, maxWait = 30000) {
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+      try {
+        const response = await axios.get(
+          `${this.baseURL}/api/programSteps/${stepId}/messages`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: this.timeout
+          }
+        );
+
+        const matchingMessages = (response.data.messages || []).filter(msg => {
+          if (msg.message_type !== 'system' || !msg.metadata) return false;
+          try {
+            const parsed = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+            return parsed.type === metadataType;
+          } catch (error) {
+            return false;
+          }
+        });
+
+        if (matchingMessages.length > 0) {
+          return { found: true, messages: matchingMessages };
+        }
+      } catch (error) {
+        // Continue polling
+      }
+
+      await this.sleep(1000);
+    }
+
+    return { found: false, messages: [] };
+  }
+
   /**
    * Test: Both users posting messages triggers therapy response
    */
@@ -1065,6 +1100,72 @@ class MessagesTestRunner {
   }
 
   /**
+   * Test: Posting "Hopeful" after a prior user message triggers a single-user chime-in prompt
+   */
+  async testHopefulChimeInPrompt() {
+    this.log('Testing: "Hopeful" follow-up reflection trigger', 'section');
+
+    if (!this.testData.stepId) {
+      this.log('No program step available, skipping hopeful chime-in test', 'warn');
+      return;
+    }
+
+    try {
+      await axios.post(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        { content: 'Hopeful' },
+        {
+          headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+          timeout: this.timeout
+        }
+      );
+      this.log('Posted Hopeful message to trigger follow-up reflection', 'info');
+    } catch (error) {
+      this.assert(false, 'Post Hopeful message', `Error: ${error.response?.data?.error || error.message}`);
+      return;
+    }
+
+    const hopefulPoll = await this.pollForSystemMessageType(
+      this.testData.stepId,
+      this.testData.user1.token,
+      'chime_in_prompt',
+      30000
+    );
+
+    if (!hopefulPoll.found || hopefulPoll.messages.length === 0) {
+      this.assert(false, 'Hopeful chime-in prompt generated', 'No chime_in_prompt system message found within timeout');
+      return;
+    }
+
+    const hopefulMessage = hopefulPoll.messages[0];
+    const metadata = hopefulMessage.metadata ? JSON.parse(hopefulMessage.metadata) : {};
+
+    this.assert(
+      hopefulMessage.message_type === 'system',
+      'Hopeful chime-in message has correct type',
+      `Type: ${hopefulMessage.message_type}`
+    );
+
+    this.assert(
+      metadata.type === 'chime_in_prompt',
+      'Hopeful chime-in message has correct metadata type',
+      `Metadata type: ${metadata.type}`
+    );
+
+    this.assert(
+      metadata.triggered_by === 'hopeful_message',
+      'Hopeful chime-in message has correct trigger',
+      `Triggered by: ${metadata.triggered_by}`
+    );
+
+    this.assert(
+      !!hopefulMessage.content && hopefulMessage.content.length > 0,
+      'Hopeful chime-in message has content',
+      `Content length: ${hopefulMessage.content.length}`
+    );
+  }
+
+  /**
    * Test: Validate therapy response logic fixes (duplicate prevention and timing)
    */
   async testTherapyResponseLogicValidation() {
@@ -1169,6 +1270,13 @@ class MessagesTestRunner {
       'Code validation: First message welcome logic is present in routes/programSteps.js',
       `Found: ${hasFirstMessageLogic}`
     );
+
+      const hasHopefulLogic = programStepsContent.includes("latestMessage.content.trim().toLowerCase() === 'hopeful'");
+      this.assert(
+        hasHopefulLogic,
+        'Code validation: Hopeful trigger logic is present in routes/programSteps.js',
+        `Found: ${hasHopefulLogic}`
+      );
 
     // Test 3: Validate server health
     this.log('Validating server health...', 'info');
@@ -1371,6 +1479,7 @@ class MessagesTestRunner {
 
     // Only run therapy response tests if OpenAI is available
     if (!MOCK_OPENAI) {
+      await this.testHopefulChimeInPrompt();
       await this.testFirstMessageWelcome();
       await this.testTherapyResponseTrigger();
     } else {

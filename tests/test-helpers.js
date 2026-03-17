@@ -260,6 +260,32 @@ class MockChatGPTService {
   }
 
   /**
+   * Generate mock single-user chime-in prompt
+   * @param {string} userName - User's name
+   * @param {string} conversationStarter - Step conversation starter
+   * @param {string[]} userMessages - User messages in the step
+   * @returns {string} Mock follow-up question
+   */
+  async generateChimeInPrompt(userName, conversationStarter, userMessages) {
+    this.callLog.push({
+      method: 'generateChimeInPrompt',
+      args: { userName, conversationStarter, userMessages },
+      timestamp: new Date().toISOString()
+    });
+    this.metrics.totalRequests++;
+    this.metrics.successfulRequests++;
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    if (this.mockResponses.length > 0) {
+      const response = this.mockResponses.shift();
+      return Array.isArray(response) ? response[0] : response;
+    }
+
+    return `${userName}, when you think about "${conversationStarter}", what feels most hopeful to keep exploring with God right now?`;
+  }
+
+  /**
    * Get service metrics
    * @returns {object} Service metrics
    */
