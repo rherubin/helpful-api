@@ -59,7 +59,7 @@ class Program {
         FROM INFORMATION_SCHEMA.COLUMNS 
         WHERE TABLE_SCHEMA = DATABASE() 
         AND TABLE_NAME = 'programs' 
-        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id', 'generation_error', 'regenerate_therapy_response')
+        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id', 'generation_error', 'regenerate_therapy_response', 'llm_used')
       `;
       
       const existingColumns = await this.query(checkColumns);
@@ -137,6 +137,16 @@ class Program {
         `);
         console.log('Added regenerate_therapy_response column to programs table.');
       }
+
+      // Add llm_used if it doesn't exist
+      if (!columnNames.includes('llm_used')) {
+        await this.query(`
+          ALTER TABLE programs 
+          ADD COLUMN llm_used VARCHAR(100) DEFAULT NULL 
+          AFTER regenerate_therapy_response
+        `);
+        console.log('Added llm_used column to programs table.');
+      }
     } catch (err) {
       // Ignore errors if columns already exist or other migration issues
       console.log('Migration check completed (columns may already exist).');
@@ -172,13 +182,13 @@ class Program {
 
   // Create a program
   async createProgram(userId, programData) {
-    const { user_input, pairing_id, previous_program_id, steps_required_for_unlock = 0 } = programData;
+    const { user_input, pairing_id, previous_program_id, steps_required_for_unlock = 0, llm_used = null } = programData;
     const programId = this.generateUniqueId();
 
     try {
       const insertProgram = `
-        INSERT INTO programs (id, user_id, user_input, pairing_id, previous_program_id, therapy_response, steps_required_for_unlock, next_program_unlocked, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, NOW(), NOW())
+        INSERT INTO programs (id, user_id, user_input, pairing_id, previous_program_id, therapy_response, steps_required_for_unlock, next_program_unlocked, llm_used, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, ?, NOW(), NOW())
       `;
 
       await this.query(insertProgram, [
@@ -188,7 +198,8 @@ class Program {
         pairing_id || null,
         previous_program_id || null,
         programData.therapy_response || null,
-        steps_required_for_unlock
+        steps_required_for_unlock,
+        llm_used
       ]);
       
       return {
@@ -200,6 +211,7 @@ class Program {
         therapy_response: programData.therapy_response || null,
         steps_required_for_unlock,
         next_program_unlocked: false,
+        llm_used,
         created_at: new Date().toISOString()
       };
     } catch (err) {

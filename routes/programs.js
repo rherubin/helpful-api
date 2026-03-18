@@ -210,7 +210,8 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         user_input,
         pairing_id: previousProgram.pairing_id,
         previous_program_id: previousProgramId,
-        steps_required_for_unlock: steps_required_for_unlock || 7
+        steps_required_for_unlock: steps_required_for_unlock || 7,
+        llm_used: chatGPTService ? chatGPTService.model : null
       });
 
       // Return immediate response
@@ -411,7 +412,8 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       const program = await programModel.createProgram(userId, {
         user_input,
         pairing_id,
-        steps_required_for_unlock: steps_required_for_unlock || 7
+        steps_required_for_unlock: steps_required_for_unlock || 7,
+        llm_used: chatGPTService ? chatGPTService.model : null
       });
 
       // Return immediate response
