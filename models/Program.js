@@ -59,7 +59,7 @@ class Program {
         FROM INFORMATION_SCHEMA.COLUMNS 
         WHERE TABLE_SCHEMA = DATABASE() 
         AND TABLE_NAME = 'programs' 
-        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id', 'generation_error')
+        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id', 'generation_error', 'regenerate_therapy_response')
       `;
       
       const existingColumns = await this.query(checkColumns);
@@ -122,6 +122,20 @@ class Program {
           console.log('Foreign key constraint may already exist.');
         }
         console.log('Added previous_program_id column to programs table.');
+      }
+
+      // Add regenerate_therapy_response if it doesn't exist
+      if (!columnNames.includes('regenerate_therapy_response')) {
+        await this.query(`
+          ALTER TABLE programs 
+          ADD COLUMN regenerate_therapy_response BOOLEAN DEFAULT FALSE 
+          AFTER generation_error
+        `);
+        await this.query(`
+          CREATE INDEX idx_regenerate_therapy_response 
+          ON programs (regenerate_therapy_response)
+        `);
+        console.log('Added regenerate_therapy_response column to programs table.');
       }
     } catch (err) {
       // Ignore errors if columns already exist or other migration issues
@@ -288,6 +302,44 @@ class Program {
       return { message: 'Therapy response updated successfully' };
     } catch (err) {
       throw new Error('Failed to update therapy response');
+    }
+  }
+
+  // Clear the regenerate_therapy_response flag after a successful regeneration
+  async clearRegenerateFlag(programId) {
+    try {
+      const updateQuery = `
+        UPDATE programs 
+        SET regenerate_therapy_response = FALSE, updated_at = NOW()
+        WHERE id = ? AND deleted_at IS NULL
+      `;
+
+      await this.query(updateQuery, [programId]);
+    } catch (err) {
+      throw new Error('Failed to clear regenerate flag');
+    }
+  }
+
+  // Fetch all programs that have regenerate_therapy_response = TRUE
+  async getProgramsFlaggedForRegeneration() {
+    try {
+      const query = `
+        SELECT p.id, p.user_id, p.user_input, p.pairing_id, p.previous_program_id,
+               p.steps_required_for_unlock, p.next_program_unlocked,
+               p.created_at, p.updated_at
+        FROM programs p
+        WHERE p.regenerate_therapy_response = TRUE
+          AND p.deleted_at IS NULL
+        ORDER BY p.updated_at ASC
+      `;
+
+      const programs = await this.query(query);
+      return programs.map(program => ({
+        ...program,
+        next_program_unlocked: this.convertToBoolean(program.next_program_unlocked)
+      }));
+    } catch (err) {
+      throw new Error('Failed to fetch programs flagged for regeneration');
     }
   }
 

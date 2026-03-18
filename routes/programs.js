@@ -15,11 +15,17 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
     return Array.isArray(steps) && steps.length > 0;
   }
 
-  async function generateAndPersistProgramContent({ programId, generateResponse, successLogPrefix }) {
-    // If steps already exist, treat as already-completed work.
-    if (await hasProgramSteps(programId)) {
+  async function generateAndPersistProgramContent({ programId, generateResponse, successLogPrefix, forceRegenerate = false }) {
+    // If steps already exist and this is not a forced regeneration, treat as already-completed work.
+    if (!forceRegenerate && await hasProgramSteps(programId)) {
       console.log(`${successLogPrefix} Program steps already exist, skipping generation for:`, programId);
       return;
+    }
+
+    // For forced regeneration, delete existing steps so they can be recreated cleanly.
+    if (forceRegenerate && programStepModel && await hasProgramSteps(programId)) {
+      console.log(`${successLogPrefix} Force-regenerating: deleting existing steps for program:`, programId);
+      await programStepModel.deleteProgramSteps(programId);
     }
 
     const therapyResponse = await generateResponse();
@@ -41,14 +47,15 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
     console.log(`${successLogPrefix} ChatGPT response generated and saved for program:`, programId);
   }
 
-  async function runGenerationWithFollowUp({ programId, generateResponse, logPrefix }) {
+  async function runGenerationWithFollowUp({ programId, generateResponse, logPrefix, forceRegenerate = false }) {
     const attemptLogs = [];
 
     try {
       await generateAndPersistProgramContent({
         programId,
         generateResponse,
-        successLogPrefix: logPrefix
+        successLogPrefix: logPrefix,
+        forceRegenerate
       });
       return;
     } catch (firstError) {
@@ -61,8 +68,8 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         console.log(`${logPrefix} Scheduling follow-up generation attempt in ${GENERATION_FOLLOWUP_DELAY_MS}ms for program:`, programId);
         await sleep(GENERATION_FOLLOWUP_DELAY_MS);
 
-        // If the first attempt eventually completed asynchronously elsewhere, do not regenerate.
-        if (await hasProgramSteps(programId)) {
+        // For forced regeneration the follow-up should also force; otherwise skip if steps exist.
+        if (!forceRegenerate && await hasProgramSteps(programId)) {
           console.log(`${logPrefix} Follow-up skipped; program already has steps:`, programId);
           return;
         }
@@ -70,7 +77,8 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         await generateAndPersistProgramContent({
           programId,
           generateResponse,
-          successLogPrefix: `${logPrefix} [follow-up]`
+          successLogPrefix: `${logPrefix} [follow-up]`,
+          forceRegenerate
         });
         return;
       } catch (followUpError) {
@@ -566,4 +574,152 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
   return router;
 }
 
-module.exports = createProgramRoutes;
+// Background poller that watches for programs with regenerate_therapy_response = TRUE
+// and re-runs generateInitialPrompt for each one, then clears the flag.
+function startRegenerationPoller(programModel, programStepModel, chatGPTService, userModel, pairingModel, userModelForOrgCode) {
+  const POLL_INTERVAL_MS = Number(process.env.REGENERATION_POLL_INTERVAL_MS || 30000);
+
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  async function getCustomPromptsForUser(userId) {
+    if (!userModelForOrgCode) return null;
+    try {
+      const orgCode = await userModelForOrgCode.getUserOrgCode(userId);
+      if (orgCode) {
+        return {
+          initialProgramPrompt: orgCode.initial_program_prompt || null,
+          nextProgramPrompt: orgCode.next_program_prompt || null,
+          therapyResponsePrompt: orgCode.therapy_response_prompt || null,
+          organizationName: orgCode.organization || null,
+          organizationCity: orgCode.city || null,
+          organizationState: orgCode.state || null
+        };
+      }
+      const user = await userModelForOrgCode.getUserById(userId);
+      if (user && (user.org_name || user.org_city || user.org_state)) {
+        return {
+          initialProgramPrompt: null,
+          nextProgramPrompt: null,
+          therapyResponsePrompt: null,
+          organizationName: user.org_name || null,
+          organizationCity: user.org_city || null,
+          organizationState: user.org_state || null
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function hasProgramSteps(programId) {
+    if (!programStepModel) return false;
+    const steps = await programStepModel.getProgramSteps(programId);
+    return Array.isArray(steps) && steps.length > 0;
+  }
+
+  async function pollOnce() {
+    let flaggedPrograms;
+    try {
+      flaggedPrograms = await programModel.getProgramsFlaggedForRegeneration();
+    } catch (err) {
+      console.error('[regen_poller] Failed to query flagged programs:', err.message);
+      return;
+    }
+
+    if (!flaggedPrograms.length) return;
+
+    console.log(`[regen_poller] Found ${flaggedPrograms.length} program(s) flagged for regeneration.`);
+
+    for (const program of flaggedPrograms) {
+      // Clear the flag first so a crash mid-generation doesn't cause an infinite loop.
+      try {
+        await programModel.clearRegenerateFlag(program.id);
+      } catch (err) {
+        console.error(`[regen_poller] Could not clear flag for program ${program.id}:`, err.message);
+        continue;
+      }
+
+      console.log(`[regen_poller] Starting regeneration for program:`, program.id);
+
+      // Delete existing steps so they are recreated cleanly.
+      if (programStepModel && await hasProgramSteps(program.id)) {
+        try {
+          await programStepModel.deleteProgramSteps(program.id);
+          console.log(`[regen_poller] Deleted existing steps for program:`, program.id);
+        } catch (err) {
+          console.error(`[regen_poller] Failed to delete steps for program ${program.id}:`, err.message);
+          continue;
+        }
+      }
+
+      // Resolve user names.
+      let userName = null;
+      let partnerName = null;
+      if (userModel) {
+        try {
+          const user = await userModel.getUserById(program.user_id);
+          userName = user.user_name || null;
+          partnerName = user.partner_name || null;
+
+          if (program.pairing_id && pairingModel && !user.partner_name) {
+            try {
+              const pairing = await pairingModel.getPairingById(program.pairing_id);
+              const partnerId = pairing.user1_id === program.user_id ? pairing.user2_id : pairing.user1_id;
+              if (partnerId) {
+                const partner = await userModel.getUserById(partnerId);
+                partnerName = partner.user_name || partnerName;
+              }
+            } catch { /* non-fatal */ }
+          }
+        } catch (err) {
+          console.error(`[regen_poller] Could not fetch user names for program ${program.id}:`, err.message);
+        }
+      }
+
+      if (!userName) {
+        console.error(`[regen_poller] Skipping program ${program.id}: user_name not set.`);
+        await programModel.updateGenerationError(program.id, 'Regeneration skipped: user_name not set on account.');
+        continue;
+      }
+
+      // Run generation (no follow-up for poller-triggered regenerations).
+      try {
+        const customPrompts = await getCustomPromptsForUser(program.user_id);
+        const therapyResponse = await chatGPTService.generateCouplesProgram(userName, partnerName, program.user_input, customPrompts);
+        const therapyResponseString = typeof therapyResponse === 'object'
+          ? JSON.stringify(therapyResponse)
+          : therapyResponse;
+
+        await programModel.updateTherapyResponse(program.id, therapyResponseString);
+
+        if (programStepModel) {
+          await programStepModel.createProgramSteps(program.id, therapyResponseString);
+        }
+
+        console.log(`[regen_poller] Regeneration complete for program:`, program.id);
+      } catch (err) {
+        console.error(`[regen_poller] Regeneration failed for program ${program.id}:`, err.message);
+        try {
+          await programModel.updateGenerationError(program.id, `Regeneration failed: ${err.message}`);
+        } catch { /* non-fatal */ }
+      }
+    }
+  }
+
+  async function loop() {
+    while (true) {
+      await sleep(POLL_INTERVAL_MS);
+      try {
+        await pollOnce();
+      } catch (err) {
+        console.error('[regen_poller] Unexpected error in poll loop:', err.message);
+      }
+    }
+  }
+
+  console.log(`[regen_poller] Starting regeneration poller (interval: ${POLL_INTERVAL_MS}ms).`);
+  loop();
+}
+
+module.exports = { createProgramRoutes, startRegenerationPoller };

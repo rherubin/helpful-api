@@ -157,6 +157,19 @@ class ProgramStep {
   }
 
   // Create a program step
+  // Delete all steps for a program (used before force-regeneration)
+  async deleteProgramSteps(programId) {
+    try {
+      await this.query(
+        'DELETE FROM program_steps WHERE program_id = ?',
+        [programId]
+      );
+    } catch (err) {
+      console.error('Error deleting program steps:', err.message);
+      throw new Error('Failed to delete program steps');
+    }
+  }
+
   async createProgramStep(programId, day, theme, conversationStarter, scienceBehindIt) {
     const stepId = this.generateUniqueId();
 

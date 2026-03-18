@@ -26,7 +26,7 @@ const AdminAuthService = require('./services/AdminAuthService');
 const createUserRoutes = require('./routes/users');
 const createAuthRoutes = require('./routes/auth');
 const createPairingRoutes = require('./routes/pairing');
-const createProgramRoutes = require('./routes/programs');
+const { createProgramRoutes, startRegenerationPoller } = require('./routes/programs');
 const createProgramStepRoutes = require('./routes/programSteps');
 const createSubscriptionRoutes = require('./routes/subscription');
 const createOrgCodeRoutes = require('./routes/org-codes');
@@ -177,6 +177,11 @@ async function initializeApp() {
     
     // Setup routes
     setupRoutes();
+
+    // Start background poller for programs flagged for therapy response regeneration
+    if (chatGPTService && chatGPTService.isConfigured()) {
+      startRegenerationPoller(programModel, programStepModel, chatGPTService, userModel, pairingModel, userModel);
+    }
     
     console.log('Application initialized successfully.');
   } catch (error) {
