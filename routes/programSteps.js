@@ -404,15 +404,46 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         }
       }, 500);
 
-      // Check if we should trigger a therapy response immediately
-      // Use setImmediate to ensure the user message is committed first
-      setImmediate(() => {
-        checkAndTriggerTherapyResponse(id, userId);
-      });
+      // Detect whether this is the first message in the first step of the first program
+      // so we can add the welcome system message synchronously and return it in the response.
+      let systemMessages = [];
+      const program = await programModel.getProgramById(step.program_id);
+      const isFirstProgram = !program.previous_program_id;
+      const isFirstStep = step.day === 1;
+
+      if (isFirstProgram && isFirstStep) {
+        const existingMessages = await messageModel.getStepMessages(id);
+        const userMessages = existingMessages.filter(msg => msg.message_type === 'user_message');
+        const isFirstMessageInStep = userMessages.length === 1 && userMessages[0].sender_id === userId;
+
+        if (isFirstMessageInStep) {
+          const welcomeText = "Thanks for the message! As soon as your partner replies, I'll start helping you move the conversation forward in the healthiest, most positive way.";
+          console.log(`First message in first step of first program from user ${userId}, adding welcome system message`);
+
+          await messageModel.addSystemMessage(id, welcomeText, {
+            type: 'first_message_welcome',
+            triggered_by: 'first_message',
+            step_day: step.day,
+            step_theme: step.theme
+          });
+
+          console.log(`Welcome system message added to step ${id}`);
+          systemMessages = [welcomeText];
+        }
+      }
+
+      // For all other cases (both users posted, hopeful message, etc.) keep the
+      // background trigger so the response is never delayed by LLM calls.
+      if (systemMessages.length === 0) {
+        setImmediate(() => {
+          checkAndTriggerTherapyResponse(id, userId);
+        });
+      }
 
       res.status(201).json({
         message: 'Message added successfully',
-        data: message
+        data: message,
+        system_messages: systemMessages
       });
     } catch (error) {
       if (error.message === 'Program step not found') {

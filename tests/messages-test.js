@@ -1354,8 +1354,9 @@ class MessagesTestRunner {
     }
 
     // User 1 adds the FIRST message to the step
+    let postMessageResponse;
     try {
-      await axios.post(
+      postMessageResponse = await axios.post(
         `${this.baseURL}/api/programSteps/${testStepId}/messages`,
         { content: 'This is my first message in the conversation about improving our relationship.' },
         {
@@ -1369,10 +1370,31 @@ class MessagesTestRunner {
       return;
     }
 
-    // Wait for async processing (the welcome message is added via setImmediate)
-    await this.sleep(2000);
+    // Assert: system_messages is present and populated in the POST response
+    const responseSystemMessages = postMessageResponse.data.system_messages;
+    this.assert(
+      Array.isArray(responseSystemMessages),
+      'POST /messages response includes system_messages array',
+      Array.isArray(responseSystemMessages) ? 'system_messages is an array' : `system_messages is ${typeof responseSystemMessages}`
+    );
+    this.assert(
+      Array.isArray(responseSystemMessages) && responseSystemMessages.length > 0,
+      'POST /messages response system_messages is non-empty for first message',
+      Array.isArray(responseSystemMessages) ? `system_messages length: ${responseSystemMessages.length}` : 'system_messages not an array'
+    );
+    if (Array.isArray(responseSystemMessages) && responseSystemMessages.length > 0) {
+      this.assert(
+        responseSystemMessages[0].includes('As soon as your partner replies'),
+        'POST /messages response system_messages[0] has correct welcome content',
+        `Content: ${responseSystemMessages[0].substring(0, 80)}...`
+      );
+      this.log(`system_messages in response: ${JSON.stringify(responseSystemMessages)}`, 'info');
+    }
 
-    // Fetch messages for the step
+    // No async wait needed — welcome message is now written synchronously before the response
+    await this.sleep(500);
+
+    // Fetch messages for the step to confirm the welcome message was persisted
     let stepMessages;
     try {
       const messagesResponse = await axios.get(
