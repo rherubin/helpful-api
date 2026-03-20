@@ -59,7 +59,7 @@ class Program {
         FROM INFORMATION_SCHEMA.COLUMNS 
         WHERE TABLE_SCHEMA = DATABASE() 
         AND TABLE_NAME = 'programs' 
-        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id', 'generation_error', 'regenerate_therapy_response', 'llm_used')
+        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id', 'generation_error', 'regenerate_therapy_response', 'llm_used', 'seconds_to_load')
       `;
       
       const existingColumns = await this.query(checkColumns);
@@ -146,6 +146,16 @@ class Program {
           AFTER regenerate_therapy_response
         `);
         console.log('Added llm_used column to programs table.');
+      }
+
+      // Add seconds_to_load if it doesn't exist
+      if (!columnNames.includes('seconds_to_load')) {
+        await this.query(`
+          ALTER TABLE programs 
+          ADD COLUMN seconds_to_load DECIMAL(8,4) DEFAULT NULL 
+          AFTER llm_used
+        `);
+        console.log('Added seconds_to_load column to programs table.');
       }
     } catch (err) {
       // Ignore errors if columns already exist or other migration issues
@@ -299,15 +309,15 @@ class Program {
   }
 
   // Update therapy response for a program
-  async updateTherapyResponse(programId, therapyResponse) {
+  async updateTherapyResponse(programId, therapyResponse, secondsToLoad = null) {
     try {
       const updateQuery = `
         UPDATE programs 
-        SET therapy_response = ?, generation_error = NULL, updated_at = NOW()
+        SET therapy_response = ?, generation_error = NULL, seconds_to_load = ?, updated_at = NOW()
         WHERE id = ? AND deleted_at IS NULL
       `;
 
-      const result = await this.query(updateQuery, [therapyResponse, programId]);
+      const result = await this.query(updateQuery, [therapyResponse, secondsToLoad, programId]);
       if (result.affectedRows === 0) {
         throw new Error('Program not found or already deleted');
       }

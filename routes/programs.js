@@ -6,6 +6,7 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
   const authenticateToken = createAuthenticateToken(authService);
   const GENERATION_FOLLOWUP_ENABLED = process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED !== 'false';
   const GENERATION_FOLLOWUP_DELAY_MS = Number(process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS || 60000);
+  const DEFAULT_STEPS_REQUIRED_FOR_UNLOCK = Number(process.env.DEFAULT_STEPS_REQUIRED_FOR_UNLOCK ?? 0);
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -28,13 +29,15 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       await programStepModel.deleteProgramSteps(programId);
     }
 
+    const generationStart = Date.now();
     const therapyResponse = await generateResponse();
+    const secondsToLoad = parseFloat(((Date.now() - generationStart) / 1000).toFixed(4));
     const therapyResponseString = typeof therapyResponse === 'object'
       ? JSON.stringify(therapyResponse)
       : therapyResponse;
 
     // Persist raw response for backward compatibility and diagnostics.
-    await programModel.updateTherapyResponse(programId, therapyResponseString);
+    await programModel.updateTherapyResponse(programId, therapyResponseString, secondsToLoad);
 
     if (programStepModel) {
       // Check again to avoid duplicate step creation in rare concurrent trigger races.
@@ -210,7 +213,7 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         user_input,
         pairing_id: previousProgram.pairing_id,
         previous_program_id: previousProgramId,
-        steps_required_for_unlock: steps_required_for_unlock || 7,
+        steps_required_for_unlock: steps_required_for_unlock ?? DEFAULT_STEPS_REQUIRED_FOR_UNLOCK,
         llm_used: chatGPTService ? chatGPTService.model : null
       });
 
@@ -412,7 +415,7 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       const program = await programModel.createProgram(userId, {
         user_input,
         pairing_id,
-        steps_required_for_unlock: steps_required_for_unlock || 7,
+        steps_required_for_unlock: steps_required_for_unlock ?? DEFAULT_STEPS_REQUIRED_FOR_UNLOCK,
         llm_used: chatGPTService ? chatGPTService.model : null
       });
 
