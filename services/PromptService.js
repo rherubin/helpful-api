@@ -1,12 +1,16 @@
-class ChatGPTService {
+class PromptService {
   constructor() {
-    // LLM provider: "openai" (default) or "claude"
+    // LLM provider: "openai" (default), "claude", or "gemini"
     this.provider = (process.env.LLM_PROVIDER || 'openai').toLowerCase();
 
     if (this.provider === 'claude') {
       this.apiKey = process.env.ANTHROPIC_API_KEY || null;
       this.model = process.env.LLM_MODEL || 'claude-sonnet-4-6';
       this.apiUrl = 'https://api.anthropic.com/v1/messages';
+    } else if (this.provider === 'gemini') {
+      this.apiKey = process.env.GEMINI_API_KEY || null;
+      this.model = process.env.LLM_MODEL || 'gemini-3.1-pro-preview';
+      this.apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`;
     } else {
       this.apiKey = process.env.OPENAI_API_KEY || null;
       this.model = process.env.LLM_MODEL || 'gpt-5.4';
@@ -33,7 +37,11 @@ class ChatGPTService {
   }
 
   validateApiKey() {
-    const keyName = this.provider === 'claude' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+    const keyName = this.provider === 'claude'
+      ? 'ANTHROPIC_API_KEY'
+      : this.provider === 'gemini'
+        ? 'GEMINI_API_KEY'
+        : 'OPENAI_API_KEY';
 
     if (!this.apiKey) {
       console.warn(`${keyName} not configured - LLM features will be disabled`);
@@ -54,12 +62,15 @@ class ChatGPTService {
     console.log(`LLM configured: provider=${this.provider}, model=${this.model}, key=${maskedKey}`);
   }
 
-  // Unified LLM call — routes to OpenAI or Claude based on this.provider
+  // Unified LLM call — routes to OpenAI, Claude, or Gemini based on this.provider
   async callLLM(systemPrompt, userPrompt, options = {}) {
     const { maxTokens, temperature = 0.7, jsonMode = false } = options;
 
     if (this.provider === 'claude') {
       return this._callClaude(systemPrompt, userPrompt, { maxTokens, temperature });
+    }
+    if (this.provider === 'gemini') {
+      return this._callGemini(systemPrompt, userPrompt, { maxTokens, temperature });
     }
     return this._callOpenAI(systemPrompt, userPrompt, { maxTokens, temperature, jsonMode });
   }
@@ -139,6 +150,56 @@ class ChatGPTService {
       model: data.model || this.model,
       id: data.id || 'unknown',
       usage: data.usage || {}
+    };
+  }
+
+  async _callGemini(systemPrompt, userPrompt, { maxTokens, temperature }) {
+    const contents = [];
+
+    // Gemini uses a "user" turn; prepend system prompt as the first user message when present
+    if (systemPrompt) {
+      contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
+      contents.push({ role: 'model', parts: [{ text: 'Understood.' }] });
+    }
+    contents.push({ role: 'user', parts: [{ text: userPrompt }] });
+
+    const body = {
+      contents,
+      generationConfig: {
+        temperature,
+        ...(maxTokens ? { maxOutputTokens: maxTokens } : {})
+      }
+    };
+
+    const url = `${this.apiUrl}?key=${this.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      const error = new Error(errorData.error?.message || 'Gemini API request failed');
+      error.status = res.status;
+      throw error;
+    }
+
+    const data = await res.json();
+    const candidate = data.candidates?.[0];
+    let text = candidate?.content?.parts?.map(p => p.text).join('') || '';
+    // Strip markdown code fences that Gemini may wrap JSON in
+    text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+    return {
+      content: text,
+      finishReason: candidate?.finishReason || 'unknown',
+      model: data.modelVersion || this.model,
+      id: data.responseId || 'unknown',
+      usage: {
+        prompt_tokens: data.usageMetadata?.promptTokenCount ?? null,
+        completion_tokens: data.usageMetadata?.candidatesTokenCount ?? null,
+        total_tokens: data.usageMetadata?.totalTokenCount ?? null
+      }
     };
   }
 
@@ -319,7 +380,7 @@ class ChatGPTService {
   // customPrompts.therapyResponsePrompt overrides the default chime-in prompt when provided
   async generateCouplesTherapyResponse(user1Name, user2Name, user1Messages, user2FirstMessage, customPrompts = null) {
     if (!this.apiKey) {
-      throw new Error('LLM service is not configured - set OPENAI_API_KEY or ANTHROPIC_API_KEY');
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY');
     }
 
     return this.queueOpenAIRequest({ 
@@ -335,7 +396,7 @@ class ChatGPTService {
   // Public interface - queue the request
   async generateChimeInPrompt(userName, conversationStarter, userMessages, customPrompts = null) {
     if (!this.apiKey) {
-      throw new Error('LLM service is not configured - set OPENAI_API_KEY or ANTHROPIC_API_KEY');
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY');
     }
 
     return this.queueOpenAIRequest({
@@ -351,7 +412,7 @@ class ChatGPTService {
   // customPrompts.initialProgramPrompt overrides the default initial program prompt when provided
   async generateCouplesProgram(userName, partnerName, userInput, customPrompts = null) {
     if (!this.apiKey) {
-      throw new Error('LLM service is not configured - set OPENAI_API_KEY or ANTHROPIC_API_KEY');
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY');
     }
 
     return this.queueOpenAIRequest({ type: 'program', userName, partnerName, userInput, customPrompts });
@@ -361,7 +422,7 @@ class ChatGPTService {
   // customPrompts.nextProgramPrompt overrides the default next program prompt when provided
   async generateNextCouplesProgram(userName, partnerName, previousConversationStarters, userInput, customPrompts = null) {
     if (!this.apiKey) {
-      throw new Error('LLM service is not configured - set OPENAI_API_KEY or ANTHROPIC_API_KEY');
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY');
     }
 
     return this.queueOpenAIRequest({ 
@@ -390,7 +451,7 @@ class ChatGPTService {
   }
 
   // Internal method that does the actual OpenAI call for programs
-  async generateInitialProgram({ userName, partnerName, userInput, customPrompts }, retryCount = 0, parseRetryCount = 0) {
+  async generateInitialProgram({ userName, userInput, customPrompts }, retryCount = 0, parseRetryCount = 0) {
     const MAX_RETRIES = 2;
     const BASE_DELAY = 1000; // 1 second
     const MAX_PARSE_RETRIES = 1;
@@ -398,20 +459,15 @@ class ChatGPTService {
     try {
       // Sanitize all inputs
       const sanitizedUserName = this.sanitizePromptInput(userName);
-      const sanitizedPartnerName = partnerName ? this.sanitizePromptInput(partnerName) : '';
       const sanitizedUserInput = this.sanitizePromptInput(userInput);
 
       // Validate input safety
-      const safetyChecks = [sanitizedUserInput, sanitizedUserName];
-      if (sanitizedPartnerName) safetyChecks.push(sanitizedPartnerName);
-      if (safetyChecks.some(input => !this.validateInputSafety(input))) {
+      if (![sanitizedUserInput, sanitizedUserName].every(input => this.validateInputSafety(input))) {
         throw new Error('Input contains potentially unsafe content');
       }
 
       // Validate that user name is not a generic placeholder
-      const namesToValidate = [sanitizedUserName];
-      if (sanitizedPartnerName) namesToValidate.push(sanitizedPartnerName);
-      const nameValidation = this.validateUserNames(namesToValidate);
+      const nameValidation = this.validateUserNames([sanitizedUserName]);
       if (!nameValidation.valid) {
         throw new Error(nameValidation.error);
       }
@@ -419,9 +475,6 @@ class ChatGPTService {
       // Additional validation - ensure names are reasonable
       if (sanitizedUserName.length < 1 || sanitizedUserName.length > 50) {
         throw new Error('User name must be between 1 and 50 characters');
-      }
-      if (sanitizedPartnerName && sanitizedPartnerName.length > 50) {
-        throw new Error('Partner name must be 50 characters or fewer');
       }
       if (sanitizedUserInput.length < 10 || sanitizedUserInput.length > 2000) {
         throw new Error('User input must be between 10 and 2000 characters');
@@ -437,7 +490,7 @@ class ChatGPTService {
         ? `The user attends ${orgName}${orgCityState ? ` in ${orgCityState}` : ''}. Wherever possible, draw on the values, beliefs, and teachings of that community to make each reflection feel rooted in their specific faith home.`
         : 'Ground each reflection in broadly shared Christian values and scripture.';
 
-      const defaultPrompt = `You are a top-tier Christian couples therapist with deep expertise in research-based therapy methods. You are inspired by Christian theology and biblical wisdom.
+      const defaultPrompt = `You are a church pastor is very skilled at creating personalized 7-day reflection programs rooted in Christian values, scripture, and the teachings of ${orgName}${orgCityState ? ` in ${orgCityState}` : ''}.
 
 ${orgContext}
 
@@ -449,6 +502,7 @@ Create a 7-day daily reflection program to help this person grow closer to God a
 
 Guidelines:
 - Each reflection question should be deeply personal and help the user examine their own heart, motivations, and relationship with God.
+- Focus on the user's goal for Day 1, but with Days 2 through 7, move the user onward toward other topics that build off of that one.
 - Each reflection should feel warm and pastoral in tone — like guidance from a trusted spiritual mentor.
 - The theme should capture the spiritual focus for that day.
 - The Bible verse should directly reinforce the reflection, not just be tangentially related.
@@ -477,7 +531,6 @@ Respond only with a valid JSON object in exactly this structure:
       const resolvedPrompt = (customPrompts && customPrompts.initialProgramPrompt)
         ? customPrompts.initialProgramPrompt
             .replace(/\{\{userName\}\}/g, sanitizedUserName)
-            .replace(/\{\{partnerName\}\}/g, sanitizedPartnerName)
             .replace(/\{\{userInput\}\}/g, sanitizedUserInput)
             .replace(/\{\{Church Name\}\}/g, orgName)
             .replace(/\{\{City, State\}\}/g, orgCityState)
@@ -533,7 +586,7 @@ Respond only with a valid JSON object in exactly this structure:
           const retryDelay = 500;
           await new Promise(resolve => setTimeout(resolve, retryDelay));
           return this.generateInitialProgram(
-            { userName, partnerName, userInput, customPrompts },
+            { userName, userInput, customPrompts },
             retryCount,
             parseRetryCount + 1
           );
@@ -552,7 +605,7 @@ Respond only with a valid JSON object in exactly this structure:
         console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
         
         await new Promise(resolve => setTimeout(resolve, delay));
-        return this.generateInitialProgram({ userName, partnerName, userInput, customPrompts }, retryCount + 1, parseRetryCount);
+        return this.generateInitialProgram({ userName, userInput, customPrompts }, retryCount + 1, parseRetryCount);
       }
 
       // Enhanced error logging for security monitoring
@@ -575,172 +628,8 @@ Respond only with a valid JSON object in exactly this structure:
     }
   }
 
-  // Internal method for generating next program based on previous conversation starters
-  async generateNextProgram({ userName, partnerName, previousConversationStarters, userInput, customPrompts }, retryCount = 0) {
-    const MAX_RETRIES = 2;
-    const BASE_DELAY = 1000; // 1 second
-    
-    try {
-      // Sanitize all inputs
-      const sanitizedUserName = this.sanitizePromptInput(userName);
-      const sanitizedPartnerName = this.sanitizePromptInput(partnerName);
-      const sanitizedUserInput = this.sanitizePromptInput(userInput);
-      
-      // Sanitize conversation starters array
-      const sanitizedConversationStarters = Array.isArray(previousConversationStarters)
-        ? previousConversationStarters.map(starter => this.sanitizePromptInput(starter))
-        : [];
-
-      // Validate input safety
-      if (!this.validateInputSafety(sanitizedUserInput) || 
-          !this.validateInputSafety(sanitizedUserName) || 
-          !this.validateInputSafety(sanitizedPartnerName)) {
-        throw new Error('Input contains potentially unsafe content');
-      }
-
-      // Validate that user names are not generic placeholders
-      const nameValidation = this.validateUserNames([sanitizedUserName, sanitizedPartnerName]);
-      if (!nameValidation.valid) {
-        throw new Error(nameValidation.error);
-      }
-
-      // Additional validation - ensure names are reasonable
-      if (sanitizedUserName.length < 1 || sanitizedUserName.length > 50) {
-        throw new Error('User name must be between 1 and 50 characters');
-      }
-      if (sanitizedPartnerName.length < 1 || sanitizedPartnerName.length > 50) {
-        throw new Error('Partner name must be between 1 and 50 characters');
-      }
-      if (sanitizedUserInput.length < 10 || sanitizedUserInput.length > 2000) {
-        throw new Error('User input must be between 10 and 2000 characters');
-      }
-
-      // Build the list of previous questions
-      let previousQuestionsText = '';
-      if (sanitizedConversationStarters.length > 0) {
-        previousQuestionsText = sanitizedConversationStarters
-          .map((starter, index) => `${index + 1}. "${starter}"`)
-          .join('\n');
-      }
-
-      const defaultPrompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
-
-Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
-
-You've been working with a couple, whose names are ${sanitizedUserName} and ${sanitizedPartnerName}.
-
-${sanitizedUserName} and ${sanitizedPartnerName} have answered the following questions in your therapy room already:
-
-${previousQuestionsText}
-
-Having completed those questions together, they are ready to make more progress together with you as their therapist.
-
-${sanitizedUserName} says the following to you:
-
-"${sanitizedUserInput}"
-
-Your goal, as their couples therapist, is to help them talk every day for 14 consecutive days in order to solve their primary issue and enable them to experience greater emotional connection together.
-
-Specifically, your task is to provide 1 conversation-starter per day for 14 consecutive days. Each conversation starter should have the following attributes:
-
-- Each conversation should build upon the one before it. They should all move towards a unified goal of helping the couple experience emotional connection together.  
-- Each conversation-starter should have a theme, which I'd like you to specifically identify as a separate data element.
-- Each conversation-starter should help each person unpack what they're feeling; they should be designed so that each person is able to articulate their perspective. We should never have a scenario where one person is talking more than the other.
-- Each conversation-starter should be designed so that it brings the couple closer together during that day and makes them feel like more of a team.
-- The conversation-starters should use both of their names, when appropriate.
-- The conversation-starters should reference details from their relationship, when appropriate. This is optional.
-- The conversation-starters should feel a little lighter, not as serious. Make them very conversational in tone, as if you were a friend to the couple.
-
-Together, all of the conversation-starters make up a two-week program, which should feel comprehensive.
-
-You should not use any of the conversation-starters that they've already answered.
-
-Now, craft me the 14 conversation-starters, provide a theme for each one, and explain the science and research behind each question. Note that when you explain the science and research, act like you're talking directly to the couple and say it in a very accessible way. Label this science and research section: "The Science Behind It"
-
-Note: Don't ever reference Emotionally Focused Therapy or Gottman Couples Therapy. Instead of that, you can refer to it as a research-based couples therapy approach, or a therapy method that is scientifically backed.
-
-Please format your response as a JSON object with the following structure:
-{
-  "program": {
-    "title": "14-Day Emotional Connection Program for ${sanitizedUserName} and ${sanitizedPartnerName}",
-    "overview": "Brief description of the program goals",
-    "days": [
-      {
-        "day": 1,
-        "theme": "Theme name",
-        "conversation_starter": "The conversation starter text",
-        "science_behind_it": "Explanation of the research and science"
-      }
-    ]
-  }
-}`;
-
-      // Use org-code custom prompt when available, otherwise fall back to default
-      const resolvedPrompt = (customPrompts && customPrompts.nextProgramPrompt)
-        ? customPrompts.nextProgramPrompt
-            .replace(/\{\{userName\}\}/g, sanitizedUserName)
-            .replace(/\{\{partnerName\}\}/g, sanitizedPartnerName)
-            .replace(/\{\{userInput\}\}/g, sanitizedUserInput)
-            .replace(/\{\{previousQuestions\}\}/g, previousQuestionsText)
-        : defaultPrompt;
-
-      const llmResult = await this.callLLM(
-        "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content.",
-        resolvedPrompt,
-        { maxTokens: 4000, temperature: 0.7, jsonMode: true }
-      );
-
-      const response = llmResult.content;
-      
-      // Validate and sanitize the AI response
-      if (!this.validateAIResponse(response)) {
-        console.warn('SECURITY: AI response failed validation checks');
-        throw new Error('AI response contains potentially unsafe content');
-      }
-      
-      // Try to parse JSON response, fallback to raw text if parsing fails
-      try {
-        const parsedResponse = JSON.parse(response);
-        
-        // Validate the structure and content of the parsed response
-        if (!this.validateProgramStructure(parsedResponse)) {
-          throw new Error('AI response does not match expected program structure');
-        }
-        
-        return parsedResponse;
-      } catch (parseError) {
-        console.warn('Failed to parse ChatGPT JSON response, returning raw text:', parseError.message);
-        return response;
-      }
-    } catch (error) {
-      // Implement exponential backoff for rate limiting
-      if (error.status === 429 && retryCount < MAX_RETRIES) {
-        const delay = BASE_DELAY * Math.pow(2, retryCount);
-        console.log(`OpenAI rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
-        
-        await new Promise(resolve => setTimeout(resolve, delay));
-        
-        return this.generateNextProgram({ userName, partnerName, previousConversationStarters, userInput, customPrompts }, retryCount + 1);
-      }
-
-      // Enhanced error logging for security monitoring
-      if (error.message.includes('unsafe content') || error.message.includes('validation')) {
-        console.error('SECURITY ERROR in ChatGPT service:', error.message);
-      } else {
-        // Log error without exposing sensitive information
-        if (error.status === 401) {
-          console.error('ChatGPT API Error: Invalid API key - check your OPENAI_API_KEY configuration');
-        } else if (error.status === 429) {
-          console.error(`ChatGPT API Error: Rate limit exceeded (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
-        } else if (error.status === 403) {
-          console.error('ChatGPT API Error: Access forbidden - check API key permissions');
-        } else {
-          console.error('ChatGPT API Error:', error.message || 'Unknown error');
-        }
-      }
-      
-      throw new Error('Failed to generate next couples therapy program');
-    }
+  async generateNextProgram({ userName, userInput, customPrompts }, retryCount = 0, parseRetryCount = 0) {
+    return this.generateInitialProgram({ userName, userInput, customPrompts }, retryCount, parseRetryCount);
   }
 
   isConfigured() {
@@ -1117,4 +1006,4 @@ When you create the follow-up conversation-starter for the couple, please do not
   }
 }
 
-module.exports = ChatGPTService;
+module.exports = PromptService;

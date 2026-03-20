@@ -25,7 +25,7 @@
 require('dotenv').config();
 const axios = require('axios');
 const { getPool } = require('../config/database');
-const ChatGPTService = require('../services/ChatGPTService');
+const PromptService = require('../services/PromptService');
 
 const API_URL = process.env.TEST_BASE_URL || process.env.API_URL || 'http://127.0.0.1:9000';
 
@@ -50,13 +50,13 @@ async function checkServerAvailable() {
 }
 
 /**
- * Unit tests for ChatGPTService next program functionality
+ * Unit tests for PromptService next program functionality
  */
 async function runUnitTests() {
-  console.log('🧪 Running ChatGPTService Unit Tests for Next Program Logic\n');
+  console.log('🧪 Running PromptService Unit Tests for Next Program Logic\n');
 
   try {
-    const service = new ChatGPTService();
+    const service = new PromptService();
 
     // Test 1: Service has generateNextProgram method
     if (typeof service.generateNextProgram !== 'function') {
@@ -67,8 +67,6 @@ async function runUnitTests() {
     // Test 2: Method accepts correct parameters
     const testParams = {
       userName: 'TestUser',
-      partnerName: 'TestPartner',
-      previousConversationStarters: ['Previous question 1', 'Previous question 2'],
       userInput: 'We want to work on quality time together'
     };
 
@@ -77,7 +75,7 @@ async function runUnitTests() {
       await service.generateNextProgram(testParams);
       console.log('✅ generateNextProgram accepts valid parameters');
     } catch (error) {
-      if (error.message.includes('Failed to generate next couples therapy program')) {
+      if (error.message.includes('Failed to generate couples therapy program')) {
         console.log('✅ generateNextProgram accepts valid parameters (API call attempted)');
       } else {
         throw error;
@@ -88,36 +86,29 @@ async function runUnitTests() {
     try {
       await service.generateNextProgram({
         userName: '',
-        partnerName: '',
-        previousConversationStarters: [],
         userInput: ''
       });
       throw new Error('Should have rejected empty inputs');
     } catch (error) {
-      if (error.message.includes('Failed to generate next couples therapy program')) {
+      if (error.message.includes('Failed to generate couples therapy program')) {
         console.log('✅ Input validation rejects empty inputs');
       } else {
         throw error;
       }
     }
 
-    // Test 4: Previous conversation starters are handled
+    // Test 4: Valid inputs are handled
     const startersTest = {
       userName: 'John',
-      partnerName: 'Jane',
-      previousConversationStarters: [
-        'What are your favorite memories together?',
-        'How do you feel about our communication?'
-      ],
       userInput: 'We want to improve our intimacy'
     };
 
     try {
       await service.generateNextProgram(startersTest);
-      console.log('✅ generateNextProgram handles previous conversation starters');
+      console.log('✅ generateNextProgram handles valid inputs');
     } catch (error) {
-      if (error.message.includes('Failed to generate next couples therapy program')) {
-        console.log('✅ generateNextProgram handles previous conversation starters (API call attempted)');
+      if (error.message.includes('Failed to generate couples therapy program')) {
+        console.log('✅ generateNextProgram handles valid inputs (API call attempted)');
       } else {
         throw error;
       }

@@ -2,7 +2,7 @@
  * llm_used Column Test
  *
  * Verifies that newly created programs have the llm_used column populated
- * with the model name from ChatGPTService (e.g. "gpt-5.4" or "claude-sonnet-4-6").
+ * with the model name from PromptService (e.g. "gpt-5.4", "claude-sonnet-4-6", or "gemini-3.1-pro-preview").
  *
  * Usage:
  *   node tests/llm-used-test.js [--keep-data]
@@ -14,7 +14,7 @@
 require('dotenv').config();
 const axios = require('axios');
 const { getPool } = require('../config/database');
-const ChatGPTService = require('../services/ChatGPTService');
+const PromptService = require('../services/PromptService');
 
 const API_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
 
@@ -51,21 +51,21 @@ async function main() {
   let programId = null;
   let pool = null;
 
-  // ── Unit test: ChatGPTService.model is set ────────────────────────────────
+  // ── Unit test: PromptService.model is set ────────────────────────────────
   console.log('\n🧪 Unit Tests\n');
 
-  const service = new ChatGPTService();
+  const service = new PromptService();
   assert(
     typeof service.model === 'string' && service.model.length > 0,
-    'ChatGPTService.model is a non-empty string',
+    'PromptService.model is a non-empty string',
     `model = "${service.model}"`
   );
 
-  const expectedModels = ['gpt-5.4', 'claude-sonnet-4-6'];
+  const expectedModels = ['gpt-5.4', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview'];
   const isKnownModel = expectedModels.includes(service.model) || process.env.LLM_MODEL;
   assert(
     isKnownModel,
-    'ChatGPTService.model is a recognised value (or overridden via LLM_MODEL)',
+    'PromptService.model is a recognised value (or overridden via LLM_MODEL)',
     `model = "${service.model}"`
   );
 
@@ -121,7 +121,7 @@ async function main() {
     );
     assert(
       llmUsedInResponse === service.model,
-      'llm_used matches ChatGPTService.model',
+      'llm_used matches PromptService.model',
       `response "${llmUsedInResponse}" === service "${service.model}"`
     );
 
@@ -139,7 +139,7 @@ async function main() {
       );
       assert(
         dbLlmUsed === service.model,
-        'DB llm_used matches ChatGPTService.model',
+        'DB llm_used matches PromptService.model',
         `DB "${dbLlmUsed}" === service "${service.model}"`
       );
     }

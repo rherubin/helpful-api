@@ -1,4 +1,4 @@
-const ChatGPTService = require('../services/ChatGPTService');
+const PromptService = require('../services/PromptService');
 
 /**
  * OpenAI Integration Test Suite
@@ -77,22 +77,22 @@ class OpenAITestRunner {
     return true;
   }
 
-  // Test ChatGPT service initialization
-  async testChatGPTServiceInitialization() {
-    this.log('Testing ChatGPT Service Initialization', 'section');
+  // Test PromptService initialization
+  async testPromptServiceInitialization() {
+    this.log('Testing PromptService Initialization', 'section');
     
     try {
-      const chatGPTService = new ChatGPTService();
+      const chatGPTService = new PromptService();
       
       this.assert(
         !!chatGPTService,
-        'ChatGPTService instantiation',
+        'PromptService instantiation',
         'Service created successfully'
       );
 
       this.assert(
         chatGPTService.isConfigured(),
-        'ChatGPTService configuration check',
+        'PromptService configuration check',
         'Service is properly configured'
       );
 
@@ -142,7 +142,7 @@ class OpenAITestRunner {
       return chatGPTService;
       
     } catch (error) {
-      this.assert(false, 'ChatGPTService initialization', `Error: ${error.message}`);
+      this.assert(false, 'PromptService initialization', `Error: ${error.message}`);
       return null;
     }
   }
@@ -348,9 +348,7 @@ class OpenAITestRunner {
     try {
       const result = await chatGPTService.generateNextProgram({
         userName: 'TestUser',
-        partnerName: 'TestPartner',
-        previousConversationStarters: ['Previous question 1', 'Previous question 2'],
-        userInput: 'Test input for next program'
+        userInput: 'I want help knowing how to be a better partner to my spouse'
       });
 
       // If it succeeds, verify the result structure
@@ -363,7 +361,7 @@ class OpenAITestRunner {
     } catch (error) {
       // If it fails, it should be due to API issues, not validation
       this.assert(
-        error.message.includes('Failed to generate next couples therapy program'),
+        error.message.includes('Failed to generate couples therapy program'),
         'Method processes inputs and attempts API call',
         `Error: ${error.message}`
       );
@@ -373,8 +371,6 @@ class OpenAITestRunner {
     try {
       await chatGPTService.generateNextProgram({
         userName: '',
-        partnerName: '',
-        previousConversationStarters: [],
         userInput: ''
       });
 
@@ -382,7 +378,7 @@ class OpenAITestRunner {
 
     } catch (error) {
       this.assert(
-        error.message.includes('Failed to generate next couples therapy program'),
+        error.message.includes('Failed to generate couples therapy program'),
         'Input validation works for empty inputs (wrapped in generic error)',
         `Error: ${error.message}`
       );
@@ -498,7 +494,7 @@ class OpenAITestRunner {
         userName: 'Test',
         partnerName: 'Partner',
         previousConversationStarters: ['Q1', 'Q2'],
-        userInput: 'Test input'
+        userInput: 'I want help knowing how to be a better partner to my spouse'
       });
 
       // If it succeeds, verify the result
@@ -560,7 +556,7 @@ class OpenAITestRunner {
       const hasValidAPIKey = await this.testAPIKeyConfiguration();
       console.log('');
       
-      const chatGPTService = await this.testChatGPTServiceInitialization();
+      const chatGPTService = await this.testPromptServiceInitialization();
       console.log('');
       
       if (hasValidAPIKey && chatGPTService) {

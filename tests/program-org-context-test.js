@@ -81,7 +81,7 @@ class ProgramOrgContextTestRunner {
     this.createdUsers.push(user);
 
     // Give every user a user_name so program generation requirements are met.
-    // Must not match the generic placeholder patterns in ChatGPTService.validateUserNames.
+    // Must not match the generic placeholder patterns in PromptService.validateUserNames.
     await axios.put(`${this.baseURL}/api/users/${user.id}`, {
       user_name: 'Jordan'
     }, {

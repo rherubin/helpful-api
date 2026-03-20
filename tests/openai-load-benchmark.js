@@ -1,5 +1,5 @@
 require('dotenv').config();
-const ChatGPTService = require('../services/ChatGPTService');
+const PromptService = require('../services/PromptService');
 
 const CONCURRENCY_LEVELS = [1, 2, 4];
 
@@ -69,7 +69,7 @@ async function runLevel(service, concurrency, detectedModel) {
 }
 
 async function main() {
-  const service = new ChatGPTService();
+  const service = new PromptService();
   if (!service.isConfigured()) {
     console.error('OPENAI_API_KEY not configured');
     process.exit(1);

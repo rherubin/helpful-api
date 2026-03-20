@@ -1,4 +1,4 @@
-const ChatGPTService = require('../services/ChatGPTService');
+const PromptService = require('../services/PromptService');
 
 /**
  * Comprehensive security test suite for prompt injection protection
@@ -7,7 +7,7 @@ const ChatGPTService = require('../services/ChatGPTService');
 
 class SecurityTestRunner {
   constructor() {
-    this.chatService = new ChatGPTService();
+    this.chatService = new PromptService();
     this.testResults = {
       passed: 0,
       failed: 0,

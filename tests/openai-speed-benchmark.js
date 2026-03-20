@@ -1,5 +1,5 @@
 require('dotenv').config();
-const ChatGPTService = require('../services/ChatGPTService');
+const PromptService = require('../services/PromptService');
 
 const ITERATIONS = 3;
 
@@ -22,7 +22,7 @@ const TEST_INPUTS = [
 ];
 
 async function runBenchmark() {
-  const service = new ChatGPTService();
+  const service = new PromptService();
 
   if (!service.isConfigured()) {
     console.error('OPENAI_API_KEY not configured');

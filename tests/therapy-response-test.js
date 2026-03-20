@@ -41,7 +41,7 @@ class TherapyResponseTest {
 }
 
 // Export mock class for compatibility
-class MockChatGPTService {
+class MockPromptService {
   constructor() {
     this.mockResponses = [];
     this.callLog = [];
@@ -85,7 +85,7 @@ class MockChatGPTService {
   }
 }
 
-module.exports = { TherapyResponseTest, MockChatGPTService };
+module.exports = { TherapyResponseTest, MockPromptService };
 
 // Run tests if this file is executed directly
 if (require.main === module) {

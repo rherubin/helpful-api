@@ -18,7 +18,7 @@ const OrgCode = require('./models/OrgCode');
 const AdminUser = require('./models/AdminUser');
 const AuthService = require('./services/AuthService');
 const PairingService = require('./services/PairingService');
-const ChatGPTService = require('./services/ChatGPTService');
+const PromptService = require('./services/PromptService');
 const { SubscriptionService } = require('./services/SubscriptionService');
 const AdminAuthService = require('./services/AdminAuthService');
 
@@ -166,7 +166,7 @@ async function initializeApp() {
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel, pairingModel);
     pairingService = new PairingService(userModel, pairingModel);
-    chatGPTService = new ChatGPTService();
+    chatGPTService = new PromptService();
     adminAuthService = new AdminAuthService(adminUserModel, refreshTokenModel);
     subscriptionService = new SubscriptionService(
       iosSubscriptionModel,

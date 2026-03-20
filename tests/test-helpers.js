@@ -120,7 +120,7 @@ function validateTestEmailDomain(email) {
 
 /**
  * Mock program response for testing without OpenAI
- * This mimics the structure returned by ChatGPTService.generateCouplesProgram()
+ * This mimics the structure returned by PromptService.generateCouplesProgram()
  */
 const MOCK_PROGRAM_RESPONSE = {
   program: {
@@ -135,15 +135,15 @@ const MOCK_PROGRAM_RESPONSE = {
 };
 
 /**
- * Mock ChatGPT Service for testing
- * Use this when running tests without requiring actual OpenAI API calls
+ * Mock PromptService for testing
+ * Use this when running tests without requiring actual LLM API calls
  * 
  * @example
- * const mockService = new MockChatGPTService();
+ * const mockService = new MockPromptService();
  * mockService.setMockResponse(['Custom response 1', 'Custom response 2']);
  * const response = await mockService.generateCouplesTherapyResponse(...);
  */
-class MockChatGPTService {
+class MockPromptService {
   constructor() {
     this.configured = true;
     this.mockResponses = [];
@@ -345,7 +345,7 @@ module.exports = {
   getTestEmailPatterns,
   
   // Mock services
-  MockChatGPTService,
+  MockPromptService,
   MOCK_PROGRAM_RESPONSE
 };
 
