@@ -658,27 +658,14 @@ function startRegenerationPoller(programModel, programStepModel, chatGPTService,
         }
       }
 
-      // Resolve user names.
+      // Resolve user name.
       let userName = null;
-      let partnerName = null;
       if (userModel) {
         try {
           const user = await userModel.getUserById(program.user_id);
           userName = user.user_name || null;
-          partnerName = user.partner_name || null;
-
-          if (program.pairing_id && pairingModel && !user.partner_name) {
-            try {
-              const pairing = await pairingModel.getPairingById(program.pairing_id);
-              const partnerId = pairing.user1_id === program.user_id ? pairing.user2_id : pairing.user1_id;
-              if (partnerId) {
-                const partner = await userModel.getUserById(partnerId);
-                partnerName = partner.user_name || partnerName;
-              }
-            } catch { /* non-fatal */ }
-          }
         } catch (err) {
-          console.error(`[regen_poller] Could not fetch user names for program ${program.id}:`, err.message);
+          console.error(`[regen_poller] Could not fetch user name for program ${program.id}:`, err.message);
         }
       }
 
@@ -691,12 +678,14 @@ function startRegenerationPoller(programModel, programStepModel, chatGPTService,
       // Run generation (no follow-up for poller-triggered regenerations).
       try {
         const customPrompts = await getCustomPromptsForUser(program.user_id);
-        const therapyResponse = await chatGPTService.generateCouplesProgram(userName, partnerName, program.user_input, customPrompts);
+        const generationStart = Date.now();
+        const therapyResponse = await chatGPTService.generateInitialProgram({ userName, userInput: program.user_input, customPrompts });
+        const secondsToLoad = parseFloat(((Date.now() - generationStart) / 1000).toFixed(4));
         const therapyResponseString = typeof therapyResponse === 'object'
           ? JSON.stringify(therapyResponse)
           : therapyResponse;
 
-        await programModel.updateTherapyResponse(program.id, therapyResponseString);
+        await programModel.updateTherapyResponse(program.id, therapyResponseString, secondsToLoad);
 
         if (programStepModel) {
           await programStepModel.createProgramSteps(program.id, therapyResponseString);
