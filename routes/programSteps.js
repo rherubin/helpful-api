@@ -59,46 +59,23 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       const userMessages = messages.filter(msg => msg.message_type === 'user_message');
       const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
 
-      // Check if this is the very first message in the first step of the first program ever
-      // Only show welcome message for day 1 of a program that has no previous_program_id
-      // This check happens BEFORE pairing validation so it works even if pairing is invalid
-      const isFirstProgram = !program.previous_program_id;
-      const isFirstStep = step.day === 1;
-      const isFirstMessageInStep = userMessages.length === 1 && userMessages[0].sender_id === currentUserId;
-      
-      if (isFirstProgram && isFirstStep && isFirstMessageInStep) {
-        console.log(`First message in first step of first program from user ${currentUserId}, adding welcome system message`);
+      const currentUserMessages = userMessages.filter(msg => msg.sender_id === currentUserId);
+      const hasUserMessageInStep = currentUserMessages.length > 0;
 
-        // Add the welcome system message
-        await messageModel.addSystemMessage(stepId, "Thanks for the message! As soon as your partner replies, I'll start helping you move the conversation forward in the healthiest, most positive way.", {
-          type: 'first_message_welcome',
-          triggered_by: 'first_message',
-          step_day: step.day,
-          step_theme: step.theme
-        });
-
-        console.log(`Welcome system message added to step ${stepId}`);
-        return; // Don't continue with therapy response logic for first message
-      }
-
-      const isHopefulMessage = latestMessage &&
+      const isChimeInTrigger = latestMessage &&
         latestMessage.message_type === 'user_message' &&
         latestMessage.sender_id === currentUserId &&
         typeof latestMessage.content === 'string' &&
-        latestMessage.content.trim().toLowerCase() === 'hopeful';
+        (latestMessage.content.toLowerCase().includes('hopeful') || latestMessage.content.toLowerCase().includes('helpful'));
 
-      const currentUserMessages = userMessages.filter(msg => msg.sender_id === currentUserId);
-      const priorUserMessages = currentUserMessages.slice(0, -1);
-      const hasPriorUserMessageInStep = priorUserMessages.length > 0;
-
-      if (isHopefulMessage && hasPriorUserMessageInStep) {
-        console.log(`[THERAPY_TRIGGER] Hopeful trigger detected for step ${stepId}, user ${currentUserId}`);
+      if (isChimeInTrigger && hasUserMessageInStep) {
+        console.log(`[THERAPY_TRIGGER] Chime-in trigger detected for step ${stepId}, user ${currentUserId}`);
 
         const currentUser = await userModel.getUserById(currentUserId);
         const currentUserName = currentUser?.user_name;
 
         if (!currentUserName) {
-          console.error(`[THERAPY_TRIGGER] Cannot generate hopeful chime-in prompt - user name not set for user ${currentUserId}`);
+          console.error(`[THERAPY_TRIGGER] Cannot generate chime-in prompt - user name not set for user ${currentUserId}`);
           return;
         }
 
@@ -106,7 +83,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         const hopefulPrompt = await chatGPTService.generateChimeInPrompt(
           currentUserName,
           step.conversation_starter,
-          priorUserMessages.map(msg => msg.content),
+          currentUserMessages.map(msg => msg.content),
           customPrompts
         );
 
@@ -132,7 +109,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
           }
         }
 
-        console.log(`[THERAPY_TRIGGER] Hopeful chime-in prompt added to step ${stepId}`);
+        console.log(`[THERAPY_TRIGGER] Chime-in prompt added to step ${stepId}`);
         return;
       }
 

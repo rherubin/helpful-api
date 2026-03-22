@@ -84,7 +84,7 @@ class PromptService {
       ],
       temperature
     };
-    if (maxTokens) body.max_tokens = maxTokens;
+    if (maxTokens) body.max_completion_tokens = maxTokens;
     if (jsonMode) body.response_format = { type: 'json_object' };
 
     const res = await fetch(this.apiUrl, {

@@ -764,10 +764,14 @@ class MessagesTestRunner {
       console.log('\n📋 DATA PRESERVATION MODE ENABLED');
       console.log('============================================================');
       console.log('Test data has been preserved for inspection.');
+      if (this.testData.stepId)       console.log(`  Step ID:    ${this.testData.stepId}`);
+      if (this.testData.programId)    console.log(`  Program ID: ${this.testData.programId}`);
+      if (this.testData.user1?.id)    console.log(`  User 1 ID:  ${this.testData.user1.id}`);
+      if (this.testData.user2?.id)    console.log(`  User 2 ID:  ${this.testData.user2.id}`);
+      if (this.testData.pairingId)    console.log(`  Pairing ID: ${this.testData.pairingId}`);
+      console.log('');
       console.log('To clean up manually, run:');
       console.log('  node tests/cleanup-test-data.js');
-      console.log('');
-      console.log('Or delete specific records using the IDs logged above.');
       console.log('============================================================');
     }
 
@@ -1271,7 +1275,7 @@ class MessagesTestRunner {
       `Found: ${hasFirstMessageLogic}`
     );
 
-      const hasHopefulLogic = programStepsContent.includes("latestMessage.content.trim().toLowerCase() === 'hopeful'");
+      const hasHopefulLogic = programStepsContent.includes("latestMessage.content.toLowerCase().includes('hopeful')") || programStepsContent.includes("latestMessage.content.toLowerCase().includes('helpful')");
       this.assert(
         hasHopefulLogic,
         'Code validation: Hopeful trigger logic is present in routes/programSteps.js',
