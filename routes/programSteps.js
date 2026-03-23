@@ -394,7 +394,8 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         const isFirstMessageInStep = userMessages.length === 1 && userMessages[0].sender_id === userId;
 
         if (isFirstMessageInStep) {
-          const welcomeText = "Thanks for the message! As soon as your partner replies, I'll start helping you move the conversation forward in the healthiest, most positive way.";
+          const welcomeText = "Tip: If you want Hopeful to offer up a follow-up reflection based on what you’ve written, simply type “Hopeful” into the chat.";
+          
           console.log(`First message in first step of first program from user ${userId}, adding welcome system message`);
 
           await messageModel.addSystemMessage(id, welcomeText, {
