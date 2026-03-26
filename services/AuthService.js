@@ -157,10 +157,12 @@ class AuthService {
       // Get user by email
       const user = await this.userModel.getUserByEmail(email);
       
-      // Verify password
-      const isPasswordValid = await this.userModel.verifyPassword(user, password);
-      if (!isPasswordValid) {
-        throw new Error('Invalid email or password');
+      // Verify password (skipped when bypass_password is enabled for the user)
+      if (!user.bypass_password) {
+        const isPasswordValid = await this.userModel.verifyPassword(user, password);
+        if (!isPasswordValid) {
+          throw new Error('Invalid email or password');
+        }
       }
 
       // Generate tokens

@@ -32,6 +32,7 @@ class User {
         org_city VARCHAR(100) DEFAULT NULL,
         org_state VARCHAR(50) DEFAULT NULL,
         is_premium TINYINT(1) NOT NULL DEFAULT 0,
+        bypass_password TINYINT(1) NOT NULL DEFAULT 0,
         deleted_at DATETIME DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -140,6 +141,26 @@ class User {
         }
       } catch (migrationErr) {
         console.warn('Migration warning for is_premium column:', migrationErr.message);
+      }
+
+      // Migration: Add bypass_password column if it doesn't exist
+      try {
+        const bypassPasswordExists = await this.queryOne(`
+          SELECT COLUMN_NAME
+          FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'users'
+            AND COLUMN_NAME = 'bypass_password'
+        `);
+
+        if (!bypassPasswordExists) {
+          await this.query('ALTER TABLE users ADD COLUMN bypass_password TINYINT(1) NOT NULL DEFAULT 0');
+          console.log('Migrated users table: added bypass_password column');
+        } else {
+          console.log('Users table already has bypass_password column');
+        }
+      } catch (migrationErr) {
+        console.warn('Migration warning for bypass_password column:', migrationErr.message);
       }
     } catch (err) {
       console.error('Error creating users table:', err.message);
@@ -285,7 +306,7 @@ class User {
 
   // Update user
   async updateUser(id, updateData) {
-    const { email, max_pairings, user_name, partner_name, children, org_code_id, org_name, org_city, org_state, is_premium } = updateData;
+    const { email, max_pairings, user_name, partner_name, children, org_code_id, org_name, org_city, org_state, is_premium, bypass_password } = updateData;
 
     // Build update query dynamically
     const updateFields = [];
@@ -334,6 +355,10 @@ class User {
     if (is_premium !== undefined) {
       updateFields.push('is_premium = ?');
       updateValues.push(is_premium ? 1 : 0);
+    }
+    if (bypass_password !== undefined) {
+      updateFields.push('bypass_password = ?');
+      updateValues.push(bypass_password ? 1 : 0);
     }
 
     // Check if at least one field is being updated
