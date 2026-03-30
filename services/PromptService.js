@@ -5,15 +5,15 @@ class PromptService {
 
     if (this.provider === 'claude') {
       this.apiKey = process.env.ANTHROPIC_API_KEY || null;
-      this.model = process.env.LLM_MODEL || 'claude-sonnet-4-6';
+      this.model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
       this.apiUrl = 'https://api.anthropic.com/v1/messages';
     } else if (this.provider === 'gemini') {
       this.apiKey = process.env.GEMINI_API_KEY || null;
-      this.model = process.env.LLM_MODEL || 'gemini-3-flash-preview';
+      this.model = process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
       this.apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`;
     } else {
       this.apiKey = process.env.OPENAI_API_KEY || null;
-      this.model = process.env.LLM_MODEL || 'gpt-5.4';
+      this.model = process.env.OPENAI_MODEL || 'gpt-5.4';
       this.apiUrl = 'https://api.openai.com/v1/chat/completions';
     }
 

@@ -62,10 +62,11 @@ async function main() {
   );
 
   const expectedModels = ['gpt-5.4', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-3-flash-preview'];
-  const isKnownModel = expectedModels.includes(service.model) || process.env.LLM_MODEL;
+  const modelOverrideSet = process.env.OPENAI_MODEL || process.env.ANTHROPIC_MODEL || process.env.GEMINI_MODEL;
+  const isKnownModel = expectedModels.includes(service.model) || !!modelOverrideSet;
   assert(
     isKnownModel,
-    'PromptService.model is a recognised value (or overridden via LLM_MODEL)',
+    'PromptService.model is a recognised value (or overridden via OPENAI_MODEL / ANTHROPIC_MODEL / GEMINI_MODEL)',
     `model = "${service.model}"`
   );
 
