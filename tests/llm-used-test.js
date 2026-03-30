@@ -61,7 +61,7 @@ async function main() {
     `model = "${service.model}"`
   );
 
-  const expectedModels = ['gpt-5.4', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview'];
+  const expectedModels = ['gpt-5.4', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-3-flash-preview'];
   const isKnownModel = expectedModels.includes(service.model) || process.env.LLM_MODEL;
   assert(
     isKnownModel,

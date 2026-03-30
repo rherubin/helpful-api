@@ -9,11 +9,63 @@ const PromptService = require('../services/PromptService');
 class OpenAITestRunner {
   constructor(options = {}) {
     this.timeout = options.timeout || 30000;
+    this.provider = (process.env.LLM_PROVIDER || 'openai').toLowerCase();
     this.testResults = {
       passed: 0,
       failed: 0,
       total: 0
     };
+  }
+
+  /**
+   * Build a mock fetch response shaped for the active LLM provider.
+   * @param {string} textContent - The text content to embed in the response.
+   * @param {object} [parsedBody] - The parsed request body (used for OpenAI model field).
+   */
+  _buildMockResponse(textContent, parsedBody = {}) {
+    if (this.provider === 'gemini') {
+      return {
+        ok: true,
+        async json() {
+          return {
+            modelVersion: parsedBody.modelVersion || 'gemini-3.1-pro-preview',
+            responseId: 'gemini-test-response',
+            candidates: [
+              {
+                content: { parts: [{ text: textContent }] },
+                finishReason: 'STOP'
+              }
+            ],
+            usageMetadata: { promptTokenCount: 350, candidatesTokenCount: 800, totalTokenCount: 1150 }
+          };
+        }
+      };
+    } else if (this.provider === 'claude') {
+      return {
+        ok: true,
+        async json() {
+          return {
+            model: parsedBody.model || 'claude-sonnet-4-6',
+            id: 'msg-test-connectivity',
+            content: [{ type: 'text', text: textContent }],
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 350, output_tokens: 800 }
+          };
+        }
+      };
+    } else {
+      return {
+        ok: true,
+        async json() {
+          return {
+            model: parsedBody.model,
+            id: 'chatcmpl-test-connectivity',
+            choices: [{ message: { content: textContent }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 350, completion_tokens: 800, total_tokens: 1150 }
+          };
+        }
+      };
+    }
   }
 
   log(message, type = 'info') {
@@ -173,22 +225,21 @@ class OpenAITestRunner {
 
     global.fetch = async (_url, options) => {
       const body = JSON.parse(options.body);
-      this.assert(
-        !!body.model,
-        'API request includes a model',
-        `Model: ${body.model}`
-      );
-      return {
-        ok: true,
-        async json() {
-          return {
-            model: body.model,
-            id: 'chatcmpl-test-connectivity',
-            choices: [{ message: { content: JSON.stringify(mockProgramResponse) }, finish_reason: 'stop' }],
-            usage: { prompt_tokens: 350, completion_tokens: 800, total_tokens: 1150 }
-          };
-        }
-      };
+      if (this.provider === 'gemini') {
+        // Gemini embeds the model in the URL, not the request body
+        this.assert(
+          _url.includes('gemini'),
+          'API request targets Gemini endpoint',
+          `URL: ${_url.split('?')[0]}`
+        );
+      } else {
+        this.assert(
+          !!body.model,
+          'API request includes a model',
+          `Model: ${body.model}`
+        );
+      }
+      return this._buildMockResponse(JSON.stringify(mockProgramResponse), body);
     };
 
     try {
@@ -399,20 +450,8 @@ class OpenAITestRunner {
 
     global.fetch = async (_url, options) => {
       capturedRequestBody = JSON.parse(options.body);
-      return {
-        ok: true,
-        async json() {
-          return {
-            choices: [
-              {
-                message: {
-                  content: 'What part of what you are feeling right now seems most hopeful, and how might God be inviting you to stay with it a little longer?'
-                }
-              }
-            ]
-          };
-        }
-      };
+      const chimeText = 'What part of what you are feeling right now seems most hopeful, and how might God be inviting you to stay with it a little longer?';
+      return this._buildMockResponse(chimeText, capturedRequestBody);
     };
 
     try {
@@ -433,7 +472,17 @@ class OpenAITestRunner {
         `Response: ${response.substring(0, 80)}`
       );
 
-      const prompt = capturedRequestBody?.messages?.[1]?.content || '';
+      // Extract the user prompt from the captured request body — format varies by provider
+      let prompt = '';
+      if (this.provider === 'gemini') {
+        // Gemini: contents = [system-as-user, model-ack, actual-user-prompt]
+        const contents = capturedRequestBody?.contents || [];
+        prompt = contents[contents.length - 1]?.parts?.[0]?.text || '';
+      } else if (this.provider === 'claude') {
+        prompt = capturedRequestBody?.messages?.[0]?.content || '';
+      } else {
+        prompt = capturedRequestBody?.messages?.[1]?.content || '';
+      }
 
       this.assert(
         prompt.includes('Grace Church in Nashville, TN'),
@@ -488,7 +537,25 @@ class OpenAITestRunner {
       'Method signature is correct'
     );
 
-    // Test that the method can be called with correct parameter structure
+    // Test that the method can be called with correct parameter structure (mocked)
+    const originalFetch = global.fetch;
+    const mockNextProgramResponse = {
+      program: {
+        title: 'Next Step Program',
+        overview: 'Continuing the journey.',
+        days: Array.from({ length: 7 }, (_, i) => ({
+          day: i + 1,
+          theme: `Day ${i + 1}`,
+          reflection: 'A reflection.',
+          bible_verse: '"Verse." — Book 1:1'
+        }))
+      }
+    };
+    global.fetch = async (_url, options) => {
+      const body = JSON.parse(options.body);
+      return this._buildMockResponse(JSON.stringify(mockNextProgramResponse), body);
+    };
+
     try {
       const result = await method.call(chatGPTService, {
         userName: 'Test',
@@ -511,6 +578,8 @@ class OpenAITestRunner {
         'Method accepts correct parameters and attempts API call',
         `Error type: ${error.message}`
       );
+    } finally {
+      global.fetch = originalFetch;
     }
   }
 

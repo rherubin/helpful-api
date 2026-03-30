@@ -9,7 +9,7 @@ class PromptService {
       this.apiUrl = 'https://api.anthropic.com/v1/messages';
     } else if (this.provider === 'gemini') {
       this.apiKey = process.env.GEMINI_API_KEY || null;
-      this.model = process.env.LLM_MODEL || 'gemini-3.1-pro-preview';
+      this.model = process.env.LLM_MODEL || 'gemini-3-flash-preview';
       this.apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`;
     } else {
       this.apiKey = process.env.OPENAI_API_KEY || null;
