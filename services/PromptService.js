@@ -502,7 +502,8 @@ Create a 7-day daily reflection program to help this person grow closer to God a
 
 Guidelines:
 - Each reflection question should be deeply personal and help the user examine their own heart, motivations, and relationship with God.
-- On Day 1, focus the reflection on the user's specific goal. For Days 2–7, gradually shift toward broader, related themes — do not revisit the original topic directly. Each day should build on the previous one, moving the user toward more general self-reflection. Example: If the user's goal concerns their father's health, Day 1 addresses that directly. Days 2–7 should explore related but more general themes (e.g., caregiving, mortality, family roles) — not their father's health again.
+- When you form the question, know that the user will be writing a journal entry in response to the question. Therefore, optimize for asking a question that a user can reflect upon and for which they can write a significant journal entry.
+- Focus on the user's goal for Day 1, but with Days 2 through 7, move the user onward toward other topics that build off of that one.
 - Each reflection should feel warm and pastoral in tone — like guidance from a trusted spiritual mentor.
 - The theme should capture the spiritual focus for that day.
 - The Bible verse should directly reinforce the reflection, not just be tangentially related.
