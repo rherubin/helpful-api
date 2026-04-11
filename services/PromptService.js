@@ -485,12 +485,13 @@ class PromptService {
       const orgCityState = (customPrompts && customPrompts.organizationCity && customPrompts.organizationState)
         ? `${customPrompts.organizationCity}, ${customPrompts.organizationState}`
         : '';
+      const orgCustomInitialProgramPrompt = (customPrompts && customPrompts.initialProgramPrompt) || '';
 
       const orgContext = orgName
         ? `The user attends ${orgName}${orgCityState ? ` in ${orgCityState}` : ''}. Wherever possible, draw on the values, beliefs, and teachings of that community to make each reflection feel rooted in their specific faith home.`
         : 'Ground each reflection in broadly shared Christian values and scripture.';
 
-      const defaultPrompt = `You are a church pastor is very skilled at creating personalized 7-day reflection programs rooted in Christian values, scripture, and the teachings of ${orgName}${orgCityState ? ` in ${orgCityState}` : ''}.
+      const defaultPrompt = `You are a church pastor that is very skilled at creating personalized 7-day reflection programs rooted in Christian values, scripture, and the teachings of ${orgName}${orgCityState ? ` in ${orgCityState}` : ''}.
 
 ${orgContext}
 
@@ -510,6 +511,8 @@ Guidelines:
 - Write each reflection with no paragraph breaks.
 - Do not reference any specific pastor or church leader by name.
 - Together the 7 days should form a cohesive journey — not 7 independent prompts.
+
+${orgCustomInitialProgramPrompt || ''}
 
 Respond only with a valid JSON object in exactly this structure:
 
