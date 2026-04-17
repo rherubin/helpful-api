@@ -1964,7 +1964,6 @@ helpful-api/
 │   ├── auth.js              # JWT authentication middleware
 │   └── security.js          # Rate limiting and security
 ├── tests/
-│   ├── api-test.js          # API functionality tests
 │   ├── security-test.js     # Security and validation tests
 │   ├── load-test.js         # Performance and load tests
 │   ├── openai-test.js       # OpenAI integration tests

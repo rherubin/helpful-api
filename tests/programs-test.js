@@ -600,6 +600,16 @@ class ProgramsTestRunner {
         `Has metrics: ${!!response.data.metrics}`
       );
 
+      if (response.data.metrics) {
+        ['totalRequests', 'successfulRequests', 'failedRequests', 'successRate'].forEach(key => {
+          this.assert(
+            Object.prototype.hasOwnProperty.call(response.data.metrics, key),
+            `Metrics contains ${key}`,
+            `Value: ${response.data.metrics[key]}`
+          );
+        });
+      }
+
       this.assert(
         !!response.data.timestamp,
         'Get metrics includes timestamp',

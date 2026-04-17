@@ -197,6 +197,71 @@ class UserProfileTestRunner {
     }
   }
 
+  // Tests GET /api/users/:id and PUT /api/users/:id (including email change and cross-user authz)
+  async testUserByIdAndUpdate() {
+    this.log('Testing User-by-ID and Update Endpoints', 'section');
+
+    const user = this.testData.user1;
+    const otherUser = this.testData.user2;
+    if (!user || !otherUser) {
+      this.log('Skipping user-by-id tests - missing test users', 'warn');
+      return;
+    }
+
+    try {
+      const userResponse = await axios.get(`${this.baseURL}/api/users/${user.id}`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(
+        userResponse.status === 200,
+        'GET /api/users/:id returns 200',
+        `Status: ${userResponse.status}`
+      );
+      this.assert(
+        userResponse.data.id === user.id,
+        'GET /api/users/:id returns correct user',
+        `ID: ${userResponse.data.id}`
+      );
+    } catch (error) {
+      this.assert(false, 'GET /api/users/:id', `Error: ${error.response?.data?.error || error.message}`);
+    }
+
+    try {
+      const newEmail = `profile.user1.updated.${Date.now()}@example.com`;
+      const updateResponse = await axios.put(`${this.baseURL}/api/users/${user.id}`, {
+        email: newEmail
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(
+        updateResponse.status === 200,
+        'PUT /api/users/:id with email change returns 200',
+        `Status: ${updateResponse.status}`
+      );
+      this.testData.user1.email = newEmail;
+    } catch (error) {
+      this.assert(false, 'PUT /api/users/:id email change', `Error: ${error.response?.data?.error || error.message}`);
+    }
+
+    try {
+      await axios.put(`${this.baseURL}/api/users/${otherUser.id}`, {
+        user_name: 'ShouldNotWork'
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(false, 'PUT another user should fail', 'Request succeeded unexpectedly');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 403,
+        'PUT /api/users/:otherUserId returns 403',
+        `Status: ${error.response?.status}`
+      );
+    }
+  }
+
   // Test profile endpoint authentication
   async testProfileAuthentication() {
     this.log('Testing Profile Authentication', 'section');
@@ -801,7 +866,13 @@ class UserProfileTestRunner {
       
       // Small delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 1000));
-      
+
+      await this.testUserByIdAndUpdate();
+      console.log('');
+
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
       await this.testProfileAuthentication();
       console.log('');
       

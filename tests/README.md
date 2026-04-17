@@ -58,23 +58,6 @@ npm run test:security
 node tests/security-test.js
 ```
 
-### 🧪 API Functionality Tests (`api-test.js`)
-Tests all API endpoints and core functionality:
-- Health endpoint
-- User creation and authentication
-- Program CRUD operations
-- Conversation management
-- Message handling
-- Metrics endpoint
-- Authorization and security
-
-**Run with:**
-```bash
-npm run test:api
-# or
-node tests/api-test.js
-```
-
 ### 🚀 Load Tests (`load-test.js`)
 Tests scalability and performance under load:
 - Concurrent request handling (8+ simultaneous requests)
@@ -132,7 +115,6 @@ The following npm scripts are available for different testing scenarios:
   "scripts": {
     "test": "node tests/run-all-tests.js",
     "test:security": "node tests/security-test.js", 
-    "test:api": "node tests/api-test.js",
     "test:load": "node tests/load-test.js",
     "test:openai": "node tests/openai-test.js",
     "test:ci": "node tests/run-all-tests.js --skip-server-check",
@@ -366,10 +348,9 @@ const newTestCases = [
 ];
 ```
 
-To add new API endpoints:
+To add new API endpoints, add tests to the appropriate focused suite (e.g. `programs-test.js`, `user-profile-test.js`, `pairings-endpoint-test.js`). Pattern:
 
 ```javascript
-// In api-test.js
 async testNewEndpoint() {
   try {
     const response = await axios.get(`${this.baseURL}/api/new-endpoint`);

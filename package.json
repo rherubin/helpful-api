@@ -8,7 +8,6 @@
     "dev": "nodemon server.js",
     "test": "node tests/run-all-tests.js",
     "test:security": "node tests/security-test.js",
-    "test:api": "node tests/api-test.js",
     "test:load": "node tests/load-test.js",
     "test:openai": "node tests/openai-test.js",
     "test:mysql": "node tests/auth-test.js",

@@ -97,6 +97,42 @@ class TherapyTriggerTestRunner {
   }
 
   /**
+   * Poll for a system message whose metadata.type matches the given value
+   */
+  async pollForSystemMessageType(stepId, token, metadataType, maxWait = 30000) {
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+      try {
+        const response = await axios.get(
+          `${this.baseURL}/api/programSteps/${stepId}/messages`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: this.timeout
+          }
+        );
+
+        const matchingMessages = (response.data.messages || []).filter(msg => {
+          if (msg.message_type !== 'system' || !msg.metadata) return false;
+          try {
+            const parsed = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+            return parsed.type === metadataType;
+          } catch (error) {
+            return false;
+          }
+        });
+
+        if (matchingMessages.length > 0) {
+          return { found: true, messages: matchingMessages };
+        }
+      } catch (error) {
+        // Continue polling
+      }
+      await this.sleep(1000);
+    }
+    return { found: false, messages: [] };
+  }
+
+  /**
    * Poll for system message in step messages
    */
   async pollForSystemMessage(stepId, token, maxWait = 10000) {
@@ -389,6 +425,24 @@ class TherapyTriggerTestRunner {
         'System message has null sender_id',
         `Sender ID: ${systemMsgResult.message.sender_id}`
       );
+
+      const metadata = systemMsgResult.message.metadata
+        ? (typeof systemMsgResult.message.metadata === 'string'
+            ? JSON.parse(systemMsgResult.message.metadata)
+            : systemMsgResult.message.metadata)
+        : {};
+
+      this.assert(
+        metadata.type === 'chime_in_response_1',
+        'System message metadata.type is chime_in_response_1',
+        `Type: ${metadata.type}`
+      );
+
+      this.assert(
+        metadata.triggered_by === 'both_users_posted',
+        'System message metadata.triggered_by is both_users_posted',
+        `Triggered by: ${metadata.triggered_by}`
+      );
     } else if (systemMsgResult.skipped) {
       this.log('Skipped system message verification (TEST_MOCK_OPENAI=true)', 'warn');
     } else {
@@ -613,6 +667,222 @@ class TherapyTriggerTestRunner {
   }
 
   /**
+   * Test: Posting "Hopeful" after a prior user message triggers a single-user chime-in prompt.
+   * Relies on state set up by testBothUsersPostTriggersTherapyResponse (uses this.testData.stepId).
+   */
+  async testHopefulChimeInPrompt() {
+    this.log('Testing: "Hopeful" follow-up reflection trigger', 'section');
+
+    if (MOCK_OPENAI) {
+      this.log('Skipping hopeful chime-in test (TEST_MOCK_OPENAI=true)', 'warn');
+      return;
+    }
+
+    if (!this.testData.stepId) {
+      this.log('No program step available, skipping hopeful chime-in test', 'warn');
+      return;
+    }
+
+    try {
+      await axios.post(
+        `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
+        { content: 'Hopeful' },
+        {
+          headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+          timeout: this.timeout
+        }
+      );
+      this.log('Posted Hopeful message to trigger follow-up reflection', 'info');
+    } catch (error) {
+      this.assert(false, 'Post Hopeful message', `Error: ${error.response?.data?.error || error.message}`);
+      return;
+    }
+
+    const hopefulPoll = await this.pollForSystemMessageType(
+      this.testData.stepId,
+      this.testData.user1.token,
+      'chime_in_prompt',
+      30000
+    );
+
+    if (!hopefulPoll.found || hopefulPoll.messages.length === 0) {
+      this.assert(false, 'Hopeful chime-in prompt generated', 'No chime_in_prompt system message found within timeout');
+      return;
+    }
+
+    const hopefulMessage = hopefulPoll.messages[0];
+    const metadata = typeof hopefulMessage.metadata === 'string'
+      ? JSON.parse(hopefulMessage.metadata)
+      : (hopefulMessage.metadata || {});
+
+    this.assert(
+      hopefulMessage.message_type === 'system',
+      'Hopeful chime-in message has correct type',
+      `Type: ${hopefulMessage.message_type}`
+    );
+
+    this.assert(
+      metadata.type === 'chime_in_prompt',
+      'Hopeful chime-in message has correct metadata type',
+      `Metadata type: ${metadata.type}`
+    );
+
+    this.assert(
+      metadata.triggered_by === 'hopeful_message',
+      'Hopeful chime-in message has correct trigger',
+      `Triggered by: ${metadata.triggered_by}`
+    );
+
+    this.assert(
+      !!hopefulMessage.content && hopefulMessage.content.length > 0,
+      'Hopeful chime-in message has content',
+      `Content length: ${hopefulMessage.content.length}`
+    );
+  }
+
+  /**
+   * Test: First message in a fresh step creates a welcome system message and the POST
+   * response includes system_messages. Creates its own program to keep a clean step
+   * (the stepId from testBothUsersPostTriggersTherapyResponse already has user messages).
+   */
+  async testFirstMessageWelcome() {
+    this.log('Testing: First message welcome system message', 'section');
+
+    if (MOCK_OPENAI) {
+      this.log('Skipping first message welcome test (TEST_MOCK_OPENAI=true)', 'warn');
+      return;
+    }
+
+    if (!this.testData.pairingId) {
+      this.log('No pairing available, skipping first message welcome test', 'warn');
+      return;
+    }
+
+    let welcomeProgramId;
+    let welcomeStepId;
+
+    try {
+      const programResponse = await axios.post(
+        `${this.baseURL}/api/programs`,
+        {
+          user_input: 'We want to test the first message welcome feature.',
+          pairing_id: this.testData.pairingId
+        },
+        {
+          headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+          timeout: this.timeout
+        }
+      );
+
+      welcomeProgramId = programResponse.data.program.id;
+      this.log(`Created program for welcome test: ${welcomeProgramId}`, 'info');
+    } catch (error) {
+      this.assert(false, 'Create program for welcome test', `Error: ${error.response?.data?.error || error.message}`);
+      return;
+    }
+
+    const pollResult = await this.pollForSteps(welcomeProgramId, this.testData.user1.token);
+    if (!pollResult.found || pollResult.steps.length === 0) {
+      this.log('Program steps not generated, skipping first message welcome test', 'warn');
+      this.assert(true, 'First message welcome test skipped', 'Program steps not available (OpenAI API issue)');
+      return;
+    }
+
+    welcomeStepId = pollResult.steps[0].id;
+
+    let postMessageResponse;
+    try {
+      postMessageResponse = await axios.post(
+        `${this.baseURL}/api/programSteps/${welcomeStepId}/messages`,
+        { content: 'This is my first message in the conversation about improving our relationship.' },
+        {
+          headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+          timeout: this.timeout
+        }
+      );
+    } catch (error) {
+      this.assert(false, 'User 1 add first message', `Error: ${error.response?.data?.error || error.message}`);
+      return;
+    }
+
+    const responseSystemMessages = postMessageResponse.data.system_messages;
+    this.assert(
+      Array.isArray(responseSystemMessages),
+      'POST /messages response includes system_messages array',
+      Array.isArray(responseSystemMessages) ? 'system_messages is an array' : `system_messages is ${typeof responseSystemMessages}`
+    );
+    this.assert(
+      Array.isArray(responseSystemMessages) && responseSystemMessages.length > 0,
+      'POST /messages response system_messages is non-empty for first message',
+      Array.isArray(responseSystemMessages) ? `system_messages length: ${responseSystemMessages.length}` : 'system_messages not an array'
+    );
+    if (Array.isArray(responseSystemMessages) && responseSystemMessages.length > 0) {
+      this.assert(
+        responseSystemMessages[0].includes('As soon as your partner replies'),
+        'POST /messages response system_messages[0] has correct welcome content',
+        `Content: ${responseSystemMessages[0].substring(0, 80)}...`
+      );
+    }
+
+    await this.sleep(500);
+
+    let stepMessages;
+    try {
+      const messagesResponse = await axios.get(
+        `${this.baseURL}/api/programSteps/${welcomeStepId}/messages`,
+        {
+          headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+          timeout: this.timeout
+        }
+      );
+      stepMessages = messagesResponse.data.messages;
+    } catch (error) {
+      this.assert(false, 'Fetch step messages', `Error: ${error.response?.data?.error || error.message}`);
+      return;
+    }
+
+    const welcomeMessage = stepMessages.find(msg => {
+      if (msg.message_type !== 'system' || !msg.metadata) return false;
+      try {
+        const parsed = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+        return parsed.type === 'first_message_welcome';
+      } catch (e) {
+        return false;
+      }
+    });
+
+    this.assert(
+      !!welcomeMessage,
+      'First message welcome system message was added',
+      welcomeMessage ? 'Found welcome message' : 'No welcome message found'
+    );
+
+    if (welcomeMessage) {
+      this.assert(
+        welcomeMessage.content.includes('As soon as your partner replies'),
+        'Welcome message has correct content',
+        `Content: ${welcomeMessage.content.substring(0, 80)}...`
+      );
+    }
+
+    const therapyResponse = stepMessages.find(msg => {
+      if (msg.message_type !== 'system' || !msg.metadata) return false;
+      try {
+        const parsed = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+        return parsed.type === 'chime_in_response_1';
+      } catch (e) {
+        return false;
+      }
+    });
+
+    this.assert(
+      !therapyResponse,
+      'No therapy response triggered for single user post',
+      therapyResponse ? 'ERROR: Therapy response was incorrectly triggered!' : 'Correctly no therapy response yet'
+    );
+  }
+
+  /**
    * Print test summary
    */
   printSummary() {
@@ -654,8 +924,10 @@ class TherapyTriggerTestRunner {
     }
 
     await this.testBothUsersPostTriggersTherapyResponse();
+    await this.testHopefulChimeInPrompt();
     await this.testPairedUserHasAccessToProgram();
     await this.testBothUsersCanSeeAllMessages();
+    await this.testFirstMessageWelcome();
     await this.testSingleUserProgramNoTherapyTrigger();
 
     return this.printSummary();

@@ -400,6 +400,51 @@ class PairingsEndpointTestRunner {
     }
   }
 
+  // Tests the legacy GET /api/pairing/accepted and GET /api/pairing/stats endpoints.
+  // Relies on state set up by testPairingsWithAcceptedPairings (must run after it).
+  async testLegacyPairingEndpoints() {
+    this.log('Testing Legacy Pairing Endpoints (/accepted, /stats)', 'section');
+
+    const user = this.testData.user1;
+    if (!user) {
+      this.log('Skipping legacy pairing endpoint tests - no user available', 'warn');
+      return;
+    }
+
+    try {
+      const acceptedResponse = await axios.get(`${this.baseURL}/api/pairing/accepted`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(
+        acceptedResponse.status === 200,
+        'GET /api/pairing/accepted returns 200',
+        `Status: ${acceptedResponse.status}`
+      );
+      this.assert(
+        Array.isArray(acceptedResponse.data.pairings),
+        'GET /api/pairing/accepted returns array',
+        `Type: ${typeof acceptedResponse.data.pairings}`
+      );
+    } catch (error) {
+      this.assert(false, 'GET /api/pairing/accepted', `Error: ${error.response?.data?.error || error.message}`);
+    }
+
+    try {
+      const statsResponse = await axios.get(`${this.baseURL}/api/pairing/stats`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(
+        statsResponse.status === 200,
+        'GET /api/pairing/stats returns 200',
+        `Status: ${statsResponse.status}`
+      );
+    } catch (error) {
+      this.assert(false, 'GET /api/pairing/stats', `Error: ${error.response?.data?.error || error.message}`);
+    }
+  }
+
   // Test pairings endpoint authentication
   async testPairingsAuthentication() {
     this.log('Testing Pairings Authentication', 'section');
@@ -471,7 +516,13 @@ class PairingsEndpointTestRunner {
       
       await this.testPairingsStructureAndSorting();
       console.log('');
-      
+
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      await this.testLegacyPairingEndpoints();
+      console.log('');
+
       this.printSummary();
       
       return this.testResults.failed === 0;
