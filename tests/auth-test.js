@@ -569,32 +569,43 @@ async function showCleanupInstructions() {
   console.log('  node tests/cleanup-test-data.js\n');
 }
 
+class AuthTestRunner {
+  async runAllTests() {
+    const result = await runTests();
+    return result && result.success;
+  }
+}
+
+module.exports = AuthTestRunner;
+
 // Main execution
-(async () => {
-  console.log('Checking if server is running...');
-  const serverRunning = await checkServer();
-  
-  if (!serverRunning) {
-    console.error('❌ Server is not running on', BASE_URL);
-    console.error('Please start the server with: npm start');
-    process.exit(1);
-  }
-  
-  console.log('✅ Server is running\n');
-  
-  let testResult;
-  try {
-    testResult = await runTests();
-  } finally {
-    // Show cleanup instructions
-    await showCleanupInstructions();
-  }
-  
-  // Exit with appropriate code
-  if (testResult && testResult.success) {
-    process.exit(0);
-  } else {
-    process.exit(1);
-  }
-})();
+if (require.main === module) {
+  (async () => {
+    console.log('Checking if server is running...');
+    const serverRunning = await checkServer();
+    
+    if (!serverRunning) {
+      console.error('❌ Server is not running on', BASE_URL);
+      console.error('Please start the server with: npm start');
+      process.exit(1);
+    }
+    
+    console.log('✅ Server is running\n');
+    
+    let testResult;
+    try {
+      testResult = await runTests();
+    } finally {
+      // Show cleanup instructions
+      await showCleanupInstructions();
+    }
+    
+    // Exit with appropriate code
+    if (testResult && testResult.success) {
+      process.exit(0);
+    } else {
+      process.exit(1);
+    }
+  })();
+}
 

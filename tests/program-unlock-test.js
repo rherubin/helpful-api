@@ -604,5 +604,7 @@ async function runTests() {
 }
 
 // Run the tests
-runTests();
+if (require.main === module) {
+  runTests();
+}
 

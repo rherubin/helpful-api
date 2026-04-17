@@ -1527,29 +1527,31 @@ async function checkServer() {
 }
 
 // Main
-(async () => {
-  console.log('Checking if server is running...');
-  const running = await checkServer();
+if (require.main === module) {
+  (async () => {
+    console.log('Checking if server is running...');
+    const running = await checkServer();
 
-  if (!running) {
-    console.error('❌ Server not running at', BASE_URL);
-    console.error('Start the server with: npm start');
-    process.exit(1);
-  }
+    if (!running) {
+      console.error('❌ Server not running at', BASE_URL);
+      console.error('Start the server with: npm start');
+      process.exit(1);
+    }
 
-  console.log('✅ Server is running\n');
+    console.log('✅ Server is running\n');
 
-  if (KEEP_DATA) {
-    console.log('⚠️  --keep-data flag enabled: Test data will NOT be automatically cleaned up');
-    console.log('⚠️  Test emails will use @inspection.example.com domain');
-    console.log('⚠️  Use cleanup script manually: node tests/cleanup-test-data.js');
-    console.log('⚠️  Or inspect data in database with the logged IDs above\n');
-  }
+    if (KEEP_DATA) {
+      console.log('⚠️  --keep-data flag enabled: Test data will NOT be automatically cleaned up');
+      console.log('⚠️  Test emails will use @inspection.example.com domain');
+      console.log('⚠️  Use cleanup script manually: node tests/cleanup-test-data.js');
+      console.log('⚠️  Or inspect data in database with the logged IDs above\n');
+    }
 
-  const runner = new MessagesTestRunner();
-  const success = await runner.runAllTests();
-  process.exit(success ? 0 : 1);
-})();
+    const runner = new MessagesTestRunner();
+    const success = await runner.runAllTests();
+    process.exit(success ? 0 : 1);
+  })();
+}
 
 module.exports = MessagesTestRunner;
 

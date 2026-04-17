@@ -38,12 +38,6 @@ npm run test:auth
 npm run test:cleanup
 ```
 
-### 📝 Other Test Files
-
-- `therapy-response-test.js` - Compatibility wrapper (functionality in auth-test.js)
-- `therapy-response-integration-test.js` - Compatibility wrapper
-- `auth-test.js.legacy` - Legacy auth tests (superseded by current auth-test.js)
-
 ---
 
 ## Test Categories

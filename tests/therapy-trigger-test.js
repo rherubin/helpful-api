@@ -673,22 +673,24 @@ async function checkServer() {
 }
 
 // Main
-(async () => {
-  console.log('Checking if server is running...');
-  const running = await checkServer();
-  
-  if (!running) {
-    console.error('❌ Server not running at', BASE_URL);
-    console.error('Start the server with: npm start');
-    process.exit(1);
-  }
-  
-  console.log('✅ Server is running\n');
-  
-  const runner = new TherapyTriggerTestRunner();
-  const success = await runner.runAllTests();
-  process.exit(success ? 0 : 1);
-})();
+if (require.main === module) {
+  (async () => {
+    console.log('Checking if server is running...');
+    const running = await checkServer();
+    
+    if (!running) {
+      console.error('❌ Server not running at', BASE_URL);
+      console.error('Start the server with: npm start');
+      process.exit(1);
+    }
+    
+    console.log('✅ Server is running\n');
+    
+    const runner = new TherapyTriggerTestRunner();
+    const success = await runner.runAllTests();
+    process.exit(success ? 0 : 1);
+  })();
+}
 
 module.exports = TherapyTriggerTestRunner;
 

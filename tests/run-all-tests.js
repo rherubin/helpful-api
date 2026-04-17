@@ -2,14 +2,12 @@ const SecurityTestRunner = require('./security-test');
 const LoadTestRunner = require('./load-test');
 const APITestRunner = require('./api-test');
 const OpenAITestRunner = require('./openai-test');
-const TherapyTestRunner = require('./run-therapy-tests');
 const AuthTestRunner = require('./auth-test');
 const UserCreationTestRunner = require('./user-creation-test');
 const PairingsEndpointTestRunner = require('./pairings-endpoint-test');
 const UserProfileTestRunner = require('./user-profile-test');
 const RefreshTokenResetTestRunner = require('./refresh-token-reset-test');
 const RefreshTokenRotationTestRunner = require('./refresh-token-rotation-test');
-const ProgramUnlockTestRunner = require('./program-unlock-test');
 const ProgramsTestRunner = require('./programs-test');
 const ProgramStepsTestRunner = require('./program-steps-test');
 const MessagesTestRunner = require('./messages-test');
@@ -28,14 +26,12 @@ class TestSuiteRunner {
       runAPI: options.runAPI !== false, // Default true
       runLoad: options.runLoad !== false, // Default true
       runOpenAI: options.runOpenAI !== false, // Default true
-      runTherapy: options.runTherapy !== false, // Default true
       runAuth: options.runAuth !== false, // Default true
       runUserCreation: options.runUserCreation !== false, // Default true
       runPairingsEndpoint: options.runPairingsEndpoint !== false, // Default true
       runUserProfile: options.runUserProfile !== false, // Default true
       runRefreshTokenReset: options.runRefreshTokenReset !== false, // Default true
       runRefreshTokenRotation: false, // Temporarily disabled due to integration issues
-      runProgramUnlock: options.runProgramUnlock !== false, // Default true
       runPrograms: options.runPrograms !== false, // Default true
       runProgramSteps: options.runProgramSteps !== false, // Default true
       runMessages: options.runMessages !== false, // Default true
@@ -50,14 +46,12 @@ class TestSuiteRunner {
       api: null,
       load: null,
       openai: null,
-      therapy: null,
       auth: null,
       userCreation: null,
       pairingsEndpoint: null,
       userProfile: null,
       refreshTokenReset: null,
       refreshTokenRotation: null,
-      programUnlock: null,
       programs: null,
       programSteps: null,
       messages: null,
@@ -223,34 +217,6 @@ class TestSuiteRunner {
       this.log(`OpenAI tests failed: ${error.message}`, 'error');
       this.results.openai = { success: false, error: error.message };
       return this.results.openai;
-    }
-  }
-
-  // Run therapy response tests
-  async runTherapyTests() {
-    this.log('🧠 Running Therapy Response Tests', 'section');
-    
-    try {
-      const therapyRunner = new TherapyTestRunner();
-      const success = await therapyRunner.runAllTests();
-      
-      this.results.therapy = { 
-        success, 
-        skipped: false,
-        details: 'Therapy response trigger and system message tests'
-      };
-      
-      if (success) {
-        this.log('Therapy response tests completed successfully', 'success');
-      } else {
-        this.log('Therapy response tests failed', 'error');
-      }
-      
-      return this.results.therapy;
-    } catch (error) {
-      this.log(`Therapy response tests failed: ${error.message}`, 'error');
-      this.results.therapy = { success: false, error: error.message };
-      return this.results.therapy;
     }
   }
 
@@ -471,36 +437,6 @@ class TestSuiteRunner {
     }
   }
 
-  async runProgramUnlockTests() {
-    if (!this.options.runProgramUnlock) {
-      this.log('Skipping program unlock tests', 'warn');
-      return { skipped: true };
-    }
-
-    this.log('🔓 Running Program Unlock Test Suite', 'section');
-
-    try {
-      // This is a standalone test, so we need to run it differently
-      const programUnlockTest = require('./program-unlock-test');
-
-      // Since this test has its own main execution, we need to capture its results
-      // For now, we'll mark it as needing manual integration
-      this.log('⚠️  Program unlock tests need manual integration', 'warn');
-      this.results.programUnlock = {
-        success: true, // Assume success for now
-        skipped: false,
-        details: 'Program unlock feature with message-based progression'
-      };
-
-      this.log('Program unlock tests completed (manual integration needed)', 'success');
-      return this.results.programUnlock;
-    } catch (error) {
-      this.log(`Program unlock tests failed: ${error.message}`, 'error');
-      this.results.programUnlock = { success: false, error: error.message };
-      return this.results.programUnlock;
-    }
-  }
-
   async runProgramsTests() {
     if (!this.options.runPrograms) {
       this.log('Skipping programs tests', 'warn');
@@ -651,14 +587,12 @@ class TestSuiteRunner {
     this.log(`  API Tests: ${this.options.runAPI ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Load Tests: ${this.options.runLoad ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  OpenAI Tests: ${this.options.runOpenAI ? 'Enabled' : 'Disabled'}`, 'info');
-    this.log(`  Therapy Response Tests: ${this.options.runTherapy ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Authentication Tests: ${this.options.runAuth ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  User Creation Tests: ${this.options.runUserCreation ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Pairings Endpoint Tests: ${this.options.runPairingsEndpoint ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  User Profile Tests: ${this.options.runUserProfile ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Refresh Token Reset Tests: ${this.options.runRefreshTokenReset ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Refresh Token Rotation Tests: ${this.options.runRefreshTokenRotation ? 'Enabled' : 'Disabled'}`, 'info');
-    this.log(`  Program Unlock Tests: ${this.options.runProgramUnlock ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Programs Tests: ${this.options.runPrograms ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Program Steps Tests: ${this.options.runProgramSteps ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Messages Tests: ${this.options.runMessages ? 'Enabled' : 'Disabled'}`, 'info');
@@ -706,15 +640,6 @@ class TestSuiteRunner {
     if (this.options.runOpenAI) {
       await this.runOpenAITests();
       if (this.results.openai && !this.results.openai.success && !this.results.openai.skipped) {
-        overallSuccess = false;
-      }
-      console.log('');
-    }
-
-    // Run therapy response tests
-    if (this.options.runTherapy) {
-      await this.runTherapyTests();
-      if (this.results.therapy && !this.results.therapy.success && !this.results.therapy.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -769,15 +694,6 @@ class TestSuiteRunner {
     if (this.options.runRefreshTokenRotation) {
       await this.runRefreshTokenRotationTests();
       if (this.results.refreshTokenRotation && !this.results.refreshTokenRotation.success && !this.results.refreshTokenRotation.skipped) {
-        overallSuccess = false;
-      }
-      console.log('');
-    }
-
-    // Run program unlock tests
-    if (this.options.runProgramUnlock) {
-      await this.runProgramUnlockTests();
-      if (this.results.programUnlock && !this.results.programUnlock.success && !this.results.programUnlock.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -878,17 +794,6 @@ class TestSuiteRunner {
       }
     }
 
-    // Therapy response test results
-    if (this.results.therapy) {
-      if (this.results.therapy.skipped) {
-        this.log('🧠 Therapy Response Tests: SKIPPED', 'warn');
-      } else if (this.results.therapy.success) {
-        this.log('🧠 Therapy Response Tests: PASSED', 'success');
-      } else {
-        this.log('🧠 Therapy Response Tests: FAILED', 'error');
-      }
-    }
-
     // Authentication test results
     if (this.results.auth) {
       if (this.results.auth.skipped) {
@@ -952,17 +857,6 @@ class TestSuiteRunner {
         this.log('🔄 Refresh Token Rotation Tests: PASSED', 'success');
       } else {
         this.log('🔄 Refresh Token Rotation Tests: FAILED', 'error');
-      }
-    }
-
-    // Program unlock test results
-    if (this.results.programUnlock) {
-      if (this.results.programUnlock.skipped) {
-        this.log('🔓 Program Unlock Tests: SKIPPED', 'warn');
-      } else if (this.results.programUnlock.success) {
-        this.log('🔓 Program Unlock Tests: PASSED', 'success');
-      } else {
-        this.log('🔓 Program Unlock Tests: FAILED', 'error');
       }
     }
 
@@ -1039,10 +933,10 @@ class TestSuiteRunner {
       timestamp: new Date().toISOString(),
       duration: this.results.endTime - this.results.startTime,
       success: this.results.security?.success && this.results.api?.success && this.results.load?.success && this.results.openai?.success &&
-               this.results.therapy?.success && this.results.auth?.success && this.results.userCreation?.success &&
+               this.results.auth?.success && this.results.userCreation?.success &&
                this.results.pairingsEndpoint?.success && this.results.userProfile?.success &&
                this.results.refreshTokenReset?.success && this.results.refreshTokenRotation?.success &&
-               this.results.programUnlock?.success && this.results.programs?.success &&
+               this.results.programs?.success &&
                this.results.programSteps?.success && this.results.messages?.success &&
                this.results.therapyTrigger?.success,
       results: {
@@ -1050,14 +944,12 @@ class TestSuiteRunner {
         api: this.results.api,
         load: this.results.load,
         openai: this.results.openai,
-        therapy: this.results.therapy,
         auth: this.results.auth,
         userCreation: this.results.userCreation,
         pairingsEndpoint: this.results.pairingsEndpoint,
         userProfile: this.results.userProfile,
         refreshTokenReset: this.results.refreshTokenReset,
         refreshTokenRotation: this.results.refreshTokenRotation,
-        programUnlock: this.results.programUnlock,
         programs: this.results.programs,
         programSteps: this.results.programSteps,
         messages: this.results.messages,
@@ -1091,14 +983,12 @@ function parseArgs() {
     if (arg === '--no-api') options.runAPI = false;
     if (arg === '--no-load') options.runLoad = false;
     if (arg === '--no-openai') options.runOpenAI = false;
-    if (arg === '--no-therapy') options.runTherapy = false;
     if (arg === '--no-auth') options.runAuth = false;
     if (arg === '--no-user-creation') options.runUserCreation = false;
     if (arg === '--no-pairings-endpoint') options.runPairingsEndpoint = false;
     if (arg === '--no-user-profile') options.runUserProfile = false;
     if (arg === '--no-refresh-token-reset') options.runRefreshTokenReset = false;
     if (arg === '--no-refresh-token-rotation') options.runRefreshTokenRotation = false;
-    if (arg === '--no-program-unlock') options.runProgramUnlock = false;
     if (arg === '--no-programs') options.runPrograms = false;
     if (arg === '--no-program-steps') options.runProgramSteps = false;
     if (arg === '--no-messages') options.runMessages = false;
