@@ -1163,6 +1163,38 @@ class UserOrgCodeTestRunner {
     }
   }
 
+  /**
+   * GET /api/org-codes with regular (non-admin) user auth.
+   * Verifies the endpoint is open to authenticated users, returns an array,
+   * and exposes address fields while hiding prompt fields.
+   */
+  async testGetOrgCodesListWithRegularAuth() {
+    this.log('Testing GET /api/org-codes with regular user auth...', 'section');
+
+    try {
+      const listResponse = await axios.get(`${this.baseURL}/api/org-codes`, {
+        headers: { Authorization: `Bearer ${this.testData.userToken}` },
+        timeout: this.timeout
+      });
+
+      this.assert(listResponse.status === 200, 'GET /api/org-codes with regular auth - status 200');
+      this.assert(Array.isArray(listResponse.data.org_codes), 'GET /api/org-codes - returns array');
+
+      if (listResponse.data.org_codes.length > 0) {
+        const orgCode = listResponse.data.org_codes[0];
+        this.assert(orgCode.address1 !== undefined, 'GET /api/org-codes - includes address1');
+        this.assert(orgCode.city !== undefined, 'GET /api/org-codes - includes city');
+        this.assert(orgCode.state !== undefined, 'GET /api/org-codes - includes state');
+        this.assert(orgCode.postalCode !== undefined, 'GET /api/org-codes - includes postalCode');
+        this.assert(orgCode.initial_program_prompt === undefined, 'GET /api/org-codes - excludes initial_program_prompt');
+        this.assert(orgCode.next_program_prompt === undefined, 'GET /api/org-codes - excludes next_program_prompt');
+        this.assert(orgCode.therapy_response_prompt === undefined, 'GET /api/org-codes - excludes therapy_response_prompt');
+      }
+    } catch (error) {
+      this.assert(false, 'GET /api/org-codes with regular auth', `Error: ${error.response?.data?.error || error.message}`);
+    }
+  }
+
   printKeepDataInfo() {
     this.log('─── Keep-data SQL queries ───────────────────────────────────────────', 'data');
     this.log("SELECT id, email, org_code_id, org_name, org_city, org_state, is_premium FROM users WHERE email LIKE 'orgcode_%@example.com';", 'data');
@@ -1231,6 +1263,8 @@ class UserOrgCodeTestRunner {
         () => this.testAuthenticationRequired(),
         () => this.testCannotUpdateOtherUser(),
         () => this.testSensitiveFieldsNotExposed(),
+        // List endpoint open to regular users
+        () => this.testGetOrgCodesListWithRegularAuth(),
         // Rate limit last — exhausts request allowance
         () => this.testRateLimiting()
       ];

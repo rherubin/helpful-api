@@ -16,8 +16,6 @@
 
 require('dotenv').config();
 const axios = require('axios');
-const { generateTestEmail } = require('./test-helpers');
-
 const BASE_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
 const MOCK_OPENAI = process.env.TEST_MOCK_OPENAI === 'true';
 

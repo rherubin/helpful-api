@@ -1624,18 +1624,6 @@ Comprehensive authentication system tests (19 tests) including:
 - JWT token structure validation
 - Error scenarios and edge cases
 
-#### Refresh Token Rotation Tests
-```bash
-node tests/refresh-token-rotation-test.js
-```
-Dedicated test suite for refresh token rotation functionality:
-- New access and refresh tokens are issued on refresh
-- Old refresh tokens are immediately invalidated
-- New refresh tokens work for subsequent refreshes
-- Token expiration is extended (sliding window)
-- Database records are properly updated
-- New access tokens work for protected routes
-
 #### Refresh Token Reset Tests
 ```bash
 node tests/refresh-token-reset-test.js

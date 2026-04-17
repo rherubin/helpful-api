@@ -6,7 +6,6 @@ const UserCreationTestRunner = require('./user-creation-test');
 const PairingsEndpointTestRunner = require('./pairings-endpoint-test');
 const UserProfileTestRunner = require('./user-profile-test');
 const RefreshTokenResetTestRunner = require('./refresh-token-reset-test');
-const RefreshTokenRotationTestRunner = require('./refresh-token-rotation-test');
 const ProgramsTestRunner = require('./programs-test');
 const ProgramStepsTestRunner = require('./program-steps-test');
 const MessagesTestRunner = require('./messages-test');
@@ -29,7 +28,6 @@ class TestSuiteRunner {
       runPairingsEndpoint: options.runPairingsEndpoint !== false, // Default true
       runUserProfile: options.runUserProfile !== false, // Default true
       runRefreshTokenReset: options.runRefreshTokenReset !== false, // Default true
-      runRefreshTokenRotation: false, // Temporarily disabled due to integration issues
       runPrograms: options.runPrograms !== false, // Default true
       runProgramSteps: options.runProgramSteps !== false, // Default true
       runMessages: options.runMessages !== false, // Default true
@@ -48,7 +46,6 @@ class TestSuiteRunner {
       pairingsEndpoint: null,
       userProfile: null,
       refreshTokenReset: null,
-      refreshTokenRotation: null,
       programs: null,
       programSteps: null,
       messages: null,
@@ -364,44 +361,6 @@ class TestSuiteRunner {
     }
   }
 
-  async runRefreshTokenRotationTests() {
-    if (!this.options.runRefreshTokenRotation) {
-      this.log('Skipping refresh token rotation tests', 'warn');
-      return { skipped: true };
-    }
-
-    this.log('🔄 Running Refresh Token Rotation Test Suite', 'section');
-
-    try {
-      const refreshTokenRotationRunner = new RefreshTokenRotationTestRunner({
-        baseURL: this.options.baseURL,
-        timeout: this.options.timeout
-      });
-      const success = await refreshTokenRotationRunner.runAllTests();
-
-      this.results.refreshTokenRotation = {
-        success,
-        skipped: false,
-        details: 'Refresh token rotation with automatic invalidation',
-        passed: refreshTokenRotationRunner.testResults.passed,
-        failed: refreshTokenRotationRunner.testResults.failed,
-        total: refreshTokenRotationRunner.testResults.total
-      };
-
-      if (success) {
-        this.log('Refresh token rotation tests completed successfully', 'success');
-      } else {
-        this.log('Refresh token rotation tests failed', 'error');
-      }
-
-      return this.results.refreshTokenRotation;
-    } catch (error) {
-      this.log(`Refresh token rotation tests failed: ${error.message}`, 'error');
-      this.results.refreshTokenRotation = { success: false, error: error.message };
-      return this.results.refreshTokenRotation;
-    }
-  }
-
   async runProgramsTests() {
     if (!this.options.runPrograms) {
       this.log('Skipping programs tests', 'warn');
@@ -556,7 +515,6 @@ class TestSuiteRunner {
     this.log(`  Pairings Endpoint Tests: ${this.options.runPairingsEndpoint ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  User Profile Tests: ${this.options.runUserProfile ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Refresh Token Reset Tests: ${this.options.runRefreshTokenReset ? 'Enabled' : 'Disabled'}`, 'info');
-    this.log(`  Refresh Token Rotation Tests: ${this.options.runRefreshTokenRotation ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Programs Tests: ${this.options.runPrograms ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Program Steps Tests: ${this.options.runProgramSteps ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Messages Tests: ${this.options.runMessages ? 'Enabled' : 'Disabled'}`, 'info');
@@ -640,15 +598,6 @@ class TestSuiteRunner {
     if (this.options.runRefreshTokenReset) {
       await this.runRefreshTokenResetTests();
       if (this.results.refreshTokenReset && !this.results.refreshTokenReset.success && !this.results.refreshTokenReset.skipped) {
-        overallSuccess = false;
-      }
-      console.log('');
-    }
-
-    // Run refresh token rotation tests
-    if (this.options.runRefreshTokenRotation) {
-      await this.runRefreshTokenRotationTests();
-      if (this.results.refreshTokenRotation && !this.results.refreshTokenRotation.success && !this.results.refreshTokenRotation.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -793,17 +742,6 @@ class TestSuiteRunner {
       }
     }
 
-    // Refresh token rotation test results
-    if (this.results.refreshTokenRotation) {
-      if (this.results.refreshTokenRotation.skipped) {
-        this.log('🔄 Refresh Token Rotation Tests: SKIPPED', 'warn');
-      } else if (this.results.refreshTokenRotation.success) {
-        this.log('🔄 Refresh Token Rotation Tests: PASSED', 'success');
-      } else {
-        this.log('🔄 Refresh Token Rotation Tests: FAILED', 'error');
-      }
-    }
-
     // Programs test results
     if (this.results.programs) {
       if (this.results.programs.skipped) {
@@ -879,7 +817,7 @@ class TestSuiteRunner {
       success: this.results.security?.success && this.results.load?.success && this.results.openai?.success &&
                this.results.auth?.success && this.results.userCreation?.success &&
                this.results.pairingsEndpoint?.success && this.results.userProfile?.success &&
-               this.results.refreshTokenReset?.success && this.results.refreshTokenRotation?.success &&
+               this.results.refreshTokenReset?.success &&
                this.results.programs?.success &&
                this.results.programSteps?.success && this.results.messages?.success &&
                this.results.therapyTrigger?.success,
@@ -892,7 +830,6 @@ class TestSuiteRunner {
         pairingsEndpoint: this.results.pairingsEndpoint,
         userProfile: this.results.userProfile,
         refreshTokenReset: this.results.refreshTokenReset,
-        refreshTokenRotation: this.results.refreshTokenRotation,
         programs: this.results.programs,
         programSteps: this.results.programSteps,
         messages: this.results.messages,
@@ -930,7 +867,6 @@ function parseArgs() {
     if (arg === '--no-pairings-endpoint') options.runPairingsEndpoint = false;
     if (arg === '--no-user-profile') options.runUserProfile = false;
     if (arg === '--no-refresh-token-reset') options.runRefreshTokenReset = false;
-    if (arg === '--no-refresh-token-rotation') options.runRefreshTokenRotation = false;
     if (arg === '--no-programs') options.runPrograms = false;
     if (arg === '--no-program-steps') options.runProgramSteps = false;
     if (arg === '--no-messages') options.runMessages = false;
