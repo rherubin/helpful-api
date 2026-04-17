@@ -11,7 +11,7 @@
 
 require('dotenv').config();
 const axios = require('axios');
-const { generateTestEmail } = require('./test-helpers');
+const { generateTestEmail, sleep, pollForProgramSteps } = require('./test-helpers');
 
 const BASE_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
 const MOCK_OPENAI = process.env.TEST_MOCK_OPENAI === 'true';
@@ -59,35 +59,19 @@ class ProgramsTestRunner {
   }
 
   sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return sleep(ms);
   }
 
-  /**
-   * Poll for program steps to be created (async OpenAI generation)
-   */
   async pollForSteps(programId, token, maxWait = this.timeout) {
-    if (MOCK_OPENAI) {
-      this.log('TEST_MOCK_OPENAI=true, skipping step generation wait', 'info');
-      return { found: false, skipped: true };
-    }
-
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-      try {
-        const response = await axios.get(`${this.baseURL}/api/programs/${programId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-          timeout: this.timeout
-        });
-        
-        if (response.data.program?.program_steps?.length > 0) {
-          return { found: true, steps: response.data.program.program_steps };
-        }
-      } catch (error) {
-        // Continue polling
-      }
-      await this.sleep(1000);
-    }
-    return { found: false, skipped: false };
+    return pollForProgramSteps({
+      baseURL: this.baseURL,
+      programId,
+      token,
+      requestTimeout: this.timeout,
+      maxWait,
+      mockOpenAI: MOCK_OPENAI,
+      log: this.log.bind(this)
+    });
   }
 
   /**
