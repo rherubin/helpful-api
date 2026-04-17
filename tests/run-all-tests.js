@@ -10,6 +10,9 @@ const ProgramsTestRunner = require('./programs-test');
 const ProgramStepsTestRunner = require('./program-steps-test');
 const MessagesTestRunner = require('./messages-test');
 const TherapyTriggerTestRunner = require('./therapy-trigger-test');
+const WWWAuthenticateTestRunner = require('./www-authenticate-test');
+const SubscriptionTestRunner = require('./subscription-test');
+const UserOrgCodeTestRunner = require('./user-org-code-test');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -32,6 +35,9 @@ class TestSuiteRunner {
       runProgramSteps: options.runProgramSteps !== false, // Default true
       runMessages: options.runMessages !== false, // Default true
       runTherapyTrigger: options.runTherapyTrigger !== false, // Default true
+      runWWWAuthenticate: options.runWWWAuthenticate !== false, // Default true
+      runSubscription: options.runSubscription !== false, // Default true
+      runUserOrgCode: options.runUserOrgCode !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
@@ -50,6 +56,9 @@ class TestSuiteRunner {
       programSteps: null,
       messages: null,
       therapyTrigger: null,
+      wwwAuthenticate: null,
+      subscription: null,
+      userOrgCode: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -501,6 +510,120 @@ class TestSuiteRunner {
     }
   }
 
+  async runWWWAuthenticateTests() {
+    if (!this.options.runWWWAuthenticate) {
+      this.log('Skipping WWW-Authenticate tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🛡️ Running WWW-Authenticate Header Test Suite', 'section');
+
+    try {
+      const runner = new WWWAuthenticateTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.wwwAuthenticate = {
+        success,
+        skipped: false,
+        details: 'WWW-Authenticate header present on 401 responses',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('WWW-Authenticate tests completed successfully', 'success');
+      } else {
+        this.log('WWW-Authenticate tests failed', 'error');
+      }
+
+      return this.results.wwwAuthenticate;
+    } catch (error) {
+      this.log(`WWW-Authenticate tests failed: ${error.message}`, 'error');
+      this.results.wwwAuthenticate = { success: false, error: error.message };
+      return this.results.wwwAuthenticate;
+    }
+  }
+
+  async runSubscriptionTests() {
+    if (!this.options.runSubscription) {
+      this.log('Skipping subscription tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('💳 Running Subscription Test Suite', 'section');
+
+    try {
+      const runner = new SubscriptionTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.subscription = {
+        success,
+        skipped: false,
+        details: 'POST /api/subscription iOS/Android receipt handling',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Subscription tests completed successfully', 'success');
+      } else {
+        this.log('Subscription tests failed', 'error');
+      }
+
+      return this.results.subscription;
+    } catch (error) {
+      this.log(`Subscription tests failed: ${error.message}`, 'error');
+      this.results.subscription = { success: false, error: error.message };
+      return this.results.subscription;
+    }
+  }
+
+  async runUserOrgCodeTests() {
+    if (!this.options.runUserOrgCode) {
+      this.log('Skipping user org code tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🏢 Running User Org Code Test Suite', 'section');
+
+    try {
+      const runner = new UserOrgCodeTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.userOrgCode = {
+        success,
+        skipped: false,
+        details: 'PUT /api/users/:id org_code linking (admin + custom paths)',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('User org code tests completed successfully', 'success');
+      } else {
+        this.log('User org code tests failed', 'error');
+      }
+
+      return this.results.userOrgCode;
+    } catch (error) {
+      this.log(`User org code tests failed: ${error.message}`, 'error');
+      this.results.userOrgCode = { success: false, error: error.message };
+      return this.results.userOrgCode;
+    }
+  }
+
   // Run all test suites
   async runAllTests() {
     this.log('🎯 Starting Comprehensive Test Suite', 'section');
@@ -519,6 +642,9 @@ class TestSuiteRunner {
     this.log(`  Program Steps Tests: ${this.options.runProgramSteps ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Messages Tests: ${this.options.runMessages ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Therapy Trigger Tests: ${this.options.runTherapyTrigger ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  WWW-Authenticate Tests: ${this.options.runWWWAuthenticate ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Subscription Tests: ${this.options.runSubscription ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  User Org Code Tests: ${this.options.runUserOrgCode ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
     // Check server health
@@ -634,6 +760,33 @@ class TestSuiteRunner {
     if (this.options.runTherapyTrigger) {
       await this.runTherapyTriggerTests();
       if (this.results.therapyTrigger && !this.results.therapyTrigger.success && !this.results.therapyTrigger.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run WWW-Authenticate tests
+    if (this.options.runWWWAuthenticate) {
+      await this.runWWWAuthenticateTests();
+      if (this.results.wwwAuthenticate && !this.results.wwwAuthenticate.success && !this.results.wwwAuthenticate.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run subscription tests
+    if (this.options.runSubscription) {
+      await this.runSubscriptionTests();
+      if (this.results.subscription && !this.results.subscription.success && !this.results.subscription.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run user org code tests
+    if (this.options.runUserOrgCode) {
+      await this.runUserOrgCodeTests();
+      if (this.results.userOrgCode && !this.results.userOrgCode.success && !this.results.userOrgCode.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -786,6 +939,39 @@ class TestSuiteRunner {
       }
     }
 
+    // WWW-Authenticate test results
+    if (this.results.wwwAuthenticate) {
+      if (this.results.wwwAuthenticate.skipped) {
+        this.log('🛡️ WWW-Authenticate Tests: SKIPPED', 'warn');
+      } else if (this.results.wwwAuthenticate.success) {
+        this.log(`🛡️ WWW-Authenticate Tests: PASSED (${this.results.wwwAuthenticate.passed}/${this.results.wwwAuthenticate.total})`, 'success');
+      } else {
+        this.log(`🛡️ WWW-Authenticate Tests: FAILED (${this.results.wwwAuthenticate.failed}/${this.results.wwwAuthenticate.total} failures)`, 'error');
+      }
+    }
+
+    // Subscription test results
+    if (this.results.subscription) {
+      if (this.results.subscription.skipped) {
+        this.log('💳 Subscription Tests: SKIPPED', 'warn');
+      } else if (this.results.subscription.success) {
+        this.log(`💳 Subscription Tests: PASSED (${this.results.subscription.passed}/${this.results.subscription.total})`, 'success');
+      } else {
+        this.log(`💳 Subscription Tests: FAILED (${this.results.subscription.failed}/${this.results.subscription.total} failures)`, 'error');
+      }
+    }
+
+    // User org code test results
+    if (this.results.userOrgCode) {
+      if (this.results.userOrgCode.skipped) {
+        this.log('🏢 User Org Code Tests: SKIPPED', 'warn');
+      } else if (this.results.userOrgCode.success) {
+        this.log(`🏢 User Org Code Tests: PASSED (${this.results.userOrgCode.passed}/${this.results.userOrgCode.total})`, 'success');
+      } else {
+        this.log(`🏢 User Org Code Tests: FAILED (${this.results.userOrgCode.failed}/${this.results.userOrgCode.total} failures)`, 'error');
+      }
+    }
+
     console.log('');
 
     // Overall result
@@ -820,7 +1006,9 @@ class TestSuiteRunner {
                this.results.refreshTokenReset?.success &&
                this.results.programs?.success &&
                this.results.programSteps?.success && this.results.messages?.success &&
-               this.results.therapyTrigger?.success,
+               this.results.therapyTrigger?.success &&
+               this.results.wwwAuthenticate?.success && this.results.subscription?.success &&
+               this.results.userOrgCode?.success,
       results: {
         security: this.results.security,
         load: this.results.load,
@@ -833,21 +1021,30 @@ class TestSuiteRunner {
         programs: this.results.programs,
         programSteps: this.results.programSteps,
         messages: this.results.messages,
-        therapyTrigger: this.results.therapyTrigger
+        therapyTrigger: this.results.therapyTrigger,
+        wwwAuthenticate: this.results.wwwAuthenticate,
+        subscription: this.results.subscription,
+        userOrgCode: this.results.userOrgCode
       },
       summary: {
         totalTests: (this.results.security?.total || 0) + (this.results.openai?.testResults?.total || 0) +
                    (this.results.userCreation?.total || 0) + (this.results.pairingsEndpoint?.total || 0) + (this.results.userProfile?.total || 0) +
                    (this.results.refreshTokenReset?.total || 0) + (this.results.programs?.total || 0) + (this.results.programSteps?.total || 0) +
-                   (this.results.messages?.total || 0) + (this.results.therapyTrigger?.total || 0),
+                   (this.results.messages?.total || 0) + (this.results.therapyTrigger?.total || 0) +
+                   (this.results.wwwAuthenticate?.total || 0) + (this.results.subscription?.total || 0) +
+                   (this.results.userOrgCode?.total || 0),
         totalPassed: (this.results.security?.passed || 0) + (this.results.openai?.testResults?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) + (this.results.userProfile?.passed || 0) +
                     (this.results.refreshTokenReset?.passed || 0) + (this.results.programs?.passed || 0) + (this.results.programSteps?.passed || 0) +
-                    (this.results.messages?.passed || 0) + (this.results.therapyTrigger?.passed || 0),
+                    (this.results.messages?.passed || 0) + (this.results.therapyTrigger?.passed || 0) +
+                    (this.results.wwwAuthenticate?.passed || 0) + (this.results.subscription?.passed || 0) +
+                    (this.results.userOrgCode?.passed || 0),
         totalFailed: (this.results.security?.failed || 0) + (this.results.openai?.testResults?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) + (this.results.userProfile?.failed || 0) +
                     (this.results.refreshTokenReset?.failed || 0) + (this.results.programs?.failed || 0) + (this.results.programSteps?.failed || 0) +
-                    (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0)
+                    (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0) +
+                    (this.results.wwwAuthenticate?.failed || 0) + (this.results.subscription?.failed || 0) +
+                    (this.results.userOrgCode?.failed || 0)
       }
     };
   }
@@ -871,6 +1068,9 @@ function parseArgs() {
     if (arg === '--no-program-steps') options.runProgramSteps = false;
     if (arg === '--no-messages') options.runMessages = false;
     if (arg === '--no-therapy-trigger') options.runTherapyTrigger = false;
+    if (arg === '--no-www-authenticate') options.runWWWAuthenticate = false;
+    if (arg === '--no-subscription') options.runSubscription = false;
+    if (arg === '--no-user-org-code') options.runUserOrgCode = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];
     if (arg.startsWith('--timeout=')) options.timeout = parseInt(arg.split('=')[1]);
