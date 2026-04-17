@@ -26,7 +26,7 @@ const axios = require('axios');
 const assert = require('assert');
 const { generateTestEmail, validateTestEmailDomain, TEST_EMAIL_DOMAIN } = require('./test-helpers');
 
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:9000';
+const BASE_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
 
 // Test configuration
 const testConfig = {

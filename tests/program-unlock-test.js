@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const BASE_URL = process.env.API_URL || 'http://localhost:9000/api';
+const BASE_URL = process.env.API_URL || 'http://127.0.0.1:9000/api';
 
 // Test configuration
 const TEST_EMAIL_DOMAIN = '@programunlocktest.com';

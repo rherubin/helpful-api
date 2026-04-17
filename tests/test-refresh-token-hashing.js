@@ -1,4 +1,4 @@
-const RefreshToken = require('./models/RefreshToken');
+const RefreshToken = require('../models/RefreshToken');
 const bcrypt = require('bcrypt');
 
 // Mock database for testing
@@ -39,70 +39,91 @@ async function testRefreshTokenHashing() {
   console.log('🔐 Testing Refresh Token Hashing');
   console.log('==================================');
 
+  let failed = 0;
+  const assertStep = (label, condition) => {
+    if (condition) {
+      console.log(`✅ ${label}`);
+    } else {
+      console.log(`❌ ${label}`);
+      failed++;
+    }
+  };
+
   try {
     const mockDb = new MockDatabase();
     const refreshTokenModel = new RefreshToken(mockDb);
 
-    // Test data
     const testUserId = 'test-user-123';
     const testToken = 'test-refresh-token-abc123';
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     console.log('🧪 Step 1: Creating refresh token...');
     const tokenId = await refreshTokenModel.createRefreshToken(testUserId, testToken, expiresAt);
-    console.log('✅ Token created with ID:', tokenId);
+    assertStep(`Token created with ID: ${tokenId}`, Boolean(tokenId));
 
-    // Verify token was hashed in mock database
     const storedToken = mockDb.tokens[0];
-    console.log('   - Token is hashed (not plain text):', storedToken.token !== testToken);
-    console.log('   - Token length (should be > 60 for bcrypt):', storedToken.token.length);
+    assertStep('Token is hashed (not plain text)', storedToken.token !== testToken);
+    assertStep(`Token length > 60 (bcrypt) — got ${storedToken.token.length}`, storedToken.token.length > 60);
 
     console.log('🧪 Step 2: Retrieving refresh token...');
     const retrievedToken = await refreshTokenModel.getRefreshToken(testToken);
-    console.log('✅ Token retrieved:', retrievedToken ? 'SUCCESS' : 'FAILED');
+    assertStep('Token retrieved', Boolean(retrievedToken));
 
     if (retrievedToken) {
-      console.log('   - User ID matches:', retrievedToken.user_id === testUserId);
-      console.log('   - Token is hashed in DB but retrieval works:', retrievedToken.token.length > 60);
+      assertStep('User ID matches', retrievedToken.user_id === testUserId);
+      assertStep('Token remains hashed in DB', retrievedToken.token.length > 60);
     }
 
     console.log('🧪 Step 3: Testing invalid token...');
+    let invalidRejected = false;
     try {
       await refreshTokenModel.getRefreshToken('invalid-token');
-      console.log('❌ Should have failed for invalid token');
     } catch (error) {
-      console.log('✅ Correctly rejected invalid token:', error.message);
+      invalidRejected = true;
     }
+    assertStep('Invalid token rejected', invalidRejected);
 
     console.log('🧪 Step 4: Testing token deletion...');
     const deleted = await refreshTokenModel.deleteRefreshToken(testToken);
-    console.log('✅ Token deleted:', deleted);
+    assertStep('Token deleted', deleted);
 
     console.log('🧪 Step 5: Verifying token was deleted...');
+    let deletedRejected = false;
     try {
       await refreshTokenModel.getRefreshToken(testToken);
-      console.log('❌ Token should have been deleted');
     } catch (error) {
-      console.log('✅ Token correctly deleted:', error.message);
+      deletedRejected = true;
     }
+    assertStep('Deleted token no longer retrievable', deletedRejected);
 
-    // Test direct bcrypt functionality
     console.log('🧪 Step 6: Testing bcrypt hashing directly...');
     const originalToken = 'direct-test-token-xyz789';
     const hashed = await refreshTokenModel.hashToken(originalToken);
     const isValid = await refreshTokenModel.verifyToken(originalToken, hashed);
-    console.log('   - Hash created successfully:', hashed.length > 60);
-    console.log('   - Verification works:', isValid);
+    assertStep(`Hash created successfully (length ${hashed.length})`, hashed.length > 60);
+    assertStep('Verification works', isValid);
 
-    console.log('\n🎉 All refresh token hashing tests passed!');
-
+    if (failed === 0) {
+      console.log('\n🎉 All refresh token hashing tests passed!');
+    } else {
+      console.log(`\n❌ ${failed} assertion(s) failed.`);
+    }
   } catch (error) {
-    console.error('❌ Test failed:', error.message);
+    console.error('❌ Test threw an error:', error.message);
     console.error(error.stack);
-  } finally {
-    process.exit(0);
+    failed++;
   }
+
+  return failed === 0;
 }
 
-// Run the test
-testRefreshTokenHashing();
+if (require.main === module) {
+  testRefreshTokenHashing().then(success => {
+    process.exit(success ? 0 : 1);
+  }).catch(error => {
+    console.error('Test runner failed:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = testRefreshTokenHashing;

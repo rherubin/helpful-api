@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const BASE_URL = process.env.API_URL || 'http://localhost:9000';
+const BASE_URL = process.env.API_URL || 'http://127.0.0.1:9000';
 
 // ANSI color codes for better output
 const colors = {
@@ -22,7 +22,7 @@ async function testTokenExpiry() {
   try {
     // Test 1: Login and get tokens
     log('Test 1: Login to get access token', 'blue');
-    const loginResponse = await axios.post(`${BASE_URL}/auth/login`, {
+    const loginResponse = await axios.post(`${BASE_URL}/api/login`, {
       email: 'test@example.com',
       password: 'password123'
     });
@@ -34,7 +34,7 @@ async function testTokenExpiry() {
 
     // Test 2: Check token info
     log('\nTest 2: Check token information', 'blue');
-    const tokenInfoResponse = await axios.post(`${BASE_URL}/auth/token-info`, {
+    const tokenInfoResponse = await axios.post(`${BASE_URL}/api/token-info`, {
       access_token: access_token
     });
 
@@ -48,7 +48,7 @@ async function testTokenExpiry() {
 
     // Test 3: Verify token works
     log('\nTest 3: Use access token to get profile', 'blue');
-    const profileResponse = await axios.get(`${BASE_URL}/auth/profile`, {
+    const profileResponse = await axios.get(`${BASE_URL}/api/profile`, {
       headers: {
         'Authorization': `Bearer ${access_token}`
       }

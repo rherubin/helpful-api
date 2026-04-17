@@ -6,7 +6,7 @@
 const axios = require('axios');
 const { generateTestEmail } = require('./test-helpers');
 
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:9000';
+const BASE_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
 
 async function testProgramStepsWithMockData() {
   console.log('🧪 Testing Program Steps with Mock Data\n');

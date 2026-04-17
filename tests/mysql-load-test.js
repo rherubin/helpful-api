@@ -6,7 +6,7 @@ const { v4: uuidv4 } = require('uuid');
  * Tests actual load capacity with proper authentication
  */
 
-const BASE_URL = process.env.BASE_URL || 'http://localhost:9000';
+const BASE_URL = process.env.BASE_URL || 'http://127.0.0.1:9000';
 
 class MySQLLoadTest {
   constructor() {

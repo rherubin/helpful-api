@@ -13,7 +13,7 @@ const axios = require('axios');
 const bcrypt = require('bcrypt');
 const { getPool } = require('../config/database');
 
-const API_URL = process.env.TEST_BASE_URL || 'http://localhost:9000';
+const API_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
 
 // Generate unique test email
 const testEmail = `refresh-rotation-test_${Date.now()}_${Math.random().toString(36).substr(2, 5)}@example.com`;
@@ -139,7 +139,7 @@ async function runTest() {
 
     // Verify: New access token can access protected routes
     console.log('🔐 Step 6: Verifying new access token works...');
-    const profileResponse = await axios.get(`${API_URL}/auth/profile`, {
+    const profileResponse = await axios.get(`${API_URL}/api/profile`, {
       headers: {
         'Authorization': `Bearer ${newAccessToken}`
       }

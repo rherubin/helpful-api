@@ -19,7 +19,7 @@ const jwt = require('jsonwebtoken');
 
 class UserProfileTestRunner {
   constructor(options = {}) {
-    this.baseURL = options.baseURL || 'http://localhost:9000';
+    this.baseURL = options.baseURL || 'http://127.0.0.1:9000';
     this.timeout = options.timeout || 15000;
     this.JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
     this.testResults = {
