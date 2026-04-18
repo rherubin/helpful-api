@@ -14,6 +14,7 @@ const SubscriptionTestRunner = require('./subscription-test');
 const UserOrgCodeTestRunner = require('./user-org-code-test');
 const HelpfulPromptServiceTestRunner = require('./helpful-prompt-service-test');
 const HopefulPromptServiceTestRunner = require('./hopeful-prompt-service-test');
+const ProgramOrgContextTestRunner = require('./program-org-context-test');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -40,6 +41,7 @@ class TestSuiteRunner {
       runUserOrgCode: options.runUserOrgCode !== false, // Default true
       runHelpfulPromptService: options.runHelpfulPromptService !== false, // Default true
       runHopefulPromptService: options.runHopefulPromptService !== false, // Default true
+      runProgramOrgContext: options.runProgramOrgContext !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
@@ -62,6 +64,7 @@ class TestSuiteRunner {
       userOrgCode: null,
       helpfulPromptService: null,
       hopefulPromptService: null,
+      programOrgContext: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -595,6 +598,43 @@ class TestSuiteRunner {
     }
   }
 
+  async runProgramOrgContextTests() {
+    if (!this.options.runProgramOrgContext) {
+      this.log('Skipping program org context tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🗂️ Running Program Org Context Test Suite', 'section');
+
+    try {
+      const runner = new ProgramOrgContextTestRunner({
+        baseURL: this.options.baseURL
+      });
+      const success = await runner.runAllTests();
+
+      this.results.programOrgContext = {
+        success,
+        skipped: false,
+        details: 'End-to-end org-context routing: Helpful (14-day couples) vs Hopeful (7-day faith)',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Program org context tests completed successfully', 'success');
+      } else {
+        this.log('Program org context tests failed', 'error');
+      }
+
+      return this.results.programOrgContext;
+    } catch (error) {
+      this.log(`Program org context tests failed: ${error.message}`, 'error');
+      this.results.programOrgContext = { success: false, error: error.message };
+      return this.results.programOrgContext;
+    }
+  }
+
   async runHopefulPromptServiceTests() {
     if (!this.options.runHopefulPromptService) {
       this.log('Skipping HopefulPromptService unit tests', 'warn');
@@ -690,6 +730,7 @@ class TestSuiteRunner {
     this.log(`  User Org Code Tests: ${this.options.runUserOrgCode ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HelpfulPromptService Unit Tests: ${this.options.runHelpfulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HopefulPromptService Unit Tests: ${this.options.runHopefulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Program Org Context Tests: ${this.options.runProgramOrgContext ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
     // Check server health
@@ -841,6 +882,15 @@ class TestSuiteRunner {
     if (this.options.runHopefulPromptService) {
       await this.runHopefulPromptServiceTests();
       if (this.results.hopefulPromptService && !this.results.hopefulPromptService.success && !this.results.hopefulPromptService.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run program org context tests (end-to-end service routing check)
+    if (this.options.runProgramOrgContext) {
+      await this.runProgramOrgContextTests();
+      if (this.results.programOrgContext && !this.results.programOrgContext.success && !this.results.programOrgContext.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -1036,6 +1086,17 @@ class TestSuiteRunner {
       }
     }
 
+    // Program org context test results
+    if (this.results.programOrgContext) {
+      if (this.results.programOrgContext.skipped) {
+        this.log('🗂️ Program Org Context Tests: SKIPPED', 'warn');
+      } else if (this.results.programOrgContext.success) {
+        this.log(`🗂️ Program Org Context Tests: PASSED (${this.results.programOrgContext.passed}/${this.results.programOrgContext.total})`, 'success');
+      } else {
+        this.log(`🗂️ Program Org Context Tests: FAILED (${this.results.programOrgContext.failed}/${this.results.programOrgContext.total} failures)`, 'error');
+      }
+    }
+
     console.log('');
 
     // Overall result
@@ -1073,7 +1134,7 @@ class TestSuiteRunner {
                this.results.therapyTrigger?.success &&
                this.results.wwwAuthenticate?.success && this.results.subscription?.success &&
                this.results.userOrgCode?.success && this.results.helpfulPromptService?.success &&
-               this.results.hopefulPromptService?.success,
+               this.results.hopefulPromptService?.success && this.results.programOrgContext?.success,
       results: {
         security: this.results.security,
         load: this.results.load,
@@ -1090,7 +1151,8 @@ class TestSuiteRunner {
         subscription: this.results.subscription,
         userOrgCode: this.results.userOrgCode,
         helpfulPromptService: this.results.helpfulPromptService,
-        hopefulPromptService: this.results.hopefulPromptService
+        hopefulPromptService: this.results.hopefulPromptService,
+        programOrgContext: this.results.programOrgContext
       },
       summary: {
         totalTests: (this.results.security?.total || 0) +
@@ -1099,21 +1161,21 @@ class TestSuiteRunner {
                    (this.results.messages?.total || 0) + (this.results.therapyTrigger?.total || 0) +
                    (this.results.wwwAuthenticate?.total || 0) + (this.results.subscription?.total || 0) +
                    (this.results.userOrgCode?.total || 0) + (this.results.helpfulPromptService?.total || 0) +
-                   (this.results.hopefulPromptService?.total || 0),
+                   (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0),
         totalPassed: (this.results.security?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) + (this.results.userProfile?.passed || 0) +
                     (this.results.refreshTokenReset?.passed || 0) + (this.results.programs?.passed || 0) + (this.results.programSteps?.passed || 0) +
                     (this.results.messages?.passed || 0) + (this.results.therapyTrigger?.passed || 0) +
                     (this.results.wwwAuthenticate?.passed || 0) + (this.results.subscription?.passed || 0) +
                     (this.results.userOrgCode?.passed || 0) + (this.results.helpfulPromptService?.passed || 0) +
-                    (this.results.hopefulPromptService?.passed || 0),
+                    (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0),
         totalFailed: (this.results.security?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) + (this.results.userProfile?.failed || 0) +
                     (this.results.refreshTokenReset?.failed || 0) + (this.results.programs?.failed || 0) + (this.results.programSteps?.failed || 0) +
                     (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0) +
                     (this.results.wwwAuthenticate?.failed || 0) + (this.results.subscription?.failed || 0) +
                     (this.results.userOrgCode?.failed || 0) + (this.results.helpfulPromptService?.failed || 0) +
-                    (this.results.hopefulPromptService?.failed || 0)
+                    (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0)
       }
     };
   }
@@ -1141,6 +1203,7 @@ function parseArgs() {
     if (arg === '--no-user-org-code') options.runUserOrgCode = false;
     if (arg === '--no-helpful-prompt-service') options.runHelpfulPromptService = false;
     if (arg === '--no-hopeful-prompt-service') options.runHopefulPromptService = false;
+    if (arg === '--no-program-org-context') options.runProgramOrgContext = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];
     if (arg.startsWith('--timeout=')) options.timeout = parseInt(arg.split('=')[1]);
