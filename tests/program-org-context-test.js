@@ -126,7 +126,10 @@ class ProgramOrgContextTestRunner {
 
   /**
    * Poll until program steps appear or the timeout expires.
-   * Returns { found: boolean, count: number }.
+   * Returns { found: boolean, count: number, program?: object } — when found
+   * is true, `program` is the full program payload from GET /api/programs/:id
+   * so the caller can inspect `program_steps` and `therapy_response` without
+   * a second network round-trip.
    */
   async pollForSteps(programId, token) {
     if (MOCK_OPENAI) {
@@ -141,12 +144,92 @@ class ProgramOrgContextTestRunner {
           headers: { Authorization: `Bearer ${token}` },
           timeout: this.timeout
         });
-        const steps = res.data.program?.program_steps ?? [];
-        if (steps.length > 0) return { found: true, count: steps.length };
+        const program = res.data.program;
+        const steps = program?.program_steps ?? [];
+        if (steps.length > 0) {
+          return { found: true, count: steps.length, program };
+        }
       } catch { /* keep polling */ }
       await this.sleep(2000);
     }
     return { found: false, count: 0 };
+  }
+
+  /**
+   * Assert that the persisted program_steps match the expected prompt
+   * service's output shape. This is the only automated end-to-end check
+   * that proves the route picked the correct service.
+   *
+   * Note: GET /api/programs/:id deliberately strips the raw therapy_response
+   * column (see models/Program.js getProgramById). The program_steps table
+   * stores BOTH services' output in two shared columns:
+   *   - step.conversation_starter ← therapyResponse day.conversation_starter OR day.reflection
+   *   - step.science_behind_it    ← therapyResponse day.science_behind_it    OR day.bible_verse
+   * (see models/ProgramStep.js createProgramSteps)
+   *
+   * So the distinguishing signal exposed through HTTP is:
+   *   1. Step count: 14 for Helpful, 7 for Hopeful — unambiguous.
+   *   2. Content shape of step.science_behind_it:
+   *        Hopeful → Bible verse pattern (quoted text + scripture reference)
+   *        Helpful → couples / research / communication language
+   *
+   * Relies on BasePromptService._buildMockResponse being service-aware
+   * (TEST_MOCK_LLM=true path) — otherwise both services would produce the
+   * same Frankenstein shape and this helper would be a no-op.
+   */
+  assertOutputShape(scenarioLabel, program, expectedService) {
+    const steps = program?.program_steps ?? [];
+    const day1 = steps.find(s => s.day === 1) || steps[0];
+    const day1Support = day1?.science_behind_it || '';
+
+    if (expectedService === 'helpful') {
+      this.assert(
+        steps.length === 14,
+        `${scenarioLabel} - program_steps.length === 14 (helpful shape)`,
+        `got ${steps.length}`
+      );
+      this.assert(
+        steps.every(s => typeof s.conversation_starter === 'string' && s.conversation_starter.length > 0),
+        `${scenarioLabel} - every step has a non-empty conversation_starter`
+      );
+      this.assert(
+        steps.every(s => typeof s.science_behind_it === 'string' && s.science_behind_it.length > 0),
+        `${scenarioLabel} - every step has a non-empty science_behind_it`
+      );
+      // Content pattern: couples/communication/research language; no Bible verse citation.
+      const helpfulContentPattern = /research|couples|communication|partner|emotional connection/i;
+      const bibleVersePattern = /["'][^"']+["']\s+[—\-–]+\s+[\w\s]+\s+\d+:\d+/;
+      this.assert(
+        helpfulContentPattern.test(day1Support),
+        `${scenarioLabel} - day 1 support text reads like couples-research content (helpful shape)`,
+        `preview: ${String(day1Support).slice(0, 80)}...`
+      );
+      this.assert(
+        !bibleVersePattern.test(day1Support),
+        `${scenarioLabel} - day 1 support text does NOT contain a scripture citation (no Hopeful leakage)`
+      );
+    } else if (expectedService === 'hopeful') {
+      this.assert(
+        steps.length === 7,
+        `${scenarioLabel} - program_steps.length === 7 (hopeful shape)`,
+        `got ${steps.length}`
+      );
+      this.assert(
+        steps.every(s => typeof s.conversation_starter === 'string' && s.conversation_starter.length > 0),
+        `${scenarioLabel} - every step has non-empty main-content column (reflection stored as conversation_starter)`
+      );
+      this.assert(
+        steps.every(s => typeof s.science_behind_it === 'string' && s.science_behind_it.length > 0),
+        `${scenarioLabel} - every step has non-empty support column (bible_verse stored as science_behind_it)`
+      );
+      // Content pattern: Bible verse citation in the bible_verse column.
+      const bibleVersePattern = /["'][^"']+["']\s+[—\-–]+\s+[\w\s]+\s+\d+:\d+/;
+      this.assert(
+        bibleVersePattern.test(day1Support),
+        `${scenarioLabel} - day 1 support column contains a scripture citation (hopeful shape)`,
+        `preview: ${String(day1Support).slice(0, 80)}...`
+      );
+    }
   }
 
   // ─── Setup ────────────────────────────────────────────────────────────────
@@ -230,6 +313,13 @@ class ProgramOrgContextTestRunner {
         `${scenarioLabel} - steps generated async`,
         poll.found ? `count: ${poll.count}` : 'no steps within timeout'
       );
+
+      // Shape assertions — the only end-to-end check that actually proves
+      // the route picked the correct prompt service. Guarded by poll.found
+      // so we don't flood on setups that never produced steps.
+      if (poll.found && poll.program) {
+        this.assertOutputShape(scenarioLabel, poll.program, expectedService);
+      }
     }
 
     this.programRecords.push({
