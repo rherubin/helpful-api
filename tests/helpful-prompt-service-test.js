@@ -22,12 +22,29 @@ if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = 'sk-test-helpful-p
 
 const HelpfulPromptService = require('../services/HelpfulPromptService');
 
+// Token-safety tripwire: any test that forgets to install its local mock will
+// hit this guard instead of silently calling the real OpenAI API. The counter
+// on `global.fetch.__realCallAttempts` is checked at end-of-suite so that a
+// future regression surfaces as a hard failure rather than a surprise bill.
+function installFetchGuard() {
+  const guard = async () => {
+    guard.__realCallAttempts = (guard.__realCallAttempts || 0) + 1;
+    throw new Error('global.fetch called without test mock installed - would hit real OpenAI API');
+  };
+  guard.__realCallAttempts = 0;
+  guard.__isTokenSafetyGuard = true;
+  global.fetch = guard;
+  return guard;
+}
+const FETCH_GUARD = installFetchGuard();
+
 class HelpfulPromptServiceTestRunner {
   constructor() {
     this.testResults = { passed: 0, failed: 0, total: 0 };
     this.lastCapturedPrompt = null;
     this.lastCapturedBody = null;
     this.lastCapturedUrl = null;
+    this.capturedUrls = [];
   }
 
   log(message, type = 'info') {
@@ -83,10 +100,14 @@ class HelpfulPromptServiceTestRunner {
   }
 
   // Install a mock fetch that captures prompt text so we can assert on it.
+  // Callers MUST restore to the returned originalFetch in a `finally` so the
+  // token-safety guard is re-armed for the next test. Every captured URL is
+  // tracked so end-of-suite can verify all calls went through mocks.
   _installMockFetch(textContent) {
     const originalFetch = global.fetch;
     global.fetch = async (url, options) => {
       this.lastCapturedUrl = url;
+      this.capturedUrls.push(url);
       const body = options && options.body ? JSON.parse(options.body) : {};
       this.lastCapturedBody = body;
 
@@ -103,6 +124,11 @@ class HelpfulPromptServiceTestRunner {
   testInstantiation() {
     this.log('Testing HelpfulPromptService instantiation & method signatures', 'section');
     const service = new HelpfulPromptService();
+
+    // Force mockMode off so every callLLM() goes through _callOpenAI -> global.fetch
+    // and hits our local mock. This keeps the unit test independent of the
+    // TEST_MOCK_LLM env var (item 5 of "Token safety" in the plan).
+    service.mockMode = false;
 
     this.assert(!!service, 'Service instantiates');
     this.assert(typeof service.generateCouplesProgram === 'function', 'generateCouplesProgram exists');
@@ -286,6 +312,32 @@ class HelpfulPromptServiceTestRunner {
     console.log('='.repeat(60) + '\n');
   }
 
+  // Token-safety post-check: assert no test ever tripped the fail-closed
+  // guard (which would mean a mock was not installed), and that every
+  // captured URL was the OpenAI endpoint routed through a mock.
+  assertTokenSafety() {
+    this.log('Verifying token safety (no real OpenAI calls attempted)', 'section');
+
+    this.assert(
+      FETCH_GUARD.__realCallAttempts === 0,
+      'Fail-closed fetch guard never fired',
+      `realCallAttempts=${FETCH_GUARD.__realCallAttempts}`
+    );
+
+    const EXPECTED_URL = 'https://api.openai.com/v1/chat/completions';
+    const badUrls = this.capturedUrls.filter(u => u !== EXPECTED_URL);
+    this.assert(
+      this.capturedUrls.length > 0,
+      'At least one LLM call was captured through the mock',
+      `captured=${this.capturedUrls.length}`
+    );
+    this.assert(
+      badUrls.length === 0,
+      'Every captured fetch URL is the expected OpenAI endpoint',
+      badUrls.length ? `unexpected: ${badUrls.join(', ')}` : `all ${this.capturedUrls.length} calls routed via mock to ${EXPECTED_URL}`
+    );
+  }
+
   async run() {
     this.log('Running HelpfulPromptService tests (provider=openai)', 'info');
 
@@ -295,6 +347,8 @@ class HelpfulPromptServiceTestRunner {
     await this.testNextProgramIncludesPreviousStarters(service);
     await this.testCouplesTherapyResponseReturnsArray(service);
     await this.testInputValidationRejectsGenericNames(service);
+
+    this.assertTokenSafety();
 
     this.printSummary();
     return this.testResults.failed === 0;
