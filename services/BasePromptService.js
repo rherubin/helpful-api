@@ -70,7 +70,7 @@ class BasePromptService {
     const { maxTokens, temperature = 0.7, jsonMode = false } = options;
 
     if (this.mockMode) {
-      return this._buildMockResponse({ jsonMode });
+      return this._buildMockResponse({ jsonMode, systemPrompt, userPrompt });
     }
 
     return this._callOpenAI(systemPrompt, userPrompt, { maxTokens, temperature, jsonMode });
@@ -79,28 +79,41 @@ class BasePromptService {
   // Mocked LLM response used when TEST_MOCK_LLM=true. Keeps tests deterministic
   // and free (no real tokens spent) while still exercising the real server
   // code paths and validators.
-  _buildMockResponse({ jsonMode }) {
-    const mockProgram = {
-      program: {
-        title: '7-Day Mock Reflection Program',
-        overview: 'A mocked 7-day program used during automated testing so no real LLM tokens are spent.',
-        days: Array.from({ length: 7 }, (_, i) => {
-          const day = i + 1;
-          return {
-            day,
-            theme: `Day ${day} theme: communication and connection in the relationship`,
-            conversation_starter: `What does healthy partner communication and trust look like between you two on day ${day}? Share an example where you felt especially connected and understood together.`,
-            science_behind_it: `On day ${day}, research on couples communication shows that partners who actively listen and share feelings build deeper trust, stronger emotional connection, intimacy, and long-term relationship satisfaction. Reflect together on what you can share to support each other.`,
-            reflection: `Reflect today on the communication and emotional connection in your relationship. How did you feel supported by your partner on day ${day}? What could bring you closer together in heart and spirit?`,
-            bible_verse: `"Above all, love each other deeply, because love covers over a multitude of sins." — 1 Peter 4:8 (Day ${day} reflection)`
-          };
-        })
-      }
-    };
+  //
+  // The mock is service-aware: it sniffs the system + user prompt for faith
+  // cues and returns a 7-day faith-shaped program (reflection + bible_verse)
+  // for HopefulPromptService calls, and a 14-day couples-shaped program
+  // (conversation_starter + science_behind_it) for HelpfulPromptService
+  // calls. This lets downstream integration tests (e.g. program-org-context)
+  // verify that routing actually picks the correct service by inspecting
+  // the program shape.
+  _buildMockResponse({ jsonMode, systemPrompt, userPrompt }) {
+    const combined = `${systemPrompt || ''}\n${userPrompt || ''}`.toLowerCase();
 
-    const content = jsonMode
-      ? JSON.stringify(mockProgram)
-      : 'Take a moment to reflect on your relationship and partner. How can you listen, understand, and support each other more deeply today? Share one feeling you have been carrying, and invite your partner to do the same. Small moments of honest communication build lasting trust and connection.';
+    // Hopeful cues: faith-based / spiritual wellness appear in the system
+    // prompt for initial-program and single-user chime-in; the couples
+    // first-chime-in path uses systemPrompt=null but the user prompt pulls
+    // in org / church / scripture / bible / pastor language. Keep the
+    // regex intentionally broad so custom prompts that mention any of
+    // those still route to the faith-shaped mock.
+    const isHopeful = /faith-based|spiritual wellness|pastor|scripture|bible|church/.test(combined);
+
+    if (jsonMode) {
+      const content = isHopeful
+        ? JSON.stringify(this._buildHopefulMockProgram())
+        : JSON.stringify(this._buildHelpfulMockProgram());
+      return {
+        content,
+        finishReason: 'stop',
+        model: this.model,
+        id: 'mock-llm-response',
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+      };
+    }
+
+    const content = isHopeful
+      ? 'Take a quiet moment today to reflect on how scripture speaks to the part of your relationship that feels tender right now. What is one small step of faith you can take toward your partner this week, trusting God to shape the way you love one another?'
+      : 'What is one small moment from this week where you felt genuinely understood by your partner? Share it with them, and invite them to share one of their own. Small moments of honest communication build lasting trust and emotional connection over time.';
 
     return {
       content,
@@ -108,6 +121,44 @@ class BasePromptService {
       model: this.model,
       id: 'mock-llm-response',
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    };
+  }
+
+  // 7-day faith-based mock program (reflection + bible_verse only).
+  _buildHopefulMockProgram() {
+    return {
+      program: {
+        title: '7-Day Mock Reflection Program',
+        overview: 'A mocked 7-day faith-based reflection program used during automated testing so no real LLM tokens are spent.',
+        days: Array.from({ length: 7 }, (_, i) => {
+          const day = i + 1;
+          return {
+            day,
+            theme: `Day ${day} theme: scripture and spiritual reflection in faith and church community`,
+            reflection: `Reflect prayerfully on day ${day} about how God is drawing you closer to Him. How does your church community and scripture shape the way you love, forgive, and serve your partner this week?`,
+            bible_verse: `"Above all, love each other deeply, because love covers over a multitude of sins." — 1 Peter 4:8 (Day ${day} reflection)`
+          };
+        })
+      }
+    };
+  }
+
+  // 14-day couples-shaped mock program (conversation_starter + science_behind_it only).
+  _buildHelpfulMockProgram() {
+    return {
+      program: {
+        title: '14-Day Mock Couples Program',
+        overview: 'A mocked 14-day couples program used during automated testing so no real LLM tokens are spent.',
+        days: Array.from({ length: 14 }, (_, i) => {
+          const day = i + 1;
+          return {
+            day,
+            theme: `Day ${day} theme: communication and connection in the relationship`,
+            conversation_starter: `What does healthy partner communication and trust look like between you two on day ${day}? Share an example where you felt especially connected and understood together.`,
+            science_behind_it: `On day ${day}, research on couples communication shows that partners who actively listen and share feelings build deeper trust, stronger emotional connection, intimacy, and long-term relationship satisfaction. Reflect together on what you can share to support each other.`
+          };
+        })
+      }
     };
   }
 
