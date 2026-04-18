@@ -354,12 +354,19 @@ class TherapyTriggerTestRunner {
         }
       );
 
-      const systemMessages = messagesResponse.data.messages.filter(m => m.message_type === 'system');
-      
+      // The backend adds a first_message_welcome tip on the first user post
+      // of the first step of the first program; filter it out so the assertion
+      // only checks that no therapy response has been triggered yet.
+      const therapySystemMessages = messagesResponse.data.messages.filter(m => {
+        if (m.message_type !== 'system') return false;
+        const meta = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : (m.metadata || {});
+        return meta.type !== 'first_message_welcome';
+      });
+
       this.assert(
-        systemMessages.length === 0,
-        'No system message after only user 1 posts',
-        `System messages: ${systemMessages.length}`
+        therapySystemMessages.length === 0,
+        'No therapy response after only user 1 posts',
+        `Non-welcome system messages: ${therapySystemMessages.length}`
       );
     } catch (error) {
       this.assert(false, 'Check messages after user 1 post', `Error: ${error.response?.data?.error || error.message}`);
@@ -387,34 +394,37 @@ class TherapyTriggerTestRunner {
       return;
     }
 
-    // Wait for therapy response to be generated (async, takes ~2 seconds)
+    // Wait for the therapy response (chime_in_response_1) specifically - the
+    // step will also contain a first_message_welcome tip, so filtering by
+    // metadata.type avoids picking up the wrong system message.
     this.log('Waiting for therapy response to be generated...', 'info');
-    const systemMsgResult = await this.pollForSystemMessage(this.testData.stepId, this.testData.user1.token, 10000);
+    const therapyPoll = await this.pollForSystemMessageType(
+      this.testData.stepId, this.testData.user1.token, 'chime_in_response_1', 10000
+    );
 
-    if (systemMsgResult.found) {
+    if (therapyPoll.found && therapyPoll.messages.length > 0) {
+      const therapyMessage = therapyPoll.messages[0];
+      const metadata = typeof therapyMessage.metadata === 'string'
+        ? JSON.parse(therapyMessage.metadata)
+        : (therapyMessage.metadata || {});
+
       this.assert(
         true,
         'System message generated after both users post',
-        `Message type: ${systemMsgResult.message.message_type}`
+        `Message type: ${therapyMessage.message_type}`
       );
 
       this.assert(
-        systemMsgResult.message.content && systemMsgResult.message.content.length > 0,
+        !!therapyMessage.content && therapyMessage.content.length > 0,
         'System message has content (therapy response)',
-        `Content length: ${systemMsgResult.message.content?.length}`
+        `Content length: ${therapyMessage.content?.length}`
       );
 
       this.assert(
-        systemMsgResult.message.sender_id === null,
+        therapyMessage.sender_id === null,
         'System message has null sender_id',
-        `Sender ID: ${systemMsgResult.message.sender_id}`
+        `Sender ID: ${therapyMessage.sender_id}`
       );
-
-      const metadata = systemMsgResult.message.metadata
-        ? (typeof systemMsgResult.message.metadata === 'string'
-            ? JSON.parse(systemMsgResult.message.metadata)
-            : systemMsgResult.message.metadata)
-        : {};
 
       this.assert(
         metadata.type === 'chime_in_response_1',
@@ -427,13 +437,11 @@ class TherapyTriggerTestRunner {
         'System message metadata.triggered_by is both_users_posted',
         `Triggered by: ${metadata.triggered_by}`
       );
-    } else if (systemMsgResult.skipped) {
-      this.log('Skipped system message verification (TEST_MOCK_OPENAI=true)', 'warn');
     } else {
       this.assert(
         false,
         'System message generated after both users post',
-        'No system message found within timeout'
+        'No chime_in_response_1 system message found within timeout'
       );
     }
   }
@@ -511,12 +519,19 @@ class TherapyTriggerTestRunner {
         }
       );
 
-      const systemMessages = messagesResponse.data.messages.filter(m => m.message_type === 'system');
-      
+      // Ignore the first_message_welcome tip (added on every first-program
+      // first-step first message) and verify no therapy response was
+      // triggered for the single-user program.
+      const therapySystemMessages = messagesResponse.data.messages.filter(m => {
+        if (m.message_type !== 'system') return false;
+        const meta = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : (m.metadata || {});
+        return meta.type !== 'first_message_welcome';
+      });
+
       this.assert(
-        systemMessages.length === 0,
+        therapySystemMessages.length === 0,
         'No therapy response triggered for single-user program',
-        `System messages: ${systemMessages.length}`
+        `Non-welcome system messages: ${therapySystemMessages.length}`
       );
     } catch (error) {
       this.assert(false, 'Check messages for single-user program', `Error: ${error.response?.data?.error || error.message}`);
@@ -802,7 +817,7 @@ class TherapyTriggerTestRunner {
     );
     if (Array.isArray(responseSystemMessages) && responseSystemMessages.length > 0) {
       this.assert(
-        responseSystemMessages[0].includes('As soon as your partner replies'),
+        responseSystemMessages[0].includes('follow-up reflection'),
         'POST /messages response system_messages[0] has correct welcome content',
         `Content: ${responseSystemMessages[0].substring(0, 80)}...`
       );
@@ -843,7 +858,7 @@ class TherapyTriggerTestRunner {
 
     if (welcomeMessage) {
       this.assert(
-        welcomeMessage.content.includes('As soon as your partner replies'),
+        welcomeMessage.content.includes('follow-up reflection'),
         'Welcome message has correct content',
         `Content: ${welcomeMessage.content.substring(0, 80)}...`
       );
