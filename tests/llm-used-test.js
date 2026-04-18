@@ -2,7 +2,7 @@
  * llm_used Column Test
  *
  * Verifies that newly created programs have the llm_used column populated
- * with the model name from PromptService (e.g. "gpt-5.4", "claude-sonnet-4-6", or "gemini-3.1-pro-preview").
+ * with the model name from HopefulPromptService (e.g. "gpt-5.4", "claude-sonnet-4-6", or "gemini-3.1-pro-preview").
  *
  * Usage:
  *   node tests/llm-used-test.js [--keep-data]
@@ -14,7 +14,7 @@
 require('dotenv').config();
 const axios = require('axios');
 const { getPool } = require('../config/database');
-const PromptService = require('../services/PromptService');
+const PromptService = require('../services/HopefulPromptService');
 
 const API_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
 

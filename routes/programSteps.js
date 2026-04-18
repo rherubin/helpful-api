@@ -1,9 +1,15 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
 
-function createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService, authService, userModelForOrgCode = null) {
+function createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, hopefulPromptService, helpfulPromptService, authService, userModelForOrgCode = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
+
+  // Pick the right prompt service for a user. Hopeful when they have
+  // org_code / custom org fields; Helpful (couples EFT/Gottman) otherwise.
+  function pickPromptService(customPrompts) {
+    return customPrompts ? hopefulPromptService : helpfulPromptService;
+  }
 
   // Fetch org context and custom prompts for a user.
   // Priority: linked admin org code → user's custom org fields → null.
@@ -80,17 +86,18 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         }
 
         const customPrompts = await getCustomPrompts(currentUserId);
-        const hopefulPrompt = await chatGPTService.generateChimeInPrompt(
+        const service = pickPromptService(customPrompts);
+        const chimeInResponse = await service.generateChimeInPrompt(
           currentUserName,
           step.conversation_starter,
           currentUserMessages.map(msg => msg.content),
           customPrompts
         );
 
-        const hopefulMessages = Array.isArray(hopefulPrompt) ? hopefulPrompt : [hopefulPrompt];
+        const chimeInMessages = Array.isArray(chimeInResponse) ? chimeInResponse : [chimeInResponse];
 
-        for (const hopefulMessage of hopefulMessages) {
-          const content = (hopefulMessage || '')
+        for (const chimeInMessage of chimeInMessages) {
+          const content = (chimeInMessage || '')
             .replace(/^\[|\]$/g, '')
             .replace(/\\n/g, ' ')
             .replace(/\.\s*["']+\s*$/, '.')
@@ -176,7 +183,8 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
         // Generate therapy response (returns array of messages)
         const customPrompts = await getCustomPrompts(user1Id);
-        const therapyResponses = await chatGPTService.generateCouplesTherapyResponse(
+        const service = pickPromptService(customPrompts);
+        const therapyResponses = await service.generateCouplesTherapyResponse(
           user1Name,
           user2Name,
           user1MessageContents,

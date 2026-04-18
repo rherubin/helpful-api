@@ -1,4 +1,4 @@
-const PromptService = require('../services/PromptService');
+const PromptService = require('../services/HopefulPromptService');
 
 /**
  * Comprehensive security test suite for prompt injection protection

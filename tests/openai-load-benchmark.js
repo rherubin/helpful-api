@@ -1,5 +1,5 @@
 require('dotenv').config();
-const PromptService = require('../services/PromptService');
+const PromptService = require('../services/HopefulPromptService');
 
 const CONCURRENCY_LEVELS = [1, 2, 4];
 

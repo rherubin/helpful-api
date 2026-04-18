@@ -59,7 +59,7 @@ async function runTests() {
     console.log('Test 1: Health Check');
     const response = await axios.get(`${BASE_URL}/health`, { timeout: 5000 });
     assert.strictEqual(response.status, 200);
-    assert.ok(response.data.status === 'OK');
+    assert.strictEqual(String(response.data).trim(), 'OK');
     console.log('✅ PASS - Server is healthy\n');
     passedTests++;
   } catch (error) {

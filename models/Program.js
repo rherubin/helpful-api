@@ -297,13 +297,16 @@ class Program {
       if (!program) {
         throw new Error('Program not found');
       }
-      
+
       // Convert next_program_unlocked to boolean
       program.next_program_unlocked = this.convertToBoolean(program.next_program_unlocked);
-      
+
       // Return program without therapy_response
       return program;
     } catch (err) {
+      if (err.message === 'Program not found') {
+        throw err;
+      }
       throw new Error('Failed to fetch program');
     }
   }

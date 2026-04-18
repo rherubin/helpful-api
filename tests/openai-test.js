@@ -1,4 +1,4 @@
-const PromptService = require('../services/PromptService');
+const PromptService = require('../services/HopefulPromptService');
 
 /**
  * OpenAI Integration Test Suite
@@ -412,7 +412,7 @@ class OpenAITestRunner {
     } catch (error) {
       // If it fails, it should be due to API issues, not validation
       this.assert(
-        error.message.includes('Failed to generate couples therapy program'),
+        error.message.includes('Failed to generate reflection program'),
         'Method processes inputs and attempts API call',
         `Error: ${error.message}`
       );
@@ -429,7 +429,7 @@ class OpenAITestRunner {
 
     } catch (error) {
       this.assert(
-        error.message.includes('Failed to generate couples therapy program'),
+        error.message.includes('Failed to generate reflection program'),
         'Input validation works for empty inputs (wrapped in generic error)',
         `Error: ${error.message}`
       );

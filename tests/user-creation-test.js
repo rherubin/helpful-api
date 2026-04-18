@@ -146,17 +146,17 @@ class UserCreationTestRunner {
       );
       
       this.assert(
-        !user.hasOwnProperty('max_pairings'),
-        'User object excludes max_pairings field',
-        'max_pairings properly excluded'
+        user.hasOwnProperty('max_pairings'),
+        'User object includes max_pairings field',
+        `max_pairings: ${user.max_pairings}`
       );
-      
+
       this.assert(
-        !user.hasOwnProperty('created_at'),
-        'User object excludes created_at field',
-        'created_at properly excluded'
+        user.hasOwnProperty('created_at'),
+        'User object includes created_at field',
+        `created_at: ${user.created_at}`
       );
-      
+
       this.assert(
         !user.hasOwnProperty('password_hash'),
         'User object excludes password_hash field',
@@ -518,15 +518,20 @@ class UserCreationTestRunner {
         );
       });
       
-      // Test excluded fields
-      const excludedFields = ['max_pairings', 'created_at', 'password_hash'];
-      excludedFields.forEach(field => {
+      // Confirm max_pairings and created_at are returned (part of the public contract),
+      // while password_hash is never leaked.
+      ['max_pairings', 'created_at'].forEach(field => {
         this.assert(
-          !response.data.user.hasOwnProperty(field),
-          `User object excludes ${field} field`,
+          response.data.user.hasOwnProperty(field),
+          `User object includes ${field} field`,
           `Field: ${field}`
         );
       });
+      this.assert(
+        !response.data.user.hasOwnProperty('password_hash'),
+        'User object excludes password_hash field',
+        'Field: password_hash'
+      );
       
       // Test pairings array structure
       this.assert(

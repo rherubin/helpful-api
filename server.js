@@ -18,7 +18,8 @@ const OrgCode = require('./models/OrgCode');
 const AdminUser = require('./models/AdminUser');
 const AuthService = require('./services/AuthService');
 const PairingService = require('./services/PairingService');
-const PromptService = require('./services/PromptService');
+const HopefulPromptService = require('./services/HopefulPromptService');
+const HelpfulPromptService = require('./services/HelpfulPromptService');
 const { SubscriptionService } = require('./services/SubscriptionService');
 const AdminAuthService = require('./services/AdminAuthService');
 
@@ -123,7 +124,7 @@ async function setupDatabase() {
 setupDatabase();
 
 // Initialize models and services
-let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, authService, pairingService, chatGPTService, subscriptionService, adminAuthService;
+let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, authService, pairingService, hopefulPromptService, helpfulPromptService, subscriptionService, adminAuthService;
 
 async function initializeApp() {
   try {
@@ -166,7 +167,11 @@ async function initializeApp() {
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel, pairingModel);
     pairingService = new PairingService(userModel, pairingModel);
-    chatGPTService = new PromptService();
+    // Two concrete prompt services are instantiated. Routes select between
+    // them per-request based on whether the user has an org_code / custom org
+    // fields (Hopeful = faith-based, Helpful = secular couples EFT/Gottman).
+    hopefulPromptService = new HopefulPromptService();
+    helpfulPromptService = new HelpfulPromptService();
     adminAuthService = new AdminAuthService(adminUserModel, refreshTokenModel);
     subscriptionService = new SubscriptionService(
       iosSubscriptionModel,
@@ -178,9 +183,11 @@ async function initializeApp() {
     // Setup routes
     setupRoutes();
 
-    // Start background poller for programs flagged for therapy response regeneration
-    if (chatGPTService && chatGPTService.isConfigured()) {
-      startRegenerationPoller(programModel, programStepModel, chatGPTService, userModel, pairingModel, userModel);
+    // Start background poller for programs flagged for therapy response regeneration.
+    // The poller itself picks Hopeful vs Helpful per-user based on org_code presence.
+    if ((hopefulPromptService && hopefulPromptService.isConfigured()) ||
+        (helpfulPromptService && helpfulPromptService.isConfigured())) {
+      startRegenerationPoller(programModel, programStepModel, hopefulPromptService, helpfulPromptService, userModel, pairingModel, userModel);
     }
     
     console.log('Application initialized successfully.');
@@ -212,13 +219,13 @@ function setupRoutes() {
   }
 
   // Setup program routes
-  if (programModel && chatGPTService && authService) {
-    app.use('/api/programs', createProgramRoutes(programModel, chatGPTService, programStepModel, userModel, pairingModel, authService, userModel));
+  if (programModel && hopefulPromptService && helpfulPromptService && authService) {
+    app.use('/api/programs', createProgramRoutes(programModel, hopefulPromptService, helpfulPromptService, programStepModel, userModel, pairingModel, authService, userModel));
   }
 
   // Setup conversation routes
-  if (programStepModel && messageModel && programModel && pairingModel && userModel && chatGPTService && authService) {
-    app.use('/api', createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, chatGPTService, authService, userModel));
+  if (programStepModel && messageModel && programModel && pairingModel && userModel && hopefulPromptService && helpfulPromptService && authService) {
+    app.use('/api', createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, hopefulPromptService, helpfulPromptService, authService, userModel));
   }
 
   // Setup subscription routes

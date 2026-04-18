@@ -35,7 +35,11 @@ const MOCK_OPENAI = process.env.TEST_MOCK_OPENAI === 'true';
 class ProgramOrgContextTestRunner {
   constructor(options = {}) {
     this.baseURL = options.baseURL || BASE_URL;
-    this.pollTimeout = MOCK_OPENAI ? 0 : (options.pollTimeout || 60000);
+    this.pollTimeout = MOCK_OPENAI
+      ? 0
+      : (options.pollTimeout
+         || (process.env.TEST_POLL_TIMEOUT_MS && parseInt(process.env.TEST_POLL_TIMEOUT_MS, 10))
+         || 60000);
     this.timeout = 15000;
     this.keepData = process.argv.includes('--keep-data');
     this.testResults = { passed: 0, failed: 0, total: 0 };
@@ -46,6 +50,9 @@ class ProgramOrgContextTestRunner {
 
     // All users created across scenarios — used for cleanup
     this.createdUsers = [];
+
+    // Per-scenario program records: { scenario, userId, programId, expectedService }
+    this.programRecords = [];
   }
 
   // ─── Utilities ────────────────────────────────────────────────────────────
@@ -80,10 +87,15 @@ class ProgramOrgContextTestRunner {
     const user = { id: res.data.user.id, token: res.data.access_token };
     this.createdUsers.push(user);
 
-    // Give every user a user_name so program generation requirements are met.
-    // Must not match the generic placeholder patterns in PromptService.validateUserNames.
+    // Give every user a user_name AND partner_name so program generation
+    // requirements are met for both services:
+    //   - HopefulPromptService (with org_code) uses only user_name
+    //   - HelpfulPromptService (no org_code) requires partner_name for couples flow
+    // Neither name may match the generic placeholder patterns in
+    // BasePromptService.validateUserNames.
     await axios.put(`${this.baseURL}/api/users/${user.id}`, {
-      user_name: 'Jordan'
+      user_name: 'Jordan',
+      partner_name: 'Alex'
     }, {
       headers: { Authorization: `Bearer ${user.token}` },
       timeout: this.timeout
@@ -177,10 +189,19 @@ class ProgramOrgContextTestRunner {
 
   /**
    * Run the common program-creation + step-polling assertions for a scenario.
-   * Returns the programId so callers can run additional assertions.
+   * Records the program in this.programRecords for the end-of-run summary.
+   *
+   * @param {string} scenarioLabel - Short label (e.g. "Scenario 1 (no org)")
+   * @param {object} user - { id, token }
+   * @param {string} userInput - user_input sent to POST /api/programs
+   * @param {'hopeful'|'helpful'} expectedService - which prompt service the
+   *   route is expected to pick for this scenario (hopeful = org_code/custom
+   *   fields present; helpful = neither present)
    */
-  async runProgramCreationAssertions(scenarioLabel, user, userInput) {
+  async runProgramCreationAssertions(scenarioLabel, user, userInput, expectedService) {
     let programId = null;
+    let stepCount = 0;
+    let stepsFound = false;
 
     try {
       programId = await this.createProgram(user, userInput);
@@ -188,18 +209,37 @@ class ProgramOrgContextTestRunner {
     } catch (error) {
       this.assert(false, `${scenarioLabel} - program created (201)`,
         `Error: ${error.response?.data?.error || error.message}`);
+      this.programRecords.push({
+        scenario: scenarioLabel,
+        userId: user.id,
+        programId: null,
+        expectedService,
+        stepCount: 0,
+        status: 'create-failed'
+      });
       return null;
     }
 
     // Step generation (skipped when MOCK_OPENAI=true)
     const poll = await this.pollForSteps(programId, user.token);
     if (!poll.skipped) {
+      stepsFound = poll.found;
+      stepCount = poll.count || 0;
       this.assert(
         poll.found,
         `${scenarioLabel} - steps generated async`,
         poll.found ? `count: ${poll.count}` : 'no steps within timeout'
       );
     }
+
+    this.programRecords.push({
+      scenario: scenarioLabel,
+      userId: user.id,
+      programId,
+      expectedService,
+      stepCount,
+      status: poll.skipped ? 'step-poll-skipped' : (stepsFound ? 'ok' : 'no-steps')
+    });
 
     return programId;
   }
@@ -220,7 +260,8 @@ class ProgramOrgContextTestRunner {
     await this.runProgramCreationAssertions(
       'Scenario 1 (no org)',
       user,
-      'I want to deepen my prayer life and serve others better.'
+      'We want to improve how we communicate during conflict and reconnect emotionally.',
+      'helpful'
     );
   }
 
@@ -252,7 +293,8 @@ class ProgramOrgContextTestRunner {
     await this.runProgramCreationAssertions(
       'Scenario 2 (admin org)',
       user,
-      'I want to grow in my faith through the teachings of my church community.'
+      'I want to grow in my faith through the teachings of my church community.',
+      'hopeful'
     );
 
     // Verify org_code_id is set (confirming admin org path was active)
@@ -315,7 +357,8 @@ class ProgramOrgContextTestRunner {
     await this.runProgramCreationAssertions(
       'Scenario 3 (custom org, all fields)',
       user,
-      'I want to connect more deeply with my church family and grow spiritually.'
+      'I want to connect more deeply with my church family and grow spiritually.',
+      'hopeful'
     );
   }
 
@@ -342,7 +385,8 @@ class ProgramOrgContextTestRunner {
     await this.runProgramCreationAssertions(
       'Scenario 4 (custom org, partial)',
       user,
-      'I want to serve my congregation and deepen my relationship with God.'
+      'I want to serve my congregation and deepen my relationship with God.',
+      'hopeful'
     );
   }
 
@@ -401,7 +445,8 @@ class ProgramOrgContextTestRunner {
     await this.runProgramCreationAssertions(
       'Scenario 5 (org detached)',
       user,
-      'I want to rediscover my purpose and strengthen my faith journey.'
+      'We want to rebuild our connection after a rough patch and learn to listen better.',
+      'helpful'
     );
   }
 
@@ -465,7 +510,8 @@ class ProgramOrgContextTestRunner {
     await this.runProgramCreationAssertions(
       'Scenario 6 (custom → admin)',
       user,
-      'I want to grow in my faith within my new church home.'
+      'I want to grow in my faith within my new church home.',
+      'hopeful'
     );
   }
 
@@ -529,7 +575,8 @@ class ProgramOrgContextTestRunner {
     await this.runProgramCreationAssertions(
       'Scenario 7 (admin → custom)',
       user,
-      'I want to explore my faith in a new community and grow in wisdom.'
+      'I want to explore my faith in a new community and grow in wisdom.',
+      'hopeful'
     );
   }
 
@@ -556,10 +603,30 @@ class ProgramOrgContextTestRunner {
   }
 
   printKeepDataInfo() {
+    this.log('─── Program records (scenario → programId → expected service) ──────', 'data');
+    if (this.programRecords.length === 0) {
+      this.log('(no program records captured)', 'data');
+    } else {
+      const pad = (s, n) => String(s).padEnd(n);
+      this.log(
+        `${pad('EXPECTED SVC', 9)}  ${pad('STATUS', 17)}  ${pad('STEPS', 5)}  ${pad('PROGRAM_ID', 36)}  SCENARIO`,
+        'data'
+      );
+      for (const rec of this.programRecords) {
+        this.log(
+          `${pad(rec.expectedService, 9)}  ${pad(rec.status, 17)}  ${pad(rec.stepCount, 5)}  ${pad(rec.programId || '-', 36)}  ${rec.scenario}`,
+          'data'
+        );
+      }
+    }
     this.log('─── Keep-data SQL queries ───────────────────────────────────────────', 'data');
     this.log("SELECT id, email, org_code_id, org_name, org_city, org_state FROM users WHERE email LIKE 'progorg_%@example.com';", 'data');
     this.log("SELECT id, org_code, organization, city, state FROM org_codes WHERE org_code LIKE 'TESTORGCTX%';", 'data');
-    this.log("SELECT p.id, p.user_id, p.user_input, COUNT(ps.id) AS step_count FROM programs p LEFT JOIN program_steps ps ON ps.program_id = p.id WHERE p.user_id IN (SELECT id FROM users WHERE email LIKE 'progorg_%@example.com') GROUP BY p.id;", 'data');
+    this.log("SELECT p.id, p.user_id, p.user_input, p.llm_used, LENGTH(p.therapy_response) AS therapy_len, COUNT(ps.id) AS step_count FROM programs p LEFT JOIN program_steps ps ON ps.program_id = p.id WHERE p.user_id IN (SELECT id FROM users WHERE email LIKE 'progorg_%@example.com') GROUP BY p.id ORDER BY p.created_at;", 'data');
+    this.log("-- Inspect Hopeful (faith-based 7-day) output — expect reflection + bible_verse per day", 'data');
+    this.log("SELECT p.id, SUBSTRING(p.therapy_response, 1, 600) AS preview FROM programs p WHERE p.id IN (" + this.programRecords.filter(r => r.expectedService === 'hopeful' && r.programId).map(r => `'${r.programId}'`).join(', ') + ");", 'data');
+    this.log("-- Inspect Helpful (secular 14-day couples) output — expect conversation_starter + science_behind_it per day", 'data');
+    this.log("SELECT p.id, SUBSTRING(p.therapy_response, 1, 600) AS preview FROM programs p WHERE p.id IN (" + this.programRecords.filter(r => r.expectedService === 'helpful' && r.programId).map(r => `'${r.programId}'`).join(', ') + ");", 'data');
     this.log('────────────────────────────────────────────────────────────────────', 'data');
   }
 
@@ -567,6 +634,19 @@ class ProgramOrgContextTestRunner {
     console.log('\n' + '='.repeat(60));
     console.log('📊 PROGRAM ORG CONTEXT TEST RESULTS');
     console.log('='.repeat(60));
+    if (this.programRecords.length > 0) {
+      console.log('\nProgram records (scenario → expected service → program_id):');
+      for (const rec of this.programRecords) {
+        console.log(
+          `  [${rec.expectedService.toUpperCase().padEnd(7)}] ` +
+          `${rec.status.padEnd(17)} ` +
+          `steps=${String(rec.stepCount).padEnd(2)} ` +
+          `program_id=${rec.programId || '(none)'}  ` +
+          `${rec.scenario}`
+        );
+      }
+      console.log('');
+    }
     console.log(`Total Tests:  ${this.testResults.total}`);
     console.log(`Passed:       ${this.testResults.passed}`);
     console.log(`Failed:       ${this.testResults.failed}`);

@@ -218,22 +218,22 @@ class AuthService {
     try {
       // Verify refresh token
       const decoded = await this.verifyRefreshToken(refreshToken);
-      
-      // Check if refresh token exists in database
-      await this.refreshTokenModel.getRefreshToken(refreshToken);
-      
+
+      // Check if refresh token exists in database (scoped to this user for O(1) lookup)
+      await this.refreshTokenModel.getRefreshToken(refreshToken, decoded.id);
+
       // Get user data
       const user = await this.userModel.getUserById(decoded.id);
-      
+
       // Generate new access token
       const newAccessToken = this.generateAccessToken(user);
-      
+
       // Generate new refresh token with extended expiration (refresh token rotation)
       const newRefreshToken = this.generateRefreshToken(user.id);
       const expiresAt = new Date(Date.now() + this.parseExpirationToSeconds(this.JWT_REFRESH_EXPIRES_IN) * 1000);
-      
-      // Update the refresh token in database
-      await this.refreshTokenModel.updateRefreshToken(refreshToken, newRefreshToken, expiresAt);
+
+      // Update the refresh token in database (scoped to this user)
+      await this.refreshTokenModel.updateRefreshToken(refreshToken, newRefreshToken, expiresAt, user.id);
       
       return {
         message: 'Token refreshed successfully',
@@ -251,7 +251,17 @@ class AuthService {
   // Logout user
   async logout(refreshToken) {
     try {
-      await this.refreshTokenModel.deleteRefreshToken(refreshToken);
+      // Decode (without throwing) to scope the lookup to the owning user.
+      // If the JWT is invalid/expired we still attempt the legacy unscoped
+      // deletion path so corrupt tokens can be purged.
+      let userId = null;
+      try {
+        const decoded = await this.verifyRefreshToken(refreshToken);
+        userId = decoded.id;
+      } catch (_) {
+        userId = null;
+      }
+      await this.refreshTokenModel.deleteRefreshToken(refreshToken, userId);
       return {
         message: 'Logged out successfully'
       };

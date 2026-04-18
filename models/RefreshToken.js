@@ -1,8 +1,17 @@
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 
 class RefreshToken {
   constructor(db) {
     this.db = db; // MySQL pool
+  }
+
+  // JWT refresh tokens are well over bcrypt's 72-byte input limit, which causes
+  // bcrypt to silently compare only the common prefix and accept rotated tokens
+  // as valid. Pre-hashing with SHA-256 collapses the token to a fixed-size
+  // high-entropy digest that stays inside bcrypt's limits.
+  _condenseForBcrypt(token) {
+    return crypto.createHash('sha256').update(String(token)).digest('base64');
   }
 
   // Helper method to execute queries
@@ -83,16 +92,22 @@ class RefreshToken {
   // Hash a token for secure storage
   async hashToken(token) {
     try {
-      return await bcrypt.hash(token, 12); // Use cost factor of 12 for security
+      return await bcrypt.hash(this._condenseForBcrypt(token), 12);
     } catch (err) {
       throw new Error('Failed to hash refresh token');
     }
   }
 
-  // Verify a token against its hash
+  // Verify a token against its hash. Falls back to raw comparison to keep
+  // tokens minted before the SHA-256 pre-hash change working until users
+  // naturally rotate them.
   async verifyToken(token, hashedToken) {
     try {
-      return await bcrypt.compare(token, hashedToken);
+      const condensed = this._condenseForBcrypt(token);
+      if (await bcrypt.compare(condensed, hashedToken)) {
+        return true;
+      }
+      return await bcrypt.compare(String(token), hashedToken);
     } catch (err) {
       return false;
     }
@@ -119,15 +134,21 @@ class RefreshToken {
     }
   }
 
-  // Get refresh token by token value
-  async getRefreshToken(token) {
+  // Get refresh token by token value.
+  // When userId is provided, the scan is scoped to that user (O(1) in practice
+  // since each user has at most one refresh token). Without userId we fall back
+  // to the legacy full-table scan.
+  async getRefreshToken(token, userId = null) {
     try {
-      // Get all non-expired tokens and verify against the provided token
-      const rows = await this.query(
-        "SELECT * FROM refresh_tokens WHERE expires_at > NOW()"
-      );
+      const rows = userId
+        ? await this.query(
+            'SELECT * FROM refresh_tokens WHERE user_id = ? AND expires_at > NOW()',
+            [userId]
+          )
+        : await this.query(
+            'SELECT * FROM refresh_tokens WHERE expires_at > NOW()'
+          );
 
-      // Find the token that matches by comparing hashes
       for (const row of rows) {
         const isValid = await this.verifyToken(token, row.token);
         if (isValid) {
@@ -137,34 +158,34 @@ class RefreshToken {
 
       throw new Error('Refresh token not found or expired');
     } catch (err) {
-      // If it's our specific error message, preserve it
       if (err.message === 'Refresh token not found or expired') {
         throw err;
       }
-      // Otherwise, it's a database error
       throw new Error('Failed to fetch refresh token');
     }
   }
 
-  // Delete refresh token (logout)
-  async deleteRefreshToken(token) {
+  // Delete refresh token (logout). Accepts an optional userId to scope the scan.
+  async deleteRefreshToken(token, userId = null) {
     try {
-      // Get all non-expired tokens to find the one that matches
-      const rows = await this.query(
-        "SELECT id, token FROM refresh_tokens WHERE expires_at > NOW()"
-      );
+      const rows = userId
+        ? await this.query(
+            'SELECT id, token FROM refresh_tokens WHERE user_id = ? AND expires_at > NOW()',
+            [userId]
+          )
+        : await this.query(
+            'SELECT id, token FROM refresh_tokens WHERE expires_at > NOW()'
+          );
 
-      // Find the token that matches by comparing hashes
       for (const row of rows) {
         const isValid = await this.verifyToken(token, row.token);
         if (isValid) {
-          // Delete the matching token
           const result = await this.query('DELETE FROM refresh_tokens WHERE id = ?', [row.id]);
           return result.affectedRows > 0;
         }
       }
 
-      return false; // Token not found
+      return false;
     } catch (err) {
       throw new Error('Failed to delete refresh token');
     }
@@ -193,13 +214,17 @@ class RefreshToken {
     }
   }
 
-  // Update refresh token (for rotation)
-  async updateRefreshToken(oldToken, newToken, expiresAt) {
+  // Update refresh token (for rotation). Accepts an optional userId to scope the scan.
+  async updateRefreshToken(oldToken, newToken, expiresAt, userId = null) {
     try {
-      // Get all non-expired tokens to find the one that matches the old token
-      const rows = await this.query(
-        "SELECT id, token FROM refresh_tokens WHERE expires_at > NOW()"
-      );
+      const rows = userId
+        ? await this.query(
+            'SELECT id, token FROM refresh_tokens WHERE user_id = ? AND expires_at > NOW()',
+            [userId]
+          )
+        : await this.query(
+            'SELECT id, token FROM refresh_tokens WHERE expires_at > NOW()'
+          );
 
       // Find the token that matches the old token by comparing hashes
       for (const row of rows) {

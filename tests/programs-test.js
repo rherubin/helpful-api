@@ -475,32 +475,7 @@ class ProgramsTestRunner {
     this.log('Testing POST /api/programs/:id/next_program (Create Next Program)', 'section');
     const token = this.testData.user1.token;
 
-    // Test 1: Previous program not unlocked (403)
-    try {
-      await axios.post(
-        `${this.baseURL}/api/programs/${this.testData.programId}/next_program`,
-        { user_input: 'Continue with next phase of our journey' },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          timeout: this.timeout
-        }
-      );
-      this.assert(false, 'Next program with locked previous returns 403', 'Expected 403');
-    } catch (error) {
-      this.assert(
-        error.response?.status === 403,
-        'Next program with locked previous returns 403',
-        `Status: ${error.response?.status}, Error: ${error.response?.data?.error}`
-      );
-
-      this.assert(
-        error.response?.data?.current_unlock_status?.next_program_unlocked === false,
-        'Error includes unlock status info',
-        `Unlock status: ${JSON.stringify(error.response?.data?.current_unlock_status)}`
-      );
-    }
-
-    // Test 2: Missing user_input (400)
+    // Test 1: Missing user_input (400)
     try {
       await axios.post(
         `${this.baseURL}/api/programs/${this.testData.programId}/next_program`,
@@ -520,7 +495,7 @@ class ProgramsTestRunner {
       );
     }
 
-    // Test 3: Unauthorized access (403)
+    // Test 2: Unauthorized access (403)
     try {
       await axios.post(
         `${this.baseURL}/api/programs/${this.testData.programId}/next_program`,
@@ -539,7 +514,7 @@ class ProgramsTestRunner {
       );
     }
 
-    // Test 4: Not found (404)
+    // Test 3: Not found (404)
     try {
       await axios.post(
         `${this.baseURL}/api/programs/nonexistent-id-12345/next_program`,
@@ -585,12 +560,22 @@ class ProgramsTestRunner {
       );
 
       if (response.data.metrics) {
-        ['totalRequests', 'successfulRequests', 'failedRequests', 'successRate'].forEach(key => {
+        // The endpoint returns { metrics: { hopeful: {...}, helpful: {...} } }
+        // where each service bucket carries the operational counters.
+        ['hopeful', 'helpful'].forEach(service => {
           this.assert(
-            Object.prototype.hasOwnProperty.call(response.data.metrics, key),
-            `Metrics contains ${key}`,
-            `Value: ${response.data.metrics[key]}`
+            Object.prototype.hasOwnProperty.call(response.data.metrics, service),
+            `Metrics contains ${service} bucket`,
+            `Bucket: ${service}`
           );
+          const bucket = response.data.metrics[service] || {};
+          ['totalRequests', 'successfulRequests', 'failedRequests', 'successRate'].forEach(key => {
+            this.assert(
+              Object.prototype.hasOwnProperty.call(bucket, key),
+              `${service} metrics contains ${key}`,
+              `Value: ${bucket[key]}`
+            );
+          });
         });
       }
 

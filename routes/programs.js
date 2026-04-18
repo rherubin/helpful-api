@@ -1,12 +1,24 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
 
-function createProgramRoutes(programModel, chatGPTService, programStepModel = null, userModel = null, pairingModel = null, authService = null, userModelForOrgCode = null) {
+function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptService, programStepModel = null, userModel = null, pairingModel = null, authService = null, userModelForOrgCode = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
   const GENERATION_FOLLOWUP_ENABLED = process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED !== 'false';
   const GENERATION_FOLLOWUP_DELAY_MS = Number(process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS || 60000);
   const DEFAULT_STEPS_REQUIRED_FOR_UNLOCK = Number(process.env.DEFAULT_STEPS_REQUIRED_FOR_UNLOCK ?? 0);
+
+  // Pick the right prompt service for a user's generation request.
+  // Presence of customPrompts (org_code or custom org fields) selects Hopeful
+  // (faith-based); absence selects Helpful (secular couples EFT/Gottman).
+  function pickPromptService(customPrompts) {
+    return customPrompts ? hopefulPromptService : helpfulPromptService;
+  }
+
+  function anyServiceConfigured() {
+    return (hopefulPromptService && hopefulPromptService.isConfigured()) ||
+           (helpfulPromptService && helpfulPromptService.isConfigured());
+  }
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -148,16 +160,16 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         });
       }
 
+      // Load the previous program first so nonexistent IDs return 404 instead of 403.
+      const previousProgram = await programModel.getProgramById(previousProgramId);
+
       // Check if user has access to the previous program
       const hasAccess = await programModel.checkProgramAccess(userId, previousProgramId);
       if (!hasAccess) {
-        return res.status(403).json({ 
-          error: 'Not authorized to access this program' 
+        return res.status(403).json({
+          error: 'Not authorized to access this program'
         });
       }
-
-      // Get the previous program
-      const previousProgram = await programModel.getProgramById(previousProgramId);
 
       // Programs are now always unlocked by default - no unlock check needed
 
@@ -208,13 +220,19 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         console.log('Could not fetch conversation starters:', startersError.message);
       }
 
+      // Resolve which service this user will use so we can record the correct
+      // model name against the program row. We'll re-resolve at generation time
+      // too, but the model name can be committed synchronously here.
+      const customPromptsForModel = await getCustomPrompts(previousProgram.user_id);
+      const serviceForModel = pickPromptService(customPromptsForModel);
+
       // Create the new program
       const newProgram = await programModel.createProgram(previousProgram.user_id, {
         user_input,
         pairing_id: previousProgram.pairing_id,
         previous_program_id: previousProgramId,
         steps_required_for_unlock: steps_required_for_unlock ?? DEFAULT_STEPS_REQUIRED_FOR_UNLOCK,
-        llm_used: chatGPTService ? chatGPTService.model : null
+        llm_used: serviceForModel ? serviceForModel.model : null
       });
 
       // Return immediate response
@@ -223,17 +241,17 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         program: newProgram
       });
 
-      // Generate ChatGPT response asynchronously in the background
-      if (chatGPTService && chatGPTService.isConfigured()) {
-        // Don't await this - let it run in the background
+      // Generate LLM response asynchronously in the background
+      if (anyServiceConfigured()) {
         (async () => {
-          console.log('Generating next program ChatGPT response for program:', newProgram.id);
+          console.log('Generating next program LLM response for program:', newProgram.id);
           await runGenerationWithFollowUp({
             programId: newProgram.id,
             logPrefix: '[next_program]',
             generateResponse: async () => {
               const customPrompts = await getCustomPrompts(previousProgram.user_id);
-              return chatGPTService.generateNextCouplesProgram(
+              const service = pickPromptService(customPrompts);
+              return service.generateNextCouplesProgram(
                 userName,
                 partnerName,
                 previousConversationStarters,
@@ -244,7 +262,7 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
           });
         })();
       } else {
-        console.log('ChatGPT service not configured, skipping therapy response generation');
+        console.log('No prompt service configured, skipping therapy response generation');
       }
     } catch (error) {
       console.error('Error creating next program:', error.message);
@@ -261,16 +279,16 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
       const { program_id } = req.params;
       const userId = req.user.id;
 
+      // Load the program first so nonexistent IDs return 404 instead of 403.
+      const program = await programModel.getProgramById(program_id);
+
       // Check if user has access to this program
       const hasAccess = await programModel.checkProgramAccess(userId, program_id);
       if (!hasAccess) {
-        return res.status(403).json({ 
-          error: 'Not authorized to access this program' 
+        return res.status(403).json({
+          error: 'Not authorized to access this program'
         });
       }
-
-      // Get the program
-      const program = await programModel.getProgramById(program_id);
 
       // Check if program already has program steps
       if (programStepModel) {
@@ -284,11 +302,11 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         }
       }
 
-      // Check if ChatGPT service is configured
-      if (!chatGPTService || !chatGPTService.isConfigured()) {
-        return res.status(503).json({ 
-          error: 'ChatGPT service is not configured. Please set OPENAI_API_KEY environment variable.',
-          details: 'The OpenAI API key is required to generate therapy responses.'
+      // Check if at least one prompt service is configured
+      if (!anyServiceConfigured()) {
+        return res.status(503).json({
+          error: 'Prompt service is not configured. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY.',
+          details: 'An LLM API key is required to generate therapy responses.'
         });
       }
 
@@ -338,15 +356,16 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         status: 'processing'
       });
 
-      // Generate ChatGPT response asynchronously in the background
+      // Generate LLM response asynchronously in the background
       (async () => {
-        console.log('Manually generating ChatGPT response for program:', program_id);
+        console.log('Manually generating LLM response for program:', program_id);
         await runGenerationWithFollowUp({
           programId: program_id,
           logPrefix: '[manual_therapy_response]',
           generateResponse: async () => {
             const customPrompts = await getCustomPrompts(program.user_id);
-            return chatGPTService.generateCouplesProgram(userName, partnerName, program.user_input, customPrompts);
+            const service = pickPromptService(customPrompts);
+            return service.generateCouplesProgram(userName, partnerName, program.user_input, customPrompts);
           }
         });
       })();
@@ -411,12 +430,16 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         });
       }
 
+      // Resolve which service this user will use so llm_used reflects reality
+      const customPromptsForModel = await getCustomPrompts(userId);
+      const serviceForModel = pickPromptService(customPromptsForModel);
+
       // Create the program first
       const program = await programModel.createProgram(userId, {
         user_input,
         pairing_id,
         steps_required_for_unlock: steps_required_for_unlock ?? DEFAULT_STEPS_REQUIRED_FOR_UNLOCK,
-        llm_used: chatGPTService ? chatGPTService.model : null
+        llm_used: serviceForModel ? serviceForModel.model : null
       });
 
       // Return immediate response
@@ -425,25 +448,70 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
         program
       });
 
-      // Generate ChatGPT response asynchronously in the background
-      if (chatGPTService && chatGPTService.isConfigured()) {
-        // Don't await this - let it run in the background
+      // Generate LLM response asynchronously in the background
+      if (anyServiceConfigured()) {
         (async () => {
-          console.log('Generating ChatGPT response for program:', program.id);
+          console.log('Generating LLM response for program:', program.id);
           await runGenerationWithFollowUp({
             programId: program.id,
             logPrefix: '[create_program]',
             generateResponse: async () => {
               const customPrompts = await getCustomPrompts(userId);
-              return chatGPTService.generateCouplesProgram(userName, partnerName, user_input, customPrompts);
+              const service = pickPromptService(customPrompts);
+              return service.generateCouplesProgram(userName, partnerName, user_input, customPrompts);
             }
           });
         })();
       } else {
-        console.log('ChatGPT service not configured, skipping therapy response generation');
+        console.log('No prompt service configured, skipping therapy response generation');
       }
     } catch (error) {
       return res.status(500).json({ error: 'Failed to create program' });
+    }
+  });
+
+  // Get prompt-service metrics for both services (for monitoring).
+  // Declared before the /:id route so that "metrics" is not interpreted as a program id.
+  router.get('/metrics', authenticateToken, async (req, res) => {
+    try {
+      if (!hopefulPromptService && !helpfulPromptService) {
+        return res.status(503).json({
+          error: 'Prompt services not available',
+          metrics: null
+        });
+      }
+
+      const emptyMetrics = {
+        configured: false,
+        totalRequests: 0,
+        successfulRequests: 0,
+        failedRequests: 0,
+        rateLimitErrors: 0,
+        averageResponseTime: 0,
+        queueLength: 0,
+        activeRequests: 0,
+        successRate: '0%'
+      };
+
+      const hopefulMetrics = hopefulPromptService && hopefulPromptService.isConfigured()
+        ? { ...hopefulPromptService.getMetrics(), configured: true, model: hopefulPromptService.model }
+        : emptyMetrics;
+
+      const helpfulMetrics = helpfulPromptService && helpfulPromptService.isConfigured()
+        ? { ...helpfulPromptService.getMetrics(), configured: true, model: helpfulPromptService.model }
+        : emptyMetrics;
+
+      res.status(200).json({
+        message: 'Prompt service metrics retrieved successfully',
+        metrics: {
+          hopeful: hopefulMetrics,
+          helpful: helpfulMetrics
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error retrieving prompt service metrics:', error.message);
+      return res.status(500).json({ error: 'Failed to retrieve prompt service metrics' });
     }
   });
 
@@ -510,15 +578,11 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
   router.delete('/:id', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
-      
-      // Check if the user has access to this program
-      const hasAccess = await programModel.checkProgramAccess(req.user.id, id);
-      if (!hasAccess) {
-        return res.status(403).json({ error: 'Not authorized to delete this program' });
-      }
+
+      // Fetch the program first so nonexistent IDs return 404 instead of 403.
+      const program = await programModel.getProgramById(id);
 
       // Only the owner can delete a program
-      const program = await programModel.getProgramById(id);
       if (program.user_id !== req.user.id) {
         return res.status(403).json({ error: 'Only the program owner can delete it' });
       }
@@ -533,58 +597,20 @@ function createProgramRoutes(programModel, chatGPTService, programStepModel = nu
     }
   });
 
-  // Get OpenAI service metrics (for monitoring)
-  router.get('/metrics', authenticateToken, async (req, res) => {
-    try {
-      if (!chatGPTService) {
-        return res.status(503).json({ 
-          error: 'ChatGPT service not available',
-          metrics: null
-        });
-      }
-
-      if (!chatGPTService.isConfigured()) {
-        return res.status(200).json({
-          message: 'ChatGPT service not configured (OPENAI_API_KEY missing)',
-          metrics: {
-            configured: false,
-            totalRequests: 0,
-            successfulRequests: 0,
-            failedRequests: 0,
-            rateLimitErrors: 0,
-            averageResponseTime: 0,
-            queueLength: 0,
-            activeRequests: 0,
-            successRate: '0%'
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      const metrics = chatGPTService.getMetrics();
-      res.status(200).json({
-        message: 'OpenAI service metrics retrieved successfully',
-        metrics: {
-          ...metrics,
-          configured: true
-        },
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('Error retrieving OpenAI metrics:', error.message);
-      return res.status(500).json({ error: 'Failed to retrieve OpenAI metrics' });
-    }
-  });
-
   return router;
 }
 
 // Background poller that watches for programs with regenerate_therapy_response = TRUE
-// and re-runs generateInitialPrompt for each one, then clears the flag.
-function startRegenerationPoller(programModel, programStepModel, chatGPTService, userModel, pairingModel, userModelForOrgCode) {
+// and re-runs initial-program generation for each one, then clears the flag.
+// Picks Hopeful or Helpful per-user based on the user's org_code / custom org fields.
+function startRegenerationPoller(programModel, programStepModel, hopefulPromptService, helpfulPromptService, userModel, pairingModel, userModelForOrgCode) {
   const POLL_INTERVAL_MS = Number(process.env.REGENERATION_POLL_INTERVAL_MS || 30000);
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  function pickPromptService(customPrompts) {
+    return customPrompts ? hopefulPromptService : helpfulPromptService;
+  }
 
   async function getCustomPromptsForUser(userId) {
     if (!userModelForOrgCode) return null;
@@ -658,12 +684,28 @@ function startRegenerationPoller(programModel, programStepModel, chatGPTService,
         }
       }
 
-      // Resolve user name.
+      // Resolve user name (and partner name when available — required by
+      // HelpfulPromptService.generateInitialProgram for couples users).
       let userName = null;
+      let partnerName = null;
       if (userModel) {
         try {
           const user = await userModel.getUserById(program.user_id);
           userName = user.user_name || null;
+          partnerName = user.partner_name || null;
+
+          if (program.pairing_id && pairingModel && !partnerName) {
+            try {
+              const pairing = await pairingModel.getPairingById(program.pairing_id);
+              const partnerId = pairing.user1_id === program.user_id ? pairing.user2_id : pairing.user1_id;
+              if (partnerId) {
+                const partner = await userModel.getUserById(partnerId);
+                partnerName = partner.user_name || partnerName;
+              }
+            } catch (pairingError) {
+              console.log(`[regen_poller] Could not fetch partner name from pairing for program ${program.id}:`, pairingError.message);
+            }
+          }
         } catch (err) {
           console.error(`[regen_poller] Could not fetch user name for program ${program.id}:`, err.message);
         }
@@ -678,8 +720,22 @@ function startRegenerationPoller(programModel, programStepModel, chatGPTService,
       // Run generation (no follow-up for poller-triggered regenerations).
       try {
         const customPrompts = await getCustomPromptsForUser(program.user_id);
+        const service = pickPromptService(customPrompts);
+
+        // Helpful requires partnerName; Hopeful does not.
+        if (service === helpfulPromptService && !partnerName) {
+          console.error(`[regen_poller] Skipping program ${program.id}: partner_name required for couples generation but not set.`);
+          await programModel.updateGenerationError(program.id, 'Regeneration skipped: partner_name required for couples generation but not set.');
+          continue;
+        }
+
         const generationStart = Date.now();
-        const therapyResponse = await chatGPTService.generateInitialProgram({ userName, userInput: program.user_input, customPrompts });
+        const therapyResponse = await service.generateInitialProgram({
+          userName,
+          partnerName,
+          userInput: program.user_input,
+          customPrompts
+        });
         const secondsToLoad = parseFloat(((Date.now() - generationStart) / 1000).toFixed(4));
         const therapyResponseString = typeof therapyResponse === 'object'
           ? JSON.stringify(therapyResponse)
