@@ -13,6 +13,7 @@ const WWWAuthenticateTestRunner = require('./www-authenticate-test');
 const SubscriptionTestRunner = require('./subscription-test');
 const UserOrgCodeTestRunner = require('./user-org-code-test');
 const HelpfulPromptServiceTestRunner = require('./helpful-prompt-service-test');
+const HopefulPromptServiceTestRunner = require('./hopeful-prompt-service-test');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -38,6 +39,7 @@ class TestSuiteRunner {
       runSubscription: options.runSubscription !== false, // Default true
       runUserOrgCode: options.runUserOrgCode !== false, // Default true
       runHelpfulPromptService: options.runHelpfulPromptService !== false, // Default true
+      runHopefulPromptService: options.runHopefulPromptService !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
@@ -59,6 +61,7 @@ class TestSuiteRunner {
       subscription: null,
       userOrgCode: null,
       helpfulPromptService: null,
+      hopefulPromptService: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -592,6 +595,41 @@ class TestSuiteRunner {
     }
   }
 
+  async runHopefulPromptServiceTests() {
+    if (!this.options.runHopefulPromptService) {
+      this.log('Skipping HopefulPromptService unit tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🙏 Running HopefulPromptService Unit Test Suite', 'section');
+
+    try {
+      const runner = new HopefulPromptServiceTestRunner();
+      const success = await runner.run();
+
+      this.results.hopefulPromptService = {
+        success,
+        skipped: false,
+        details: 'Faith-based 7-day reflection prompt service - fully mocked fetch (no live OpenAI)',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('HopefulPromptService unit tests completed successfully', 'success');
+      } else {
+        this.log('HopefulPromptService unit tests failed', 'error');
+      }
+
+      return this.results.hopefulPromptService;
+    } catch (error) {
+      this.log(`HopefulPromptService unit tests failed: ${error.message}`, 'error');
+      this.results.hopefulPromptService = { success: false, error: error.message };
+      return this.results.hopefulPromptService;
+    }
+  }
+
   async runUserOrgCodeTests() {
     if (!this.options.runUserOrgCode) {
       this.log('Skipping user org code tests', 'warn');
@@ -651,6 +689,7 @@ class TestSuiteRunner {
     this.log(`  Subscription Tests: ${this.options.runSubscription ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  User Org Code Tests: ${this.options.runUserOrgCode ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HelpfulPromptService Unit Tests: ${this.options.runHelpfulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  HopefulPromptService Unit Tests: ${this.options.runHopefulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
     // Check server health
@@ -793,6 +832,15 @@ class TestSuiteRunner {
     if (this.options.runHelpfulPromptService) {
       await this.runHelpfulPromptServiceTests();
       if (this.results.helpfulPromptService && !this.results.helpfulPromptService.success && !this.results.helpfulPromptService.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run HopefulPromptService unit tests (fully mocked, no live OpenAI)
+    if (this.options.runHopefulPromptService) {
+      await this.runHopefulPromptServiceTests();
+      if (this.results.hopefulPromptService && !this.results.hopefulPromptService.success && !this.results.hopefulPromptService.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -977,6 +1025,17 @@ class TestSuiteRunner {
       }
     }
 
+    // HopefulPromptService unit test results
+    if (this.results.hopefulPromptService) {
+      if (this.results.hopefulPromptService.skipped) {
+        this.log('🙏 HopefulPromptService Unit Tests: SKIPPED', 'warn');
+      } else if (this.results.hopefulPromptService.success) {
+        this.log(`🙏 HopefulPromptService Unit Tests: PASSED (${this.results.hopefulPromptService.passed}/${this.results.hopefulPromptService.total})`, 'success');
+      } else {
+        this.log(`🙏 HopefulPromptService Unit Tests: FAILED (${this.results.hopefulPromptService.failed}/${this.results.hopefulPromptService.total} failures)`, 'error');
+      }
+    }
+
     console.log('');
 
     // Overall result
@@ -1013,7 +1072,8 @@ class TestSuiteRunner {
                this.results.programSteps?.success && this.results.messages?.success &&
                this.results.therapyTrigger?.success &&
                this.results.wwwAuthenticate?.success && this.results.subscription?.success &&
-               this.results.userOrgCode?.success && this.results.helpfulPromptService?.success,
+               this.results.userOrgCode?.success && this.results.helpfulPromptService?.success &&
+               this.results.hopefulPromptService?.success,
       results: {
         security: this.results.security,
         load: this.results.load,
@@ -1029,7 +1089,8 @@ class TestSuiteRunner {
         wwwAuthenticate: this.results.wwwAuthenticate,
         subscription: this.results.subscription,
         userOrgCode: this.results.userOrgCode,
-        helpfulPromptService: this.results.helpfulPromptService
+        helpfulPromptService: this.results.helpfulPromptService,
+        hopefulPromptService: this.results.hopefulPromptService
       },
       summary: {
         totalTests: (this.results.security?.total || 0) +
@@ -1037,19 +1098,22 @@ class TestSuiteRunner {
                    (this.results.refreshTokenReset?.total || 0) + (this.results.programs?.total || 0) + (this.results.programSteps?.total || 0) +
                    (this.results.messages?.total || 0) + (this.results.therapyTrigger?.total || 0) +
                    (this.results.wwwAuthenticate?.total || 0) + (this.results.subscription?.total || 0) +
-                   (this.results.userOrgCode?.total || 0) + (this.results.helpfulPromptService?.total || 0),
+                   (this.results.userOrgCode?.total || 0) + (this.results.helpfulPromptService?.total || 0) +
+                   (this.results.hopefulPromptService?.total || 0),
         totalPassed: (this.results.security?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) + (this.results.userProfile?.passed || 0) +
                     (this.results.refreshTokenReset?.passed || 0) + (this.results.programs?.passed || 0) + (this.results.programSteps?.passed || 0) +
                     (this.results.messages?.passed || 0) + (this.results.therapyTrigger?.passed || 0) +
                     (this.results.wwwAuthenticate?.passed || 0) + (this.results.subscription?.passed || 0) +
-                    (this.results.userOrgCode?.passed || 0) + (this.results.helpfulPromptService?.passed || 0),
+                    (this.results.userOrgCode?.passed || 0) + (this.results.helpfulPromptService?.passed || 0) +
+                    (this.results.hopefulPromptService?.passed || 0),
         totalFailed: (this.results.security?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) + (this.results.userProfile?.failed || 0) +
                     (this.results.refreshTokenReset?.failed || 0) + (this.results.programs?.failed || 0) + (this.results.programSteps?.failed || 0) +
                     (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0) +
                     (this.results.wwwAuthenticate?.failed || 0) + (this.results.subscription?.failed || 0) +
-                    (this.results.userOrgCode?.failed || 0) + (this.results.helpfulPromptService?.failed || 0)
+                    (this.results.userOrgCode?.failed || 0) + (this.results.helpfulPromptService?.failed || 0) +
+                    (this.results.hopefulPromptService?.failed || 0)
       }
     };
   }
@@ -1076,6 +1140,7 @@ function parseArgs() {
     if (arg === '--no-subscription') options.runSubscription = false;
     if (arg === '--no-user-org-code') options.runUserOrgCode = false;
     if (arg === '--no-helpful-prompt-service') options.runHelpfulPromptService = false;
+    if (arg === '--no-hopeful-prompt-service') options.runHopefulPromptService = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];
     if (arg.startsWith('--timeout=')) options.timeout = parseInt(arg.split('=')[1]);
