@@ -305,7 +305,7 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       // Check if at least one prompt service is configured
       if (!anyServiceConfigured()) {
         return res.status(503).json({
-          error: 'Prompt service is not configured. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY.',
+          error: 'Prompt service is not configured. Please set OPENAI_API_KEY.',
           details: 'An LLM API key is required to generate therapy responses.'
         });
       }

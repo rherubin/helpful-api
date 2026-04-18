@@ -103,8 +103,13 @@ async function createUser(label) {
 }
 
 async function setUserName(user, userName) {
+  // Always set partner_name too. Post-refactor, users without an org_code
+  // route to HelpfulPromptService (couples flow) which requires partner_name;
+  // users with an org_code route to HopefulPromptService which ignores it.
+  // Setting both makes the batch work for every routing case.
   await axios.put(`${BASE_URL}/api/users/${user.id}`, {
-    user_name: userName
+    user_name: userName,
+    partner_name: 'Alex'
   }, {
     headers: { Authorization: `Bearer ${user.token}` },
     timeout: REQUEST_TIMEOUT
@@ -289,14 +294,23 @@ async function runBatch() {
     ? Math.min(requestedConcurrency, RUNS.length)
     : Math.min(DEFAULT_CONCURRENCY, RUNS.length);
 
+  // Optional BATCH_COUNT env override: run only the first N scenarios instead
+  // of all 10. Useful for quick smoke/validation runs.
+  const requestedCount = Number(process.env.BATCH_COUNT);
+  const count = Number.isFinite(requestedCount) && requestedCount > 0
+    ? Math.min(requestedCount, RUNS.length)
+    : RUNS.length;
+  const selectedRuns = RUNS.slice(0, count);
+  const effectiveConcurrency = Math.min(concurrency, selectedRuns.length);
+
   console.log('='.repeat(70));
-  console.log('🧪 BATCH: generateInitialProgram — 10 runs, data kept');
+  console.log(`🧪 BATCH: generateInitialProgram — ${selectedRuns.length} runs, data kept`);
   console.log(`🔗 ${BASE_URL}`);
-  console.log(`⚡ Parallel workers: ${concurrency}`);
+  console.log(`⚡ Parallel workers: ${effectiveConcurrency}`);
   console.log(`🔁 Timeout follow-up: ${ENABLE_TIMEOUT_FOLLOWUP ? 'enabled' : 'disabled'} (${Math.round(FOLLOWUP_POLL_TIMEOUT_MS / 1000)}s windows)`);
   console.log('='.repeat(70));
 
-  const results = await runInParallelGroups(RUNS, concurrency);
+  const results = await runInParallelGroups(selectedRuns, effectiveConcurrency);
 
   // ─── Summary ──────────────────────────────────────────────────────────────
   const passed = results.filter(r => r.status === 'steps_generated').length;
@@ -305,14 +319,20 @@ async function runBatch() {
   console.log('\n' + '='.repeat(70));
   console.log('📊 RESULTS');
   console.log('='.repeat(70));
-  console.log(`Passed (steps generated): ${passed}/10`);
-  console.log(`Failed / no steps:        ${failed}/10`);
+  console.log(`Passed (steps generated): ${passed}/${selectedRuns.length}`);
+  console.log(`Failed / no steps:        ${failed}/${selectedRuns.length}`);
 
   console.log('\n📋 Program IDs (for DB inspection):');
   for (const r of results) {
     const icon = r.status === 'steps_generated' ? '✅' : r.status === 'generation_error' ? '❌' : '⚠️ ';
     const detail = r.status === 'generation_error' ? ` — ${r.detail}` : r.status === 'timeout' ? ' — timed out' : r.status === 'exception' ? ` — ${r.detail}` : ` — ${r.detail} steps`;
     console.log(`  ${icon} ${r.programId ?? 'N/A'} | ${r.label}${detail}`);
+  }
+
+  const failedIds = results.filter(r => r.programId && r.status !== 'steps_generated').map(r => r.programId);
+  if (failedIds.length > 0) {
+    console.log('\n❌ FAILED PROGRAM IDS (grep these in the server log for root cause):');
+    for (const id of failedIds) console.log(`    ${id}`);
   }
 
   const ids = results.filter(r => r.programId).map(r => `'${r.programId}'`).join(', ');

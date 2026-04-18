@@ -2,7 +2,7 @@
  * llm_used Column Test
  *
  * Verifies that newly created programs have the llm_used column populated
- * with the model name from HopefulPromptService (e.g. "gpt-5.4", "claude-sonnet-4-6", or "gemini-3.1-pro-preview").
+ * with the OpenAI model name from HopefulPromptService (e.g. "gpt-5.4").
  *
  * Usage:
  *   node tests/llm-used-test.js [--keep-data]
@@ -61,12 +61,12 @@ async function main() {
     `model = "${service.model}"`
   );
 
-  const expectedModels = ['gpt-5.4', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-3-flash-preview'];
-  const modelOverrideSet = process.env.OPENAI_MODEL || process.env.ANTHROPIC_MODEL || process.env.GEMINI_MODEL;
+  const expectedModels = ['gpt-5.4'];
+  const modelOverrideSet = process.env.OPENAI_MODEL;
   const isKnownModel = expectedModels.includes(service.model) || !!modelOverrideSet;
   assert(
     isKnownModel,
-    'PromptService.model is a recognised value (or overridden via OPENAI_MODEL / ANTHROPIC_MODEL / GEMINI_MODEL)',
+    'PromptService.model is a recognised value (or overridden via OPENAI_MODEL)',
     `model = "${service.model}"`
   );
 

@@ -18,8 +18,8 @@ class HelpfulPromptService extends BasePromptService {
   // ── Public API ──────────────────────────────────────────────────────────
 
   async generateCouplesTherapyResponse(user1Name, user2Name, user1Messages, user2FirstMessage, _customPrompts = null) {
-    if (!this.apiKey) {
-      throw new Error('LLM service is not configured - set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY');
+    if (!this.isConfigured()) {
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY');
     }
 
     return this.queueOpenAIRequest({
@@ -32,8 +32,8 @@ class HelpfulPromptService extends BasePromptService {
   }
 
   async generateChimeInPrompt(userName, conversationStarter, userMessages, _customPrompts = null) {
-    if (!this.apiKey) {
-      throw new Error('LLM service is not configured - set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY');
+    if (!this.isConfigured()) {
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY');
     }
 
     return this.queueOpenAIRequest({
@@ -45,16 +45,16 @@ class HelpfulPromptService extends BasePromptService {
   }
 
   async generateCouplesProgram(userName, partnerName, userInput, _customPrompts = null) {
-    if (!this.apiKey) {
-      throw new Error('LLM service is not configured - set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY');
+    if (!this.isConfigured()) {
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY');
     }
 
     return this.queueOpenAIRequest({ type: 'program', userName, partnerName, userInput });
   }
 
   async generateNextCouplesProgram(userName, partnerName, previousConversationStarters, userInput, _customPrompts = null) {
-    if (!this.apiKey) {
-      throw new Error('LLM service is not configured - set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY');
+    if (!this.isConfigured()) {
+      throw new Error('LLM service is not configured - set OPENAI_API_KEY');
     }
 
     return this.queueOpenAIRequest({

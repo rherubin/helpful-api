@@ -12,21 +12,18 @@
  * Run with: node tests/helpful-prompt-service-test.js
  *
  * All LLM calls are mocked via `global.fetch`, so this test does not require
- * a live OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY.
+ * a live OPENAI_API_KEY.
  */
 
-// Set dummy credentials BEFORE requiring the service, since BasePromptService
-// captures process.env.*_API_KEY in its constructor. These satisfy the key
-// length validation (20–200 chars, no whitespace) without hitting any API.
+// Set a dummy OPENAI_API_KEY BEFORE requiring the service, since BasePromptService
+// captures process.env.OPENAI_API_KEY in its constructor. This satisfies the key
+// length validation (20–200 chars, no whitespace) without hitting the API.
 if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = 'sk-test-helpful-prompt-service-mock-key-000';
-if (!process.env.ANTHROPIC_API_KEY) process.env.ANTHROPIC_API_KEY = 'sk-ant-test-helpful-prompt-service-mock-key-0';
-if (!process.env.GEMINI_API_KEY) process.env.GEMINI_API_KEY = 'AIza-test-helpful-prompt-service-mock-key-000';
 
 const HelpfulPromptService = require('../services/HelpfulPromptService');
 
 class HelpfulPromptServiceTestRunner {
   constructor() {
-    this.provider = (process.env.LLM_PROVIDER || 'openai').toLowerCase();
     this.testResults = { passed: 0, failed: 0, total: 0 };
     this.lastCapturedPrompt = null;
     this.lastCapturedBody = null;
@@ -68,36 +65,8 @@ class HelpfulPromptServiceTestRunner {
     };
   }
 
-  // Build a mock fetch response that matches the active provider's response shape.
+  // Build a mock OpenAI fetch response.
   _buildMockResponse(textContent, parsedBody = {}) {
-    if (this.provider === 'gemini') {
-      return {
-        ok: true,
-        async json() {
-          return {
-            modelVersion: parsedBody.modelVersion || 'gemini-3.1-pro-preview',
-            responseId: 'gemini-helpful-test',
-            candidates: [
-              { content: { parts: [{ text: textContent }] }, finishReason: 'STOP' }
-            ],
-            usageMetadata: { promptTokenCount: 400, candidatesTokenCount: 900, totalTokenCount: 1300 }
-          };
-        }
-      };
-    } else if (this.provider === 'claude') {
-      return {
-        ok: true,
-        async json() {
-          return {
-            model: parsedBody.model || 'claude-sonnet-4-6',
-            id: 'msg-helpful-test',
-            content: [{ type: 'text', text: textContent }],
-            stop_reason: 'end_turn',
-            usage: { input_tokens: 400, output_tokens: 900 }
-          };
-        }
-      };
-    }
     return {
       ok: true,
       async json() {
@@ -121,16 +90,8 @@ class HelpfulPromptServiceTestRunner {
       const body = options && options.body ? JSON.parse(options.body) : {};
       this.lastCapturedBody = body;
 
-      // Extract the user-prompt text regardless of provider.
-      if (this.provider === 'claude') {
-        this.lastCapturedPrompt = body.messages?.[0]?.content || '';
-      } else if (this.provider === 'gemini') {
-        const contents = body.contents || [];
-        this.lastCapturedPrompt = contents.map(c => (c.parts || []).map(p => p.text).join('')).join('\n');
-      } else {
-        const userMsg = (body.messages || []).find(m => m.role === 'user');
-        this.lastCapturedPrompt = userMsg?.content || '';
-      }
+      const userMsg = (body.messages || []).find(m => m.role === 'user');
+      this.lastCapturedPrompt = userMsg?.content || '';
 
       return this._buildMockResponse(textContent, body);
     };
@@ -326,7 +287,7 @@ class HelpfulPromptServiceTestRunner {
   }
 
   async run() {
-    this.log(`Running HelpfulPromptService tests (provider=${this.provider})`, 'info');
+    this.log('Running HelpfulPromptService tests (provider=openai)', 'info');
 
     const service = this.testInstantiation();
     await this.testInitialProgramIs14DayCouplesFormat(service);

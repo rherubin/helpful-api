@@ -1,6 +1,5 @@
 const SecurityTestRunner = require('./security-test');
 const LoadTestRunner = require('./load-test');
-const OpenAITestRunner = require('./openai-test');
 const AuthTestRunner = require('./auth-test');
 const UserCreationTestRunner = require('./user-creation-test');
 const PairingsEndpointTestRunner = require('./pairings-endpoint-test');
@@ -25,7 +24,6 @@ class TestSuiteRunner {
     this.options = {
       runSecurity: options.runSecurity !== false, // Default true
       runLoad: options.runLoad !== false, // Default true
-      runOpenAI: options.runOpenAI !== false, // Default true
       runAuth: options.runAuth !== false, // Default true
       runUserCreation: options.runUserCreation !== false, // Default true
       runPairingsEndpoint: options.runPairingsEndpoint !== false, // Default true
@@ -46,7 +44,6 @@ class TestSuiteRunner {
     this.results = {
       security: null,
       load: null,
-      openai: null,
       auth: null,
       userCreation: null,
       pairingsEndpoint: null,
@@ -159,35 +156,6 @@ class TestSuiteRunner {
       this.log(`Load tests failed: ${error.message}`, 'error');
       this.results.load = { success: false, error: error.message };
       return this.results.load;
-    }
-  }
-
-  // Run OpenAI integration tests
-  async runOpenAITests() {
-    if (!this.options.runOpenAI) {
-      this.log('Skipping OpenAI tests', 'warn');
-      return { skipped: true };
-    }
-
-    this.log('🤖 Running OpenAI Integration Test Suite', 'section');
-    
-    try {
-      const openaiRunner = new OpenAITestRunner({
-        timeout: this.options.timeout
-      });
-      
-      const success = await openaiRunner.runFullTestSuite();
-      
-      this.results.openai = {
-        success,
-        testResults: openaiRunner.testResults
-      };
-      
-      return this.results.openai;
-    } catch (error) {
-      this.log(`OpenAI tests failed: ${error.message}`, 'error');
-      this.results.openai = { success: false, error: error.message };
-      return this.results.openai;
     }
   }
 
@@ -632,7 +600,6 @@ class TestSuiteRunner {
     this.log(`  Timeout: ${this.options.timeout}ms`, 'info');
     this.log(`  Security Tests: ${this.options.runSecurity ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Load Tests: ${this.options.runLoad ? 'Enabled' : 'Disabled'}`, 'info');
-    this.log(`  OpenAI Tests: ${this.options.runOpenAI ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Authentication Tests: ${this.options.runAuth ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  User Creation Tests: ${this.options.runUserCreation ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Pairings Endpoint Tests: ${this.options.runPairingsEndpoint ? 'Enabled' : 'Disabled'}`, 'info');
@@ -670,15 +637,6 @@ class TestSuiteRunner {
     if (this.options.runLoad) {
       await this.runLoadTests();
       if (this.results.load && !this.results.load.success && !this.results.load.skipped) {
-        overallSuccess = false;
-      }
-      console.log('');
-    }
-
-    // Run OpenAI tests
-    if (this.options.runOpenAI) {
-      await this.runOpenAITests();
-      if (this.results.openai && !this.results.openai.success && !this.results.openai.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -825,18 +783,6 @@ class TestSuiteRunner {
         this.log('🚀 Load Tests: PASSED', 'success');
       } else {
         this.log('🚀 Load Tests: FAILED', 'error');
-      }
-    }
-
-    // OpenAI test results
-    if (this.results.openai) {
-      if (this.results.openai.skipped) {
-        this.log('🤖 OpenAI Tests: SKIPPED', 'warn');
-      } else if (this.results.openai.success) {
-        const testResults = this.results.openai.testResults;
-        this.log(`🤖 OpenAI Tests: PASSED (${testResults?.passed || 0}/${testResults?.total || 0})`, 'success');
-      } else {
-        this.log('🤖 OpenAI Tests: FAILED', 'error');
       }
     }
 
@@ -1000,7 +946,7 @@ class TestSuiteRunner {
     return {
       timestamp: new Date().toISOString(),
       duration: this.results.endTime - this.results.startTime,
-      success: this.results.security?.success && this.results.load?.success && this.results.openai?.success &&
+      success: this.results.security?.success && this.results.load?.success &&
                this.results.auth?.success && this.results.userCreation?.success &&
                this.results.pairingsEndpoint?.success && this.results.userProfile?.success &&
                this.results.refreshTokenReset?.success &&
@@ -1012,7 +958,6 @@ class TestSuiteRunner {
       results: {
         security: this.results.security,
         load: this.results.load,
-        openai: this.results.openai,
         auth: this.results.auth,
         userCreation: this.results.userCreation,
         pairingsEndpoint: this.results.pairingsEndpoint,
@@ -1027,19 +972,19 @@ class TestSuiteRunner {
         userOrgCode: this.results.userOrgCode
       },
       summary: {
-        totalTests: (this.results.security?.total || 0) + (this.results.openai?.testResults?.total || 0) +
+        totalTests: (this.results.security?.total || 0) +
                    (this.results.userCreation?.total || 0) + (this.results.pairingsEndpoint?.total || 0) + (this.results.userProfile?.total || 0) +
                    (this.results.refreshTokenReset?.total || 0) + (this.results.programs?.total || 0) + (this.results.programSteps?.total || 0) +
                    (this.results.messages?.total || 0) + (this.results.therapyTrigger?.total || 0) +
                    (this.results.wwwAuthenticate?.total || 0) + (this.results.subscription?.total || 0) +
                    (this.results.userOrgCode?.total || 0),
-        totalPassed: (this.results.security?.passed || 0) + (this.results.openai?.testResults?.passed || 0) +
+        totalPassed: (this.results.security?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) + (this.results.userProfile?.passed || 0) +
                     (this.results.refreshTokenReset?.passed || 0) + (this.results.programs?.passed || 0) + (this.results.programSteps?.passed || 0) +
                     (this.results.messages?.passed || 0) + (this.results.therapyTrigger?.passed || 0) +
                     (this.results.wwwAuthenticate?.passed || 0) + (this.results.subscription?.passed || 0) +
                     (this.results.userOrgCode?.passed || 0),
-        totalFailed: (this.results.security?.failed || 0) + (this.results.openai?.testResults?.failed || 0) +
+        totalFailed: (this.results.security?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) + (this.results.userProfile?.failed || 0) +
                     (this.results.refreshTokenReset?.failed || 0) + (this.results.programs?.failed || 0) + (this.results.programSteps?.failed || 0) +
                     (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0) +
@@ -1058,7 +1003,6 @@ function parseArgs() {
   args.forEach(arg => {
     if (arg === '--no-security') options.runSecurity = false;
     if (arg === '--no-load') options.runLoad = false;
-    if (arg === '--no-openai') options.runOpenAI = false;
     if (arg === '--no-auth') options.runAuth = false;
     if (arg === '--no-user-creation') options.runUserCreation = false;
     if (arg === '--no-pairings-endpoint') options.runPairingsEndpoint = false;

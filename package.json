@@ -9,7 +9,6 @@
     "test": "node tests/run-all-tests.js",
     "test:security": "node tests/security-test.js",
     "test:load": "node tests/load-test.js",
-    "test:openai": "node tests/openai-test.js",
     "test:mysql": "node tests/auth-test.js",
     "test:auth": "node tests/auth-test.js",
     "test:ci": "node tests/run-all-tests.js --skip-server-check",

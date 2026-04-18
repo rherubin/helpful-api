@@ -74,28 +74,34 @@ npm run test:load
 node tests/load-test.js
 ```
 
-### 🤖 OpenAI Integration Tests (`openai-test.js`)
-Tests OpenAI API key configuration and ChatGPT service functionality:
-- API key validation (format, length, environment setup)
-- ChatGPT service initialization and configuration
-- OpenAI API connectivity and response validation
-- Metrics functionality and queue management
-- Error handling for invalid inputs
-- 14-day therapy program structure validation
+### 🤖 OpenAI Integration Tests (`openai-test.js`) — standalone only
+Tests OpenAI API key configuration and ChatGPT service functionality. These
+tests are intentionally **not** part of `npm test` so CI runs do not burn real
+tokens. Run them manually when you want to sanity-check the OpenAI integration:
 
-**Run with:**
 ```bash
-npm run test:openai
-# or
 node tests/openai-test.js
 ```
 
+### 🏋️ OpenAI Load Benchmark (`openai-load-benchmark.js`) — standalone only
+Benchmarks real OpenAI latency and concurrency. Also intentionally not part of
+`npm test`; run manually when you explicitly want to spend tokens.
+
+```bash
+node tests/openai-load-benchmark.js
+```
+
 ### 🎯 Complete Test Suite (`run-all-tests.js`)
-Orchestrates all test categories with comprehensive reporting:
-- Runs security, API, load, and OpenAI tests in sequence
+Orchestrates all test categories (minus the two token-spending suites above)
+with comprehensive reporting:
+- Runs security, auth, load, programs, and integration tests in sequence
 - Generates detailed reports
 - Provides CI/CD integration
 - Configurable test execution
+
+> **Tip:** Start the server with `TEST_MOCK_LLM=true npm start` before running
+> `npm test`. This makes the server return deterministic mock LLM responses so
+> the test suite never spends real tokens.
 
 **Run with:**
 ```bash
@@ -114,9 +120,8 @@ The following npm scripts are available for different testing scenarios:
 {
   "scripts": {
     "test": "node tests/run-all-tests.js",
-    "test:security": "node tests/security-test.js", 
+    "test:security": "node tests/security-test.js",
     "test:load": "node tests/load-test.js",
-    "test:openai": "node tests/openai-test.js",
     "test:ci": "node tests/run-all-tests.js --skip-server-check",
     "test:quick": "node tests/run-all-tests.js --no-load"
   }
@@ -133,9 +138,7 @@ npm run test -- --skip-server-check
 
 # Skip specific test categories
 npm run test -- --no-security  # Skip security tests
-npm run test -- --no-api       # Skip API tests  
 npm run test -- --no-load      # Skip load tests
-npm run test -- --no-openai    # Skip OpenAI tests
 
 # Custom server URL and timeout
 npm run test -- --url=http://localhost:3000 --timeout=60000
@@ -412,13 +415,13 @@ npm run test -- --timeout=60000
 export JWT_SECRET=your-secret-key
 ```
 
-**OpenAI integration tests failing:**
+**OpenAI-backed tests taking too long or costing money:**
 ```bash
-# Set OpenAI API key for full integration tests
-export OPENAI_API_KEY=your-openai-key
+# Start the server with mocked LLM responses so no real tokens are spent
+TEST_MOCK_LLM=true npm start
 
-# Or skip load tests that use OpenAI heavily
-npm run test:quick
+# Then run the test suite as usual
+npm test
 ```
 
 ## Maintenance

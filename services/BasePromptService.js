@@ -3,32 +3,25 @@
  *
  * Shared foundation for all concrete prompt services (HopefulPromptService,
  * HelpfulPromptService, etc.). Handles:
- *   - Multi-provider LLM configuration and routing (OpenAI, Claude, Gemini)
+ *   - OpenAI LLM configuration and request/response handling
  *   - Input sanitization and safety validation
  *   - Output validation (program JSON shape + dangerous-pattern checks)
  *   - Rate-limited / concurrency-bounded request queue with metrics
  *   - Common message post-processing helpers
+ *   - Deterministic mock responses when TEST_MOCK_LLM=true (so tests never
+ *     spend real tokens)
  *
  * Subclasses MUST override processOpenAIRequest(requestData) to dispatch
  * queued request types to their concrete generation methods.
  */
 class BasePromptService {
   constructor() {
-    this.provider = (process.env.LLM_PROVIDER || 'openai').toLowerCase();
+    this.provider = 'openai';
+    this.apiKey = process.env.OPENAI_API_KEY || null;
+    this.model = process.env.OPENAI_MODEL || 'gpt-5.4';
+    this.apiUrl = 'https://api.openai.com/v1/chat/completions';
 
-    if (this.provider === 'claude') {
-      this.apiKey = process.env.ANTHROPIC_API_KEY || null;
-      this.model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
-      this.apiUrl = 'https://api.anthropic.com/v1/messages';
-    } else if (this.provider === 'gemini') {
-      this.apiKey = process.env.GEMINI_API_KEY || null;
-      this.model = process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
-      this.apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`;
-    } else {
-      this.apiKey = process.env.OPENAI_API_KEY || null;
-      this.model = process.env.OPENAI_MODEL || 'gpt-5.4';
-      this.apiUrl = 'https://api.openai.com/v1/chat/completions';
-    }
+    this.mockMode = process.env.TEST_MOCK_LLM === 'true';
 
     this.validateApiKey();
 
@@ -37,7 +30,7 @@ class BasePromptService {
     this.lastRequestTime = 0;
     this.MIN_REQUEST_INTERVAL = 200;
     this.MAX_CONCURRENT = 3;
-    this.QUEUE_TIMEOUT = this.provider === 'claude' ? 120000 : 30000;
+    this.QUEUE_TIMEOUT = 30000;
     this.activeRequests = 0;
     this.metrics = {
       totalRequests: 0,
@@ -49,41 +42,73 @@ class BasePromptService {
   }
 
   validateApiKey() {
-    const keyName = this.provider === 'claude'
-      ? 'ANTHROPIC_API_KEY'
-      : this.provider === 'gemini'
-        ? 'GEMINI_API_KEY'
-        : 'OPENAI_API_KEY';
+    if (this.mockMode) {
+      console.log(`LLM configured: service=${this.constructor.name}, provider=openai, model=${this.model}, mock=TEST_MOCK_LLM`);
+      return;
+    }
 
     if (!this.apiKey) {
-      console.warn(`${keyName} not configured - LLM features will be disabled`);
+      console.warn('OPENAI_API_KEY not configured - LLM features will be disabled');
       return;
     }
 
     if (this.apiKey.length < 20 || this.apiKey.length > 200) {
-      console.error(`${keyName} appears to have invalid length - check your configuration`);
+      console.error('OPENAI_API_KEY appears to have invalid length - check your configuration');
       return;
     }
 
     if (this.apiKey.includes(' ') || this.apiKey.includes('\n') || this.apiKey.includes('\t')) {
-      console.error(`${keyName} contains whitespace - check for copy/paste errors`);
+      console.error('OPENAI_API_KEY contains whitespace - check for copy/paste errors');
       return;
     }
 
     const maskedKey = `***${this.apiKey.slice(-4)}`;
-    console.log(`LLM configured: service=${this.constructor.name}, provider=${this.provider}, model=${this.model}, key=${maskedKey}`);
+    console.log(`LLM configured: service=${this.constructor.name}, provider=openai, model=${this.model}, key=${maskedKey}`);
   }
 
   async callLLM(systemPrompt, userPrompt, options = {}) {
     const { maxTokens, temperature = 0.7, jsonMode = false } = options;
 
-    if (this.provider === 'claude') {
-      return this._callClaude(systemPrompt, userPrompt, { maxTokens, temperature });
+    if (this.mockMode) {
+      return this._buildMockResponse({ jsonMode });
     }
-    if (this.provider === 'gemini') {
-      return this._callGemini(systemPrompt, userPrompt, { maxTokens, temperature });
-    }
+
     return this._callOpenAI(systemPrompt, userPrompt, { maxTokens, temperature, jsonMode });
+  }
+
+  // Mocked LLM response used when TEST_MOCK_LLM=true. Keeps tests deterministic
+  // and free (no real tokens spent) while still exercising the real server
+  // code paths and validators.
+  _buildMockResponse({ jsonMode }) {
+    const mockProgram = {
+      program: {
+        title: '7-Day Mock Reflection Program',
+        overview: 'A mocked 7-day program used during automated testing so no real LLM tokens are spent.',
+        days: Array.from({ length: 7 }, (_, i) => {
+          const day = i + 1;
+          return {
+            day,
+            theme: `Day ${day} theme: communication and connection in the relationship`,
+            conversation_starter: `What does healthy partner communication and trust look like between you two on day ${day}? Share an example where you felt especially connected and understood together.`,
+            science_behind_it: `On day ${day}, research on couples communication shows that partners who actively listen and share feelings build deeper trust, stronger emotional connection, intimacy, and long-term relationship satisfaction. Reflect together on what you can share to support each other.`,
+            reflection: `Reflect today on the communication and emotional connection in your relationship. How did you feel supported by your partner on day ${day}? What could bring you closer together in heart and spirit?`,
+            bible_verse: `"Above all, love each other deeply, because love covers over a multitude of sins." — 1 Peter 4:8 (Day ${day} reflection)`
+          };
+        })
+      }
+    };
+
+    const content = jsonMode
+      ? JSON.stringify(mockProgram)
+      : 'Take a moment to reflect on your relationship and partner. How can you listen, understand, and support each other more deeply today? Share one feeling you have been carrying, and invite your partner to do the same. Small moments of honest communication build lasting trust and connection.';
+
+    return {
+      content,
+      finishReason: 'stop',
+      model: this.model,
+      id: 'mock-llm-response',
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    };
   }
 
   async _callOpenAI(systemPrompt, userPrompt, { maxTokens, temperature, jsonMode }) {
@@ -122,92 +147,6 @@ class BasePromptService {
       model: data.model || this.model,
       id: data.id || 'unknown',
       usage: data.usage || {}
-    };
-  }
-
-  async _callClaude(systemPrompt, userPrompt, { maxTokens, temperature }) {
-    const body = {
-      model: this.model,
-      max_tokens: maxTokens || 4096,
-      temperature,
-      messages: [{ role: 'user', content: userPrompt }]
-    };
-    if (systemPrompt) body.system = systemPrompt;
-
-    const res = await fetch(this.apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      const error = new Error(errorData.error?.message || 'Claude API request failed');
-      error.status = res.status;
-      throw error;
-    }
-
-    const data = await res.json();
-    let text = data.content?.[0]?.text || '';
-    text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-    return {
-      content: text,
-      finishReason: data.stop_reason || 'unknown',
-      model: data.model || this.model,
-      id: data.id || 'unknown',
-      usage: data.usage || {}
-    };
-  }
-
-  async _callGemini(systemPrompt, userPrompt, { maxTokens, temperature }) {
-    const contents = [];
-
-    if (systemPrompt) {
-      contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
-      contents.push({ role: 'model', parts: [{ text: 'Understood.' }] });
-    }
-    contents.push({ role: 'user', parts: [{ text: userPrompt }] });
-
-    const body = {
-      contents,
-      generationConfig: {
-        temperature,
-        ...(maxTokens ? { maxOutputTokens: maxTokens } : {})
-      }
-    };
-
-    const url = `${this.apiUrl}?key=${this.apiKey}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      const error = new Error(errorData.error?.message || 'Gemini API request failed');
-      error.status = res.status;
-      throw error;
-    }
-
-    const data = await res.json();
-    const candidate = data.candidates?.[0];
-    let text = candidate?.content?.parts?.map(p => p.text).join('') || '';
-    text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-    return {
-      content: text,
-      finishReason: candidate?.finishReason || 'unknown',
-      model: data.modelVersion || this.model,
-      id: data.responseId || 'unknown',
-      usage: {
-        prompt_tokens: data.usageMetadata?.promptTokenCount ?? null,
-        completion_tokens: data.usageMetadata?.candidatesTokenCount ?? null,
-        total_tokens: data.usageMetadata?.totalTokenCount ?? null
-      }
     };
   }
 
@@ -373,7 +312,7 @@ class BasePromptService {
   }
 
   isConfigured() {
-    return !!this.apiKey;
+    return this.mockMode || !!this.apiKey;
   }
 
   validateAIResponse(response, minLength = 100) {

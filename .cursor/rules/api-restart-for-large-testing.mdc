@@ -23,5 +23,9 @@ Default restart pattern:
 
 Example:
 - `kill $(lsof -ti:9000) 2>/dev/null`
-- `USER_UPDATE_RATE_LIMIT=100 npm start`
+- `TEST_MOCK_LLM=true USER_UPDATE_RATE_LIMIT=100 npm start`
 - `curl http://127.0.0.1:9000/health`
+
+`TEST_MOCK_LLM=true` is the default for routine test runs so the server returns
+deterministic mock LLM responses (no tokens spent). Omit it only when you are
+explicitly validating the live OpenAI integration.

@@ -14,8 +14,12 @@ Use this standard sequence for stress-style API validation to keep results compa
 
 Suggested baseline:
 - `kill $(lsof -ti:9000) 2>/dev/null`
-- `USER_UPDATE_RATE_LIMIT=100 PROGRAM_GENERATION_FOLLOWUP_DELAY_MS=5000 npm start`
+- `TEST_MOCK_LLM=true USER_UPDATE_RATE_LIMIT=100 PROGRAM_GENERATION_FOLLOWUP_DELAY_MS=5000 npm start`
 - `curl -s http://127.0.0.1:9000/health`
+
+`TEST_MOCK_LLM=true` makes the server return deterministic mock LLM responses so
+pressure runs do not spend real OpenAI tokens. Drop it only when you are
+explicitly validating live LLM latency/quality (e.g. `openai-load-benchmark`).
 
 ## 2) Run configuration
 - Use explicit concurrency for pressure runs.
