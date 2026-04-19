@@ -1,5 +1,26 @@
 const BasePromptService = require('./BasePromptService');
 
+// Appended to every Hopeful initial-program user message so the model returns JSON
+// matching validateProgramStructure ({ program: { title, overview, days[] } }).
+const HOPEFUL_INITIAL_PROGRAM_JSON_RESPONSE_FORMAT = `
+
+Respond only with a valid JSON object in exactly this structure:
+
+{
+  "program": {
+    "title": "7-Day Reflection Program",
+    "overview": "A single sentence describing the overall arc and goal of this program.",
+    "days": [
+      {
+        "day": 1,
+        "theme": "Theme name",
+        "reflection": "The reflection text",
+        "bible_verse": "The Bible verse"
+      }
+    ]
+  }
+}`;
+
 /**
  * HopefulPromptService
  *
@@ -117,13 +138,23 @@ class HopefulPromptService extends BasePromptService {
       const orgCityState = (customPrompts && customPrompts.organizationCity && customPrompts.organizationState)
         ? `${customPrompts.organizationCity}, ${customPrompts.organizationState}`
         : '';
-      const orgCustomInitialProgramPrompt = (customPrompts && customPrompts.initialProgramPrompt) || '';
+      const interpolatedOrgMiddle = (customPrompts && customPrompts.initialProgramPrompt)
+        ? customPrompts.initialProgramPrompt
+            .replace(/\{\{userName\}\}/g, sanitizedUserName)
+            .replace(/\{\{userInput\}\}/g, sanitizedUserInput)
+            .replace(/\{\{Church Name\}\}/g, orgName)
+            .replace(/\{\{City, State\}\}/g, orgCityState)
+            .replace(/\{\{User Input\}\}/g, sanitizedUserInput)
+            .trim()
+        : '';
+
+      const orgMiddleSection = interpolatedOrgMiddle ? `\n\n${interpolatedOrgMiddle}` : '';
 
       const orgContext = orgName
         ? `The user attends ${orgName}${orgCityState ? ` in ${orgCityState}` : ''}. Wherever possible, draw on the values, beliefs, and teachings of that community to make each reflection feel rooted in their specific faith home.`
         : 'Ground each reflection in broadly shared Christian values and scripture.';
 
-      const defaultPrompt = `You are a church pastor that is very skilled at creating personalized 7-day reflection programs rooted in Christian values, scripture, and the teachings of ${orgName}${orgCityState ? ` in ${orgCityState}` : ''}.
+      resolvedPrompt = `You are a church pastor that is very skilled at creating personalized 7-day reflection programs rooted in Christian values, scripture, and the teachings of ${orgName}${orgCityState ? ` in ${orgCityState}` : ''}
 
 ${orgContext}
 
@@ -142,35 +173,7 @@ Guidelines:
 - The Bible verse should directly reinforce the reflection, not just be tangentially related.
 - Write each reflection with no paragraph breaks.
 - Do not reference any specific pastor or church leader by name.
-- Together the 7 days should form a cohesive journey — not 7 independent prompts.
-
-${orgCustomInitialProgramPrompt || ''}
-
-Respond only with a valid JSON object in exactly this structure:
-
-{
-  "program": {
-    "title": "7-Day Reflection Program",
-    "overview": "A single sentence describing the overall arc and goal of this program.",
-    "days": [
-      {
-        "day": 1,
-        "theme": "Theme name",
-        "reflection": "The reflection text",
-        "bible_verse": "The Bible verse"
-      }
-    ]
-  }
-}`;
-
-      resolvedPrompt = (customPrompts && customPrompts.initialProgramPrompt)
-        ? customPrompts.initialProgramPrompt
-            .replace(/\{\{userName\}\}/g, sanitizedUserName)
-            .replace(/\{\{userInput\}\}/g, sanitizedUserInput)
-            .replace(/\{\{Church Name\}\}/g, orgName)
-            .replace(/\{\{City, State\}\}/g, orgCityState)
-            .replace(/\{\{User Input\}\}/g, sanitizedUserInput)
-        : defaultPrompt;
+- Together the 7 days should form a cohesive journey — not 7 independent prompts.${orgMiddleSection}${HOPEFUL_INITIAL_PROGRAM_JSON_RESPONSE_FORMAT}`;
 
       systemPrompt = "You are a faith-based spiritual wellness program creator. Respond only with valid JSON in the exact format specified. Do not include any text, explanation, or markdown outside the JSON structure.";
 

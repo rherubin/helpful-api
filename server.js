@@ -68,6 +68,14 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
+// JSON diagnostics for local / integration tests (not used by Railway liveness).
+app.get('/health/diagnostics', (req, res) => {
+  res.json({
+    ok: true,
+    test_mock_llm: process.env.TEST_MOCK_LLM === 'true'
+  });
+});
+
 // Root endpoint for Railway health checks
 app.get('/', (req, res) => {
   res.set('Content-Type', 'text/plain');

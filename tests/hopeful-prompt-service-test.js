@@ -16,7 +16,7 @@
  *   - Input validation rejects generic placeholder names
  *
  * Org-code customPrompts coverage (dedicated block):
- *   - customPrompts.initialProgramPrompt replaces the default template (initial)
+ *   - customPrompts.initialProgramPrompt is embedded in the default initial template
  *   - customPrompts.initialProgramPrompt still lands via generateNextCouplesProgram
  *     (the delegating path)
  *   - customPrompts.therapyResponsePrompt replaces the default couples-therapy
@@ -381,7 +381,7 @@ class HopefulPromptServiceTestRunner {
   // on the mock response.
 
   async testCustomInitialProgramPromptOverride(service) {
-    this.log('Testing customPrompts.initialProgramPrompt overrides default in generateCouplesProgram', 'section');
+    this.log('Testing customPrompts.initialProgramPrompt is embedded in default generateCouplesProgram prompt', 'section');
     const originalFetch = global.fetch;
     this._installMockFetch(JSON.stringify(this.buildMockFaithProgram()));
 
@@ -399,12 +399,22 @@ class HopefulPromptServiceTestRunner {
       const prompt = this.lastCapturedPrompt || '';
       this.assert(prompt.includes(sentinel), 'Captured prompt contains the initialProgramPrompt sentinel verbatim');
       this.assert(
-        !/you are a church pastor/i.test(prompt),
-        'Captured prompt does NOT contain the default pastor framing'
+        /you are a church pastor/i.test(prompt),
+        'Captured prompt still contains the default pastor framing'
       );
       this.assert(
-        !/skilled at creating personalized 7-day reflection/i.test(prompt),
-        'Captured prompt does NOT contain the default 7-day template framing'
+        /skilled at creating personalized 7-day reflection/i.test(prompt),
+        'Captured prompt still contains the default 7-day template framing'
+      );
+      const guidelinesIdx = prompt.indexOf('not 7 independent prompts');
+      const sentinelIdx = prompt.indexOf(sentinel);
+      this.assert(
+        guidelinesIdx !== -1 && sentinelIdx > guidelinesIdx,
+        'initialProgramPrompt appears after the default guidelines block (middle insertion)'
+      );
+      this.assert(
+        prompt.includes('"program"') && prompt.includes('Respond only with a valid JSON object'),
+        'Captured prompt ends with the standard Hopeful JSON response schema block'
       );
     } catch (error) {
       this.assert(false, 'initialProgramPrompt override call', `Error: ${error.message}`);
@@ -631,7 +641,7 @@ class HopefulPromptServiceTestRunner {
 
   async testPartialIdentityFieldsTolerated(service) {
     this.log('Testing partial identity (only organizationName) is tolerated without malformed city/state fragment', 'section');
-    // The service at HopefulPromptService line 111-113 only builds the
+    // HopefulPromptService only builds the
     // "City, State" clause when BOTH organizationCity AND organizationState
     // are present. With only organizationName supplied, the prompt should
     // contain the org name but NOT a half-built ", " fragment.
