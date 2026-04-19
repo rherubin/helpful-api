@@ -1,3 +1,9 @@
+// Full row shape for API / program-generation consumers (must include prompt fields).
+const ORG_CODE_SELECT_COLUMNS =
+  'id, org_code, organization, address1, address2, city, state, postalCode, ' +
+  'initial_program_prompt, next_program_prompt, therapy_response_prompt, ' +
+  'expires_at, duration_start, duration_end, created_at, updated_at';
+
 class OrgCode {
   constructor(db) {
     this.db = db;
@@ -174,13 +180,19 @@ class OrgCode {
   }
 
   async getOrgCodeById(id) {
-    const row = await this.queryOne('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM org_codes WHERE id = ?', [id]);
+    const row = await this.queryOne(
+      `SELECT ${ORG_CODE_SELECT_COLUMNS} FROM org_codes WHERE id = ?`,
+      [id]
+    );
     if (!row) throw new Error('OrgCode not found');
     return row;
   }
 
   async getOrgCodeByCode(orgCode) {
-    const row = await this.queryOne('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM org_codes WHERE org_code = ?', [orgCode]);
+    const row = await this.queryOne(
+      `SELECT ${ORG_CODE_SELECT_COLUMNS} FROM org_codes WHERE org_code = ?`,
+      [orgCode]
+    );
     if (!row) throw new Error('OrgCode not found');
     return row;
   }
@@ -245,7 +257,9 @@ class OrgCode {
   }
 
   async getAllOrgCodes() {
-    return this.query('SELECT id, org_code, organization, address1, address2, city, state, postalCode, expires_at, duration_start, duration_end, created_at, updated_at FROM org_codes ORDER BY created_at DESC');
+    return this.query(
+      `SELECT ${ORG_CODE_SELECT_COLUMNS} FROM org_codes ORDER BY created_at DESC`
+    );
   }
 }
 

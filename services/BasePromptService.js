@@ -469,6 +469,46 @@ class BasePromptService {
     }
   }
 
+  // Attach the raw user prompt sent to the LLM onto a parsed program
+  // response as a non-enumerable property. Non-enumerable keeps it out of
+  // JSON.stringify() output and test structural assertions, while still
+  // letting route handlers read it to persist in the DB. We store only the
+  // user prompt (not the short static system role instruction) because
+  // that is the dynamic payload that actually generated the response —
+  // what you'd paste into ChatGPT to reproduce the output.
+  attachPromptToResponse(parsedResponse, userPrompt) {
+    if (!parsedResponse || typeof parsedResponse !== 'object') return parsedResponse;
+    if (typeof userPrompt !== 'string' || userPrompt.length === 0) return parsedResponse;
+    Object.defineProperty(parsedResponse, '__prompt', {
+      value: userPrompt,
+      enumerable: false,
+      writable: false,
+      configurable: true
+    });
+    return parsedResponse;
+  }
+
+  // Attach the user prompt that was (or would have been) sent to the LLM
+  // onto a thrown error, so the route handler can persist it alongside
+  // generation_error in the DB. Skips attaching when no prompt was built
+  // yet (pre-prompt validation failures) so we don't overwrite a
+  // previously stored good prompt with an empty placeholder.
+  attachPromptToError(error, userPrompt) {
+    if (!error || typeof error !== 'object') return error;
+    if (typeof userPrompt !== 'string' || userPrompt.length === 0) return error;
+    try {
+      Object.defineProperty(error, '__prompt', {
+        value: userPrompt,
+        enumerable: false,
+        writable: false,
+        configurable: true
+      });
+    } catch {
+      // Non-fatal — prompt logging must never mask the real error.
+    }
+    return error;
+  }
+
   cleanMessageText(text) {
     if (!text || typeof text !== 'string') return text;
 

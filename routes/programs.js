@@ -48,8 +48,15 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       ? JSON.stringify(therapyResponse)
       : therapyResponse;
 
+    // Prompt services attach the final prompt (system + user) as a
+    // non-enumerable `__prompt` property on the parsed response — capture
+    // it so we can audit exactly what was sent to the LLM from the DB.
+    const generationPrompt = (therapyResponse && typeof therapyResponse === 'object')
+      ? (therapyResponse.__prompt || null)
+      : null;
+
     // Persist raw response for backward compatibility and diagnostics.
-    await programModel.updateTherapyResponse(programId, therapyResponseString, secondsToLoad);
+    await programModel.updateTherapyResponse(programId, therapyResponseString, secondsToLoad, generationPrompt);
 
     if (programStepModel) {
       // Check again to avoid duplicate step creation in rare concurrent trigger races.
@@ -64,6 +71,9 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
 
   async function runGenerationWithFollowUp({ programId, generateResponse, logPrefix, forceRegenerate = false }) {
     const attemptLogs = [];
+    // Track the prompt from the most recent failing attempt so we can log it
+    // alongside the generation_error even when all attempts fail.
+    let lastAttemptPrompt = null;
 
     try {
       await generateAndPersistProgramContent({
@@ -75,6 +85,9 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       return;
     } catch (firstError) {
       attemptLogs.push(`attempt_1: ${firstError.message}`);
+      if (firstError && firstError.__prompt) {
+        lastAttemptPrompt = firstError.__prompt;
+      }
       console.error(`${logPrefix} Initial generation attempt failed for program ${programId}:`, firstError.message);
     }
 
@@ -98,13 +111,16 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
         return;
       } catch (followUpError) {
         attemptLogs.push(`attempt_2: ${followUpError.message}`);
+        if (followUpError && followUpError.__prompt) {
+          lastAttemptPrompt = followUpError.__prompt;
+        }
         console.error(`${logPrefix} Follow-up generation attempt failed for program ${programId}:`, followUpError.message);
       }
     }
 
     const combinedError = `Program generation failed after ${GENERATION_FOLLOWUP_ENABLED ? '2 attempts' : '1 attempt'} (${attemptLogs.join(' | ')})`;
     try {
-      await programModel.updateGenerationError(programId, combinedError);
+      await programModel.updateGenerationError(programId, combinedError, lastAttemptPrompt);
     } catch (saveError) {
       console.error(`${logPrefix} Failed to save generation error for program ${programId}:`, saveError.message);
     }
@@ -741,7 +757,11 @@ function startRegenerationPoller(programModel, programStepModel, hopefulPromptSe
           ? JSON.stringify(therapyResponse)
           : therapyResponse;
 
-        await programModel.updateTherapyResponse(program.id, therapyResponseString, secondsToLoad);
+        const generationPrompt = (therapyResponse && typeof therapyResponse === 'object')
+          ? (therapyResponse.__prompt || null)
+          : null;
+
+        await programModel.updateTherapyResponse(program.id, therapyResponseString, secondsToLoad, generationPrompt);
 
         if (programStepModel) {
           await programStepModel.createProgramSteps(program.id, therapyResponseString);
@@ -751,7 +771,8 @@ function startRegenerationPoller(programModel, programStepModel, hopefulPromptSe
       } catch (err) {
         console.error(`[regen_poller] Regeneration failed for program ${program.id}:`, err.message);
         try {
-          await programModel.updateGenerationError(program.id, `Regeneration failed: ${err.message}`);
+          const failurePrompt = (err && err.__prompt) ? err.__prompt : null;
+          await programModel.updateGenerationError(program.id, `Regeneration failed: ${err.message}`, failurePrompt);
         } catch { /* non-fatal */ }
       }
     }

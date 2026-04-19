@@ -87,6 +87,12 @@ class HopefulPromptService extends BasePromptService {
     const BASE_DELAY = 1000;
     const MAX_PARSE_RETRIES = 1;
 
+    // Hoisted so the outer catch can attach the prompt to thrown errors,
+    // allowing the route layer to persist it in generation_prompt even when
+    // generation fails.
+    let resolvedPrompt = null;
+    let systemPrompt = null;
+
     try {
       const sanitizedUserName = this.sanitizePromptInput(userName);
       const sanitizedUserInput = this.sanitizePromptInput(userInput);
@@ -157,7 +163,7 @@ Respond only with a valid JSON object in exactly this structure:
   }
 }`;
 
-      const resolvedPrompt = (customPrompts && customPrompts.initialProgramPrompt)
+      resolvedPrompt = (customPrompts && customPrompts.initialProgramPrompt)
         ? customPrompts.initialProgramPrompt
             .replace(/\{\{userName\}\}/g, sanitizedUserName)
             .replace(/\{\{userInput\}\}/g, sanitizedUserInput)
@@ -166,8 +172,10 @@ Respond only with a valid JSON object in exactly this structure:
             .replace(/\{\{User Input\}\}/g, sanitizedUserInput)
         : defaultPrompt;
 
+      systemPrompt = "You are a faith-based spiritual wellness program creator. Respond only with valid JSON in the exact format specified. Do not include any text, explanation, or markdown outside the JSON structure.";
+
       const llmResult = await this.callLLM(
-        "You are a faith-based spiritual wellness program creator. Respond only with valid JSON in the exact format specified. Do not include any text, explanation, or markdown outside the JSON structure.",
+        systemPrompt,
         resolvedPrompt,
         { temperature: 0.7, jsonMode: true }
       );
@@ -197,7 +205,7 @@ Respond only with a valid JSON object in exactly this structure:
           throw new Error('AI response does not match expected program structure');
         }
 
-        return parsedResponse;
+        return this.attachPromptToResponse(parsedResponse, resolvedPrompt);
       } catch (parseError) {
         console.warn('Failed to parse/validate generateInitialProgram response:', {
           parse_retry_attempt: parseRetryCount + 1,
@@ -247,7 +255,8 @@ Respond only with a valid JSON object in exactly this structure:
         }
       }
 
-      throw new Error('Failed to generate reflection program');
+      const wrappedError = new Error('Failed to generate reflection program');
+      throw this.attachPromptToError(wrappedError, resolvedPrompt);
     }
   }
 

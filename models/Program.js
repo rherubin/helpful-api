@@ -23,6 +23,7 @@ class Program {
         user_input TEXT NOT NULL,
         pairing_id VARCHAR(50) DEFAULT NULL,
         therapy_response LONGTEXT DEFAULT NULL,
+        generation_prompt LONGTEXT DEFAULT NULL,
         generation_error TEXT DEFAULT NULL,
         steps_required_for_unlock INT DEFAULT 7,
         next_program_unlocked BOOLEAN DEFAULT FALSE,
@@ -59,7 +60,7 @@ class Program {
         FROM INFORMATION_SCHEMA.COLUMNS 
         WHERE TABLE_SCHEMA = DATABASE() 
         AND TABLE_NAME = 'programs' 
-        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id', 'generation_error', 'regenerate_therapy_response', 'llm_used', 'seconds_to_load')
+        AND COLUMN_NAME IN ('steps_required_for_unlock', 'next_program_unlocked', 'previous_program_id', 'generation_error', 'regenerate_therapy_response', 'llm_used', 'seconds_to_load', 'generation_prompt')
       `;
       
       const existingColumns = await this.query(checkColumns);
@@ -156,6 +157,18 @@ class Program {
           AFTER llm_used
         `);
         console.log('Added seconds_to_load column to programs table.');
+      }
+
+      // Add generation_prompt if it doesn't exist — stores the full prompt
+      // (system + user) that was sent to the LLM to produce therapy_response,
+      // so the exact input is auditable from the DB.
+      if (!columnNames.includes('generation_prompt')) {
+        await this.query(`
+          ALTER TABLE programs 
+          ADD COLUMN generation_prompt LONGTEXT DEFAULT NULL 
+          AFTER therapy_response
+        `);
+        console.log('Added generation_prompt column to programs table.');
       }
     } catch (err) {
       // Ignore errors if columns already exist or other migration issues
@@ -311,16 +324,18 @@ class Program {
     }
   }
 
-  // Update therapy response for a program
-  async updateTherapyResponse(programId, therapyResponse, secondsToLoad = null) {
+  // Update therapy response for a program.
+  // generationPrompt (optional) is the full prompt sent to the LLM that
+  // produced this response — persisted for auditability.
+  async updateTherapyResponse(programId, therapyResponse, secondsToLoad = null, generationPrompt = null) {
     try {
       const updateQuery = `
         UPDATE programs 
-        SET therapy_response = ?, generation_error = NULL, seconds_to_load = ?, updated_at = NOW()
+        SET therapy_response = ?, generation_prompt = ?, generation_error = NULL, seconds_to_load = ?, updated_at = NOW()
         WHERE id = ? AND deleted_at IS NULL
       `;
 
-      const result = await this.query(updateQuery, [therapyResponse, secondsToLoad, programId]);
+      const result = await this.query(updateQuery, [therapyResponse, generationPrompt, secondsToLoad, programId]);
       if (result.affectedRows === 0) {
         throw new Error('Program not found or already deleted');
       }
@@ -368,16 +383,28 @@ class Program {
     }
   }
 
-  // Update generation error for a program
-  async updateGenerationError(programId, errorMessage) {
+  // Update generation error for a program.
+  // generationPrompt (optional) is the full prompt that was (or would have
+  // been) sent to the LLM for the failing attempt — persisted so the DB
+  // can log what prompt produced the error.
+  async updateGenerationError(programId, errorMessage, generationPrompt = null) {
     try {
-      const updateQuery = `
-        UPDATE programs 
-        SET generation_error = ?, updated_at = NOW()
-        WHERE id = ? AND deleted_at IS NULL
-      `;
+      // Only overwrite generation_prompt when a non-null value is provided,
+      // so validation-only failures (where no prompt was ever built) don't
+      // blow away a prompt that may have been saved by a prior attempt.
+      const updateQuery = generationPrompt !== null
+        ? `UPDATE programs
+             SET generation_error = ?, generation_prompt = ?, updated_at = NOW()
+           WHERE id = ? AND deleted_at IS NULL`
+        : `UPDATE programs
+             SET generation_error = ?, updated_at = NOW()
+           WHERE id = ? AND deleted_at IS NULL`;
 
-      const result = await this.query(updateQuery, [errorMessage, programId]);
+      const params = generationPrompt !== null
+        ? [errorMessage, generationPrompt, programId]
+        : [errorMessage, programId];
+
+      const result = await this.query(updateQuery, params);
       if (result.affectedRows === 0) {
         throw new Error('Program not found or already deleted');
       }

@@ -97,6 +97,31 @@ class User {
         console.warn('Migration warning for users table:', migrationErr.message);
       }
 
+      // Migration: Legacy DBs may still reference organizations(id) after org_codes
+      // was introduced. Program generation reads from org_codes — the FK must match.
+      try {
+        const fkMeta = await this.queryOne(`
+          SELECT CONSTRAINT_NAME AS constraint_name, REFERENCED_TABLE_NAME AS referenced_table
+          FROM information_schema.KEY_COLUMN_USAGE
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'users'
+            AND COLUMN_NAME = 'org_code_id'
+            AND REFERENCED_TABLE_NAME IS NOT NULL
+        `);
+        if (fkMeta && fkMeta.referenced_table === 'organizations') {
+          await this.query(
+            `ALTER TABLE users DROP FOREIGN KEY \`${fkMeta.constraint_name}\``
+          );
+          await this.query(`
+            ALTER TABLE users ADD CONSTRAINT fk_users_org_code
+            FOREIGN KEY (org_code_id) REFERENCES org_codes(id) ON DELETE SET NULL
+          `);
+          console.log('Migrated users.org_code_id foreign key to reference org_codes(id)');
+        }
+      } catch (fkErr) {
+        console.warn('Migration warning (users org_code_id FK to org_codes):', fkErr.message);
+      }
+
       // Migration: Add custom org fields if they don't exist
       const customOrgColumns = [
         { name: 'org_name', type: 'VARCHAR(255) DEFAULT NULL' },

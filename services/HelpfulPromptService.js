@@ -91,6 +91,12 @@ class HelpfulPromptService extends BasePromptService {
     const BASE_DELAY = 1000;
     const MAX_PARSE_RETRIES = 1;
 
+    // Hoisted so the outer catch can attach the prompt to thrown errors,
+    // allowing the route layer to persist it in generation_prompt even when
+    // generation fails.
+    let prompt = null;
+    let systemPrompt = null;
+
     try {
       const sanitizedUserName = this.sanitizePromptInput(userName);
       const sanitizedPartnerName = this.sanitizePromptInput(partnerName);
@@ -117,7 +123,7 @@ class HelpfulPromptService extends BasePromptService {
         throw new Error('User input must be between 10 and 2000 characters');
       }
 
-      const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
+      prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
 
 Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
 
@@ -164,8 +170,10 @@ Please format your response as a JSON object with the following structure:
   }
 }`;
 
+      systemPrompt = "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content.";
+
       const llmResult = await this.callLLM(
-        "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content.",
+        systemPrompt,
         prompt,
         { temperature: 0.7, jsonMode: true }
       );
@@ -195,7 +203,7 @@ Please format your response as a JSON object with the following structure:
           throw new Error('AI response does not match expected program structure');
         }
 
-        return parsedResponse;
+        return this.attachPromptToResponse(parsedResponse, prompt);
       } catch (parseError) {
         console.warn('Failed to parse/validate HelpfulPromptService.generateInitialProgram response:', {
           parse_retry_attempt: parseRetryCount + 1,
@@ -245,7 +253,8 @@ Please format your response as a JSON object with the following structure:
         }
       }
 
-      throw new Error('Failed to generate couples therapy program');
+      const wrappedError = new Error('Failed to generate couples therapy program');
+      throw this.attachPromptToError(wrappedError, prompt);
     }
   }
 
@@ -253,6 +262,10 @@ Please format your response as a JSON object with the following structure:
     const MAX_RETRIES = 2;
     const BASE_DELAY = 1000;
     const MAX_PARSE_RETRIES = 1;
+
+    // Hoisted so the outer catch can attach the prompt to thrown errors.
+    let prompt = null;
+    let systemPrompt = null;
 
     try {
       const sanitizedUserName = this.sanitizePromptInput(userName);
@@ -291,7 +304,7 @@ Please format your response as a JSON object with the following structure:
           .join('\n');
       }
 
-      const prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
+      prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
 
 Your advice to couples is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context of the couple merits it.
 
@@ -343,8 +356,10 @@ Please format your response as a JSON object with the following structure:
   }
 }`;
 
+      systemPrompt = "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content.";
+
       const llmResult = await this.callLLM(
-        "You are a professional couples therapist. You must respond only with valid JSON in the specified format. Do not include any text outside the JSON structure. Focus only on therapeutic content.",
+        systemPrompt,
         prompt,
         { maxTokens: 4000, temperature: 0.7, jsonMode: true }
       );
@@ -374,7 +389,7 @@ Please format your response as a JSON object with the following structure:
           throw new Error('AI response does not match expected program structure');
         }
 
-        return parsedResponse;
+        return this.attachPromptToResponse(parsedResponse, prompt);
       } catch (parseError) {
         console.warn('Failed to parse/validate HelpfulPromptService.generateNextProgram response:', {
           parse_retry_attempt: parseRetryCount + 1,
@@ -424,7 +439,8 @@ Please format your response as a JSON object with the following structure:
         }
       }
 
-      throw new Error('Failed to generate next couples therapy program');
+      const wrappedError = new Error('Failed to generate next couples therapy program');
+      throw this.attachPromptToError(wrappedError, prompt);
     }
   }
 
