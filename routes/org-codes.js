@@ -4,6 +4,15 @@ const { createAuthenticateToken } = require('../middleware/auth');
 function createOrgCodeRoutes(orgCodeModel, userModel, authService, adminAuthService) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
+  const stripPromptFields = (orgCode) => {
+    const {
+      initial_program_prompt,
+      next_program_prompt,
+      therapy_response_prompt,
+      ...safeFields
+    } = orgCode;
+    return safeFields;
+  };
 
   // Middleware to check if user is admin
   const requireAdmin = async (req, res, next) => {
@@ -51,10 +60,12 @@ function createOrgCodeRoutes(orgCodeModel, userModel, authService, adminAuthServ
   router.get('/', authenticateToken, async (req, res) => {
     try {
       const orgCodes = await orgCodeModel.getAllOrgCodes();
+      const isAdmin = req.user && req.user.type === 'admin';
+      const responseOrgCodes = isAdmin ? orgCodes : orgCodes.map(stripPromptFields);
 
       res.status(200).json({
         message: 'Org codes retrieved successfully',
-        org_codes: orgCodes
+        org_codes: responseOrgCodes
       });
     } catch (error) {
       console.error('Get org codes error:', error.message);

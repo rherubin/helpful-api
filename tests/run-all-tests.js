@@ -12,6 +12,7 @@ const TherapyTriggerTestRunner = require('./therapy-trigger-test');
 const WWWAuthenticateTestRunner = require('./www-authenticate-test');
 const SubscriptionTestRunner = require('./subscription-test');
 const UserOrgCodeTestRunner = require('./user-org-code-test');
+const DeviceTokenTestRunner = require('./device-tokens-test');
 const HelpfulPromptServiceTestRunner = require('./helpful-prompt-service-test');
 const HopefulPromptServiceTestRunner = require('./hopeful-prompt-service-test');
 const ProgramOrgContextTestRunner = require('./program-org-context-test');
@@ -39,6 +40,7 @@ class TestSuiteRunner {
       runWWWAuthenticate: options.runWWWAuthenticate !== false, // Default true
       runSubscription: options.runSubscription !== false, // Default true
       runUserOrgCode: options.runUserOrgCode !== false, // Default true
+      runDeviceTokens: options.runDeviceTokens !== false, // Default true
       runHelpfulPromptService: options.runHelpfulPromptService !== false, // Default true
       runHopefulPromptService: options.runHopefulPromptService !== false, // Default true
       runProgramOrgContext: options.runProgramOrgContext !== false, // Default true
@@ -62,6 +64,7 @@ class TestSuiteRunner {
       wwwAuthenticate: null,
       subscription: null,
       userOrgCode: null,
+      deviceTokens: null,
       helpfulPromptService: null,
       hopefulPromptService: null,
       programOrgContext: null,
@@ -708,6 +711,44 @@ class TestSuiteRunner {
     }
   }
 
+  async runDeviceTokenTests() {
+    if (!this.options.runDeviceTokens) {
+      this.log('Skipping device tokens tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('📱 Running Device Tokens Test Suite', 'section');
+
+    try {
+      const runner = new DeviceTokenTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.deviceTokens = {
+        success,
+        skipped: false,
+        details: 'POST/GET/DELETE /api/device-tokens for push notification registration (multi-device support)',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Device tokens tests completed successfully', 'success');
+      } else {
+        this.log('Device tokens tests failed', 'error');
+      }
+
+      return this.results.deviceTokens;
+    } catch (error) {
+      this.log(`Device tokens tests failed: ${error.message}`, 'error');
+      this.results.deviceTokens = { success: false, error: error.message };
+      return this.results.deviceTokens;
+    }
+  }
+
   // Run all test suites
   async runAllTests() {
     this.log('🎯 Starting Comprehensive Test Suite', 'section');
@@ -728,6 +769,7 @@ class TestSuiteRunner {
     this.log(`  WWW-Authenticate Tests: ${this.options.runWWWAuthenticate ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Subscription Tests: ${this.options.runSubscription ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  User Org Code Tests: ${this.options.runUserOrgCode ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Device Tokens Tests: ${this.options.runDeviceTokens ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HelpfulPromptService Unit Tests: ${this.options.runHelpfulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HopefulPromptService Unit Tests: ${this.options.runHopefulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Program Org Context Tests: ${this.options.runProgramOrgContext ? 'Enabled' : 'Disabled'}`, 'info');
@@ -864,6 +906,15 @@ class TestSuiteRunner {
     if (this.options.runUserOrgCode) {
       await this.runUserOrgCodeTests();
       if (this.results.userOrgCode && !this.results.userOrgCode.success && !this.results.userOrgCode.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run device tokens tests
+    if (this.options.runDeviceTokens) {
+      await this.runDeviceTokenTests();
+      if (this.results.deviceTokens && !this.results.deviceTokens.success && !this.results.deviceTokens.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -1064,6 +1115,17 @@ class TestSuiteRunner {
       }
     }
 
+    // Device tokens test results
+    if (this.results.deviceTokens) {
+      if (this.results.deviceTokens.skipped) {
+        this.log('📱 Device Tokens Tests: SKIPPED', 'warn');
+      } else if (this.results.deviceTokens.success) {
+        this.log(`📱 Device Tokens Tests: PASSED (${this.results.deviceTokens.passed}/${this.results.deviceTokens.total})`, 'success');
+      } else {
+        this.log(`📱 Device Tokens Tests: FAILED (${this.results.deviceTokens.failed}/${this.results.deviceTokens.total} failures)`, 'error');
+      }
+    }
+
     // HelpfulPromptService unit test results
     if (this.results.helpfulPromptService) {
       if (this.results.helpfulPromptService.skipped) {
@@ -1133,7 +1195,8 @@ class TestSuiteRunner {
                this.results.programSteps?.success && this.results.messages?.success &&
                this.results.therapyTrigger?.success &&
                this.results.wwwAuthenticate?.success && this.results.subscription?.success &&
-               this.results.userOrgCode?.success && this.results.helpfulPromptService?.success &&
+               this.results.userOrgCode?.success && this.results.deviceTokens?.success &&
+               this.results.helpfulPromptService?.success &&
                this.results.hopefulPromptService?.success && this.results.programOrgContext?.success,
       results: {
         security: this.results.security,
@@ -1150,6 +1213,7 @@ class TestSuiteRunner {
         wwwAuthenticate: this.results.wwwAuthenticate,
         subscription: this.results.subscription,
         userOrgCode: this.results.userOrgCode,
+        deviceTokens: this.results.deviceTokens,
         helpfulPromptService: this.results.helpfulPromptService,
         hopefulPromptService: this.results.hopefulPromptService,
         programOrgContext: this.results.programOrgContext
@@ -1160,21 +1224,24 @@ class TestSuiteRunner {
                    (this.results.refreshTokenReset?.total || 0) + (this.results.programs?.total || 0) + (this.results.programSteps?.total || 0) +
                    (this.results.messages?.total || 0) + (this.results.therapyTrigger?.total || 0) +
                    (this.results.wwwAuthenticate?.total || 0) + (this.results.subscription?.total || 0) +
-                   (this.results.userOrgCode?.total || 0) + (this.results.helpfulPromptService?.total || 0) +
+                   (this.results.userOrgCode?.total || 0) + (this.results.deviceTokens?.total || 0) +
+                   (this.results.helpfulPromptService?.total || 0) +
                    (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0),
         totalPassed: (this.results.security?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) + (this.results.userProfile?.passed || 0) +
                     (this.results.refreshTokenReset?.passed || 0) + (this.results.programs?.passed || 0) + (this.results.programSteps?.passed || 0) +
                     (this.results.messages?.passed || 0) + (this.results.therapyTrigger?.passed || 0) +
                     (this.results.wwwAuthenticate?.passed || 0) + (this.results.subscription?.passed || 0) +
-                    (this.results.userOrgCode?.passed || 0) + (this.results.helpfulPromptService?.passed || 0) +
+                    (this.results.userOrgCode?.passed || 0) + (this.results.deviceTokens?.passed || 0) +
+                    (this.results.helpfulPromptService?.passed || 0) +
                     (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0),
         totalFailed: (this.results.security?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) + (this.results.userProfile?.failed || 0) +
                     (this.results.refreshTokenReset?.failed || 0) + (this.results.programs?.failed || 0) + (this.results.programSteps?.failed || 0) +
                     (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0) +
                     (this.results.wwwAuthenticate?.failed || 0) + (this.results.subscription?.failed || 0) +
-                    (this.results.userOrgCode?.failed || 0) + (this.results.helpfulPromptService?.failed || 0) +
+                    (this.results.userOrgCode?.failed || 0) + (this.results.deviceTokens?.failed || 0) +
+                    (this.results.helpfulPromptService?.failed || 0) +
                     (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0)
       }
     };
@@ -1201,6 +1268,7 @@ function parseArgs() {
     if (arg === '--no-www-authenticate') options.runWWWAuthenticate = false;
     if (arg === '--no-subscription') options.runSubscription = false;
     if (arg === '--no-user-org-code') options.runUserOrgCode = false;
+    if (arg === '--no-device-tokens') options.runDeviceTokens = false;
     if (arg === '--no-helpful-prompt-service') options.runHelpfulPromptService = false;
     if (arg === '--no-hopeful-prompt-service') options.runHopefulPromptService = false;
     if (arg === '--no-program-org-context') options.runProgramOrgContext = false;

@@ -34,6 +34,7 @@ async function cleanupTestData() {
          OR email LIKE 'messages-test-%@example.com'
          OR email LIKE 'therapy-trigger-%@example.com'
          OR email LIKE 'debug-test-%@example.com'
+         OR email LIKE 'device-token-test%@example.com'
     `);
     
     const [testPairings] = await connection.query(`
@@ -174,8 +175,25 @@ async function cleanupTestData() {
       `);
       console.log(`   ✅ Deleted ${pairings.affectedRows} pairings\n`);
       
-      // Step 5: Delete refresh tokens
-      console.log('5️⃣  Deleting test refresh tokens...');
+      // Step 5: Delete device tokens (new push notification support)
+      console.log('5️⃣  Deleting test device tokens...');
+      const [deviceTokens] = await connection.query(`
+        DELETE FROM device_tokens 
+        WHERE user_id IN (
+          SELECT id FROM users 
+          WHERE email LIKE 'test%@example.com' 
+             OR email LIKE 'john.doe.%@example.com'
+             OR email LIKE 'jane.doe.%@example.com'
+             OR email LIKE 'loadtest-%@example.com'
+             OR email LIKE 'pairings.user%@example.com'
+             OR email LIKE 'login-test-%@example.com'
+             OR email LIKE 'device-token-test%@example.com'
+        )
+      `);
+      console.log(`   ✅ Deleted ${deviceTokens.affectedRows} device tokens\n`);
+
+      // Step 6: Delete refresh tokens
+      console.log('6️⃣  Deleting test refresh tokens...');
       const [tokens] = await connection.query(`
         DELETE FROM refresh_tokens 
         WHERE user_id IN (
@@ -190,8 +208,8 @@ async function cleanupTestData() {
       `);
       console.log(`   ✅ Deleted ${tokens.affectedRows} tokens\n`);
       
-      // Step 6: Delete test users (ONLY @example.com test accounts)
-      console.log('6️⃣  Deleting test users...');
+      // Step 7: Delete test users (ONLY @example.com test accounts)
+      console.log('7️⃣  Deleting test users...');
       const [users] = await connection.query(`
         DELETE FROM users 
         WHERE email LIKE 'test%@example.com' 
@@ -215,6 +233,7 @@ async function cleanupTestData() {
       console.log(`  - Programs: ${programs.affectedRows}`);
       console.log(`  - Program Steps: ${steps.affectedRows || 0}`);
       console.log(`  - Messages: ${messages.affectedRows || 0}`);
+      console.log(`  - Device Tokens: ${deviceTokens.affectedRows || 0}`);
       console.log(`  - Tokens: ${tokens.affectedRows}`);
       console.log('================================\n');
       console.log('✨ Database is now clean!');

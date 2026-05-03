@@ -16,6 +16,7 @@ const IosSubscription = require('./models/IosSubscription');
 const AndroidSubscription = require('./models/AndroidSubscription');
 const OrgCode = require('./models/OrgCode');
 const AdminUser = require('./models/AdminUser');
+const DeviceToken = require('./models/DeviceToken');
 const AuthService = require('./services/AuthService');
 const PairingService = require('./services/PairingService');
 const HopefulPromptService = require('./services/HopefulPromptService');
@@ -32,6 +33,7 @@ const createProgramStepRoutes = require('./routes/programSteps');
 const createSubscriptionRoutes = require('./routes/subscription');
 const createOrgCodeRoutes = require('./routes/org-codes');
 const createAdminAuthRoutes = require('./routes/admin-auth');
+const createDeviceTokenRoutes = require('./routes/device-tokens');
 
 const app = express();
 
@@ -132,7 +134,7 @@ async function setupDatabase() {
 setupDatabase();
 
 // Initialize models and services
-let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, authService, pairingService, hopefulPromptService, helpfulPromptService, subscriptionService, adminAuthService;
+let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, deviceTokenModel, authService, pairingService, hopefulPromptService, helpfulPromptService, subscriptionService, adminAuthService;
 
 async function initializeApp() {
   try {
@@ -147,6 +149,7 @@ async function initializeApp() {
     const androidSubscriptionModelInstance = new AndroidSubscription(db);
     const orgCodeModelInstance = new OrgCode(db);
     const adminUserModelInstance = new AdminUser(db);
+    const deviceTokenModelInstance = new DeviceToken(db);
     
     // Initialize database tables
     await userModelInstance.initDatabase();
@@ -159,6 +162,7 @@ async function initializeApp() {
     await androidSubscriptionModelInstance.initDatabase();
     await orgCodeModelInstance.initDatabase();
     await adminUserModelInstance.initDatabase();
+    await deviceTokenModelInstance.initDatabase();
     
     // Assign to global variables after successful initialization
     userModel = userModelInstance;
@@ -171,6 +175,7 @@ async function initializeApp() {
     androidSubscriptionModel = androidSubscriptionModelInstance;
     orgCodeModel = orgCodeModelInstance;
     adminUserModel = adminUserModelInstance;
+    deviceTokenModel = deviceTokenModelInstance;
 
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel, pairingModel);
@@ -239,6 +244,11 @@ function setupRoutes() {
   // Setup subscription routes
   if (subscriptionService && authService) {
     app.use('/api/subscription', createSubscriptionRoutes(subscriptionService, authService));
+  }
+
+  // Setup device token routes for push notifications (authenticated)
+  if (deviceTokenModel && authService) {
+    app.use('/api/device-tokens', createDeviceTokenRoutes(deviceTokenModel, authService));
   }
 
   // Setup admin auth routes
