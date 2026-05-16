@@ -258,6 +258,7 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       });
 
       // Generate LLM response asynchronously in the background
+      const push = req.app.locals.pushNotificationService;
       if (anyServiceConfigured()) {
         (async () => {
           console.log('Generating next program LLM response for program:', newProgram.id);
@@ -276,6 +277,25 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
               );
             }
           });
+
+          // Notify once generation succeeds.
+          if (push && await hasProgramSteps(newProgram.id)) {
+            const notifyIds = [userId];
+            if (newProgram.pairing_id && pairingModel) {
+              try {
+                const pairing = await pairingModel.getPairingById(newProgram.pairing_id);
+                if (pairing?.status === 'accepted') {
+                  const partnerId = pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
+                  if (partnerId) notifyIds.push(partnerId);
+                }
+              } catch { /* non-fatal */ }
+            }
+            push.sendToUsers(notifyIds, {
+              title: 'Your next program is ready',
+              body: 'Your next 14-day couples program has been created.',
+              data: { kind: 'program_ready', program_id: newProgram.id }
+            }).catch(err => console.warn('[push] next_program_ready failed:', err.message));
+          }
         })();
       } else {
         console.log('No prompt service configured, skipping therapy response generation');
@@ -465,6 +485,7 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       });
 
       // Generate LLM response asynchronously in the background
+      const push = req.app.locals.pushNotificationService;
       if (anyServiceConfigured()) {
         (async () => {
           console.log('Generating LLM response for program:', program.id);
@@ -477,6 +498,25 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
               return service.generateCouplesProgram(userName, partnerName, user_input, customPrompts);
             }
           });
+
+          // Notify once generation succeeds (steps exist means no error).
+          if (push && await hasProgramSteps(program.id)) {
+            const notifyIds = [userId];
+            if (pairing_id && pairingModel) {
+              try {
+                const pairing = await pairingModel.getPairingById(pairing_id);
+                if (pairing?.status === 'accepted') {
+                  const partnerId = pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
+                  if (partnerId) notifyIds.push(partnerId);
+                }
+              } catch { /* non-fatal */ }
+            }
+            push.sendToUsers(notifyIds, {
+              title: 'Your program is ready',
+              body: 'Your 14-day couples program has been created.',
+              data: { kind: 'program_ready', program_id: program.id }
+            }).catch(err => console.warn('[push] program_ready failed:', err.message));
+          }
         })();
       } else {
         console.log('No prompt service configured, skipping therapy response generation');

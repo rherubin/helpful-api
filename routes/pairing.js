@@ -33,8 +33,32 @@ function createPairingRoutes(pairingService, authService) {
         return res.status(400).json({ error: 'Partner code is required' });
       }
 
+      // Capture the requester's ID before the accept changes the pairing status.
+      let requesterId = null;
+      try {
+        const pending = await pairingService.pairingModel.getPendingPairingByPartnerCode(partner_code);
+        if (pending) requesterId = pending.user1_id;
+      } catch { /* non-fatal — push is best-effort */ }
+
       await pairingService.acceptPairingByCode(userId, partner_code);
       res.status(200).end();
+
+      // Notify the original requester that someone accepted their invite (fire-and-forget).
+      if (requesterId) {
+        const push = req.app.locals.pushNotificationService;
+        if (push) {
+          pairingService.userModel.getUserById(userId)
+            .then(accepter => {
+              const name = accepter?.user_name || 'Someone';
+              return push.sendToUser(requesterId, {
+                title: 'Pairing accepted!',
+                body: `${name} accepted your pairing request.`,
+                data: { kind: 'pairing_accepted' }
+              });
+            })
+            .catch(err => console.warn('[push] pairing_accepted failed:', err.message));
+        }
+      }
     } catch (error) {
       if (error.message === 'No pending pairing found for this partner code') {
         return res.status(404).json({ error: error.message });

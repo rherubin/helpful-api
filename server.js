@@ -34,6 +34,7 @@ const createProgramStepRoutes = require('./routes/programSteps');
 const createSubscriptionRoutes = require('./routes/subscription');
 const createOrgCodeRoutes = require('./routes/org-codes');
 const createAdminAuthRoutes = require('./routes/admin-auth');
+const createAdminRoutes = require('./routes/admin');
 const createDeviceTokenRoutes = require('./routes/device-tokens');
 
 const app = express();
@@ -270,6 +271,11 @@ function setupRoutes() {
   // Setup admin auth routes
   if (adminAuthService && adminUserModel) {
     app.use('/api/admin/auth', createAdminAuthRoutes(adminAuthService, adminUserModel));
+  }
+
+  // Setup general admin tooling routes (push-test, etc.)
+  if (adminAuthService) {
+    app.use('/api/admin', createAdminRoutes(adminAuthService, pushNotificationService || null, userModel || null));
   }
 
   // Setup org code routes (admin only)
