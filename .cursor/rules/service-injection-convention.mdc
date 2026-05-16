@@ -1,0 +1,48 @@
+---
+description: Services and models must be passed explicitly to route factories, not looked up via app.locals
+alwaysApply: true
+---
+
+# Service Injection Convention
+
+All services and models that a route needs are passed in as **arguments to the route factory** in `server.js → setupRoutes()` and then closed over by the handlers. Route handlers MUST NOT reach into `req.app.locals.<thing>` to fetch a dependency at request time — that's a service-locator anti-pattern that hides the dependency graph.
+
+This applies to `authService`, `userModel`, `pairingModel`, prompt services, `pushNotificationService`, and any future service.
+
+## Pattern
+
+```javascript
+// server.js
+app.use('/api/pairing', createPairingRoutes(pairingService, authService, pushNotificationService || null));
+
+// routes/pairing.js
+function createPairingRoutes(pairingService, authService, pushNotificationService = null) {
+  router.post('/accept', authenticateToken, async (req, res) => {
+    // ...
+    if (pushNotificationService) {
+      await pushNotificationService.sendToUser(userId, payload);
+    }
+  });
+}
+```
+
+## Bad
+
+```javascript
+// ❌ Service-locator lookup at request time — hides the dependency,
+//    breaks if server.js forgets to wire it, untestable in isolation.
+router.post('/accept', authenticateToken, async (req, res) => {
+  const push = req.app.locals.pushNotificationService;
+  if (push) await push.sendToUser(userId, payload);
+});
+```
+
+## Rules
+
+- Optional dependencies default to `null` in the factory signature (e.g. `pushNotificationService = null`). Handlers null-check before calling.
+- Do NOT add new `app.locals.X = X` assignments in `setupRoutes()` for dependencies. `app.locals` is for per-request middleware state, not the dependency graph.
+- When extending an existing factory, append the new param to the end of the existing argument list to keep call sites stable.
+
+## Known follow-up
+
+`routes/users.js` still reads `req.app.locals.pairingModel` at line ~161. This is inherited from before this convention existed. Any PR that touches `routes/users.js` should opportunistically convert it: thread `pairingModel` through `createUserRoutes(...)` in `server.js` and drop the `app.locals.pairingModel = pairingModel;` assignment.

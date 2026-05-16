@@ -225,14 +225,6 @@ function setupRoutes() {
     app.locals.pairingModel = pairingModel;
   }
 
-  // Expose the push notification service so any route or background job
-  // can call it via `req.app.locals.pushNotificationService`. The service
-  // itself fails soft when not configured, so callers do not need to
-  // null-check before invoking sendToUser / sendToUsers.
-  if (pushNotificationService) {
-    app.locals.pushNotificationService = pushNotificationService;
-  }
-  
   // Setup user routes
   if (userModel && authService && pairingService) {
     app.use('/api/users', createUserRoutes(userModel, authService, pairingService, orgCodeModel));
@@ -245,17 +237,17 @@ function setupRoutes() {
 
   // Setup pairing routes
   if (pairingService && authService) {
-    app.use('/api/pairing', createPairingRoutes(pairingService, authService));
+    app.use('/api/pairing', createPairingRoutes(pairingService, authService, pushNotificationService || null));
   }
 
   // Setup program routes
   if (programModel && hopefulPromptService && helpfulPromptService && authService) {
-    app.use('/api/programs', createProgramRoutes(programModel, hopefulPromptService, helpfulPromptService, programStepModel, userModel, pairingModel, authService, userModel));
+    app.use('/api/programs', createProgramRoutes(programModel, hopefulPromptService, helpfulPromptService, programStepModel, userModel, pairingModel, authService, userModel, pushNotificationService || null));
   }
 
   // Setup conversation routes
   if (programStepModel && messageModel && programModel && pairingModel && userModel && hopefulPromptService && helpfulPromptService && authService) {
-    app.use('/api', createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, hopefulPromptService, helpfulPromptService, authService, userModel));
+    app.use('/api', createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, hopefulPromptService, helpfulPromptService, authService, userModel, pushNotificationService || null));
   }
 
   // Setup subscription routes

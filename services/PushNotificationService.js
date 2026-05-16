@@ -5,12 +5,16 @@
  * (FCM HTTP v1 API), powered by the firebase-admin SDK. Single FCM relay
  * handles iOS (via APNs), Android, and Web.
  *
- * Lifecycle: instantiated once at app startup in server.js and exposed via
- * `app.locals.pushNotificationService` so any route or background job can
- * call it. Designed to fail soft — if Firebase credentials are not set the
- * service silently no-ops every send and reports `skipped: true`, so the
- * rest of the API stays healthy in environments without push configured
- * (local dev, PR previews, CI).
+ * Lifecycle: instantiated once at app startup in server.js and passed
+ * explicitly to each route factory that needs it (createPairingRoutes,
+ * createProgramRoutes, createProgramStepRoutes, createAdminRoutes). This
+ * matches the convention used for authService, userModel, and the prompt
+ * services — every dependency a router needs is visible at the call site
+ * in setupRoutes(), no service-locator lookups via app.locals. Designed
+ * to fail soft — if Firebase credentials are not set the service silently
+ * no-ops every send and reports `skipped: true`, so the rest of the API
+ * stays healthy in environments without push configured (local dev, PR
+ * previews, CI).
  *
  * High-level API (use these from routes / background jobs):
  *   - sendToUser(userId, payload)     → fan out to all of one user's devices
