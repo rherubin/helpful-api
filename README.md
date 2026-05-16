@@ -1,25 +1,27 @@
 # Helpful API
 
-A comprehensive Node.js REST API with MySQL backend featuring user management, JWT authentication, a flexible pairing system, AI-generated therapy programs with structured program steps, and efficient combined endpoints for optimal client performance.
+A comprehensive Node.js REST API with MySQL backend featuring user management, JWT authentication, a flexible pairing system, AI-generated therapy programs with structured program steps, push notification device registration, an admin surface for org codes, and efficient combined endpoints for clients.
 
 ## Features
 
 ### Core Functionality
-- **User Management**: Create, update, and retrieve users with secure password authentication
-- **JWT Authentication**: Secure login with access and refresh tokens
-- **Combined Profile Endpoint**: Single API call for complete user state (profile + pairings + requests)
-- **Unified Pairing System**: Request, accept, and reject pairings with partner codes
-- **AI Therapy Programs**: OpenAI-generated couples therapy programs with structured daily exercises
-- **Program Steps**: Day-based program steps for each program with message threading
+- **User Management**: Create, update, soft-delete, and retrieve users with secure password authentication
+- **JWT Authentication**: Secure login with access and refresh tokens (default access token **24h**, refresh **14d**, overridable via env)
+- **Combined Profile Endpoint**: Single API call for complete user state (profile, premium, org context, pairings)
+- **Unified Pairing System**: Request, accept, reject, and soft-delete pairings with partner codes
+- **AI Therapy Programs**: OpenAI-backed program generation with **two prompt tracks**: **Helpful** (default, secular EFT/Gottman-style) vs **Hopeful** (faith-based) when the user has an org code or custom org fields — plus automatic retry/follow-up when initial generation fails
+- **Program Steps**: Day-based program steps per program with message threading, unlock tracking, and optional paired “therapy response” system messages
 
 ### Advanced Features  
 - **Smart Pairing Responses**: Pending requests show `partner: null`, accepted pairings show full partner data
 - **Org Code Premium**: Users can gain premium status by validating an org code or self-registering org details — no iOS/Android subscription required
-- **Rate Limiting**: Configurable limits (1000 req/15min general, 100 req/15min login, 3 req/5min for user updates)
-- **Comprehensive Testing**: 95+ tests across multiple test suites with 98%+ success rates
+- **Push notifications**: Register FCM device tokens (iOS/Android/web); sends are no-ops when Firebase is not configured
+- **Admin auth & org administration**: Separate admin JWT flow (`/api/admin/auth/*`) for managing org codes, including per-org LLM prompt overrides (not exposed to non-admin list responses)
+- **Rate Limiting**: Configurable limits (1000 req/15min general API, 100 req/15min login, **3 req/5min** for `PUT /api/users/:id` unless `USER_UPDATE_RATE_LIMIT` is overridden)
+- **Comprehensive Testing**: `npm test` runs the consolidated suite; additional test scripts are listed under [Testing](#testing)
 - **Complete Pairing System**: Full end-to-end pairing workflow with acceptance, rejection, and profile integration
 - **Password Security**: Bcrypt hashing with strict password requirements (uppercase, lowercase, number, special char)
-- **Token Management**: Short-lived access tokens (1h) with refresh token rotation for enhanced security
+- **Token Management**: Configurable access token lifetime (default **24h**) with refresh token rotation
 - **Refresh Token Rotation**: Automatic token rotation with sliding expiration window (14 days)
 - **Automatic Refresh Token Extension**: Refresh tokens automatically reset to 14-day expiration on every authenticated API call
 - **Database Integrity**: MySQL with automatic schema creation and proper JOIN handling
@@ -33,7 +35,7 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
    npm install
    ```
 
-2. Create a `.env` file in the root directory:
+2. Create a `.env` file in the root directory. **`PORT` is required** (Railway injects it automatically; for local development set e.g. `PORT=9000` or the server will exit on startup).
    ```
    PORT=9000
    HOST=0.0.0.0
@@ -51,15 +53,37 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
    # JWT Configuration
    JWT_SECRET=your-secret-key-change-in-production
    JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
-   JWT_EXPIRES_IN=24h  # Access token expiry (default: 24h for better UX)
+   JWT_EXPIRES_IN=24h  # Access token expiry (default: 24h)
    JWT_REFRESH_EXPIRES_IN=14d  # Refresh token expiry (default: 14 days)
 
    # JWT Response Configuration (optional - calculated from above if not set)
    JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS=86400  # 24 hours in seconds
    JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS=1209600  # 14 days in seconds
    
-   # OpenAI API
+   # OpenAI API (program + step messaging features)
    OPENAI_API_KEY=your-openai-api-key-for-therapy-content
+   # OPENAI_MODEL=gpt-4o  # Optional: override the default OpenAI model
+
+   # Optional: rate limit for PUT /api/users/:id (org code / profile updates)
+   # USER_UPDATE_RATE_LIMIT=3
+
+   # Optional: program generation — second LLM attempt after failures (default on; ~60s delay)
+   # PROGRAM_GENERATION_FOLLOWUP_ENABLED=true
+   # PROGRAM_GENERATION_FOLLOWUP_DELAY_MS=60000
+
+   # Optional: default steps_required_for_unlock when creating a program (default 0)
+   # DEFAULT_STEPS_REQUIRED_FOR_UNLOCK=0
+
+   # Optional: background poller for programs flagged regenerate_therapy_response
+   # REGENERATION_POLL_INTERVAL_MS=30000
+
+   # Optional: testing / CI — deterministic mock LLM responses (no tokens)
+   # TEST_MOCK_LLM=true
+
+   # Optional: Firebase Cloud Messaging (JSON string or path to service account)
+   # FIREBASE_SERVICE_ACCOUNT_JSON=
+   # FIREBASE_SERVICE_ACCOUNT_PATH=
+   # TEST_MOCK_PUSH=true
    ```
 
 3. **Database Setup**:
@@ -110,32 +134,36 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 ## 🎯 Quick Reference
 
 ### Most Important Endpoints
-- **`GET /api/profile`** - Get complete user profile with pairings (recommended)
+- **`GET /health`** - Liveness probe (plain text `OK`)
+- **`GET /health/diagnostics`** - JSON (`test_mock_llm`, etc.) for local/integration checks
+- **`GET /api/profile`** - Complete user profile with pairings and org summary (recommended)
 - **`POST /api/login`** - User authentication
-- **`POST /api/pairing/request`** - Create partner code for pairing
-- **`POST /api/pairing/accept`** - Accept pairing with partner code
-- **`GET /api/pairings`** - Get all pairings (accepted + pending)
-- **`GET /api/org-codes`** - Get all organization codes (regular users)
-- **`POST /api/org-codes`** - Create organization code (admin only)
-- **`PUT /api/org-codes/:id`** - Update organization code (admin only)
-- **`DELETE /api/org-codes/:id`** - Delete organization code (admin only)
+- **`POST /api/refresh`** / **`POST /api/logout`** - Token rotation and logout
+- **`POST /api/token-info`** - Decode access token metadata (no signature verification; debugging)
+- **`POST /api/pairing/request`** - Create partner code for pairing (**201**)
+- **`POST /api/pairing/accept`** - Accept pairing with partner code (**200**, empty body)
+- **`GET /api/pairings`** - All pairings (accepted + pending) for current user
+- **`DELETE /api/pairing/:pairingId`** - Soft-delete a pairing (must be a participant)
+- **`GET /api/org-codes`** - List org codes (LLM prompt fields omitted unless caller is admin)
+- **`POST /api/org-codes`** / **`GET|PUT|DELETE /api/org-codes/:id`** - Org code admin CRUD (**admin JWT**)
+- **`GET /api/org-codes/audit/org-linkages`** - Org linkage audit logs (**admin**)
 - **`POST /api/subscription`** - Submit iOS/Android subscription receipts
-- **`GET /api/subscription`** - Get active subscription status
-- **`GET /api/subscription/receipts`** - Get stored receipts for current user
-- **`GET /api/programs/:id/programSteps`** - Get all program steps for a program
+- **`GET /api/subscription`** - Active subscription / premium summary
+- **`GET /api/subscription/receipts`** - Stored receipts for current user
+- **`POST|GET|DELETE /api/device-tokens`** - Push device token registration
+- **`GET /api/programs/metrics`** - Prompt-service queue/latency metrics (both tracks)
+- **`GET /api/programs/:id/programSteps`** - Program steps for a program
 - **`POST /api/programSteps/:id/messages`** - Add message to a program step
-- **`GET /api/programSteps/:id/messages`** - Get messages for a program step
+- **`GET /api/programSteps/:id/messages`** - Messages for a program step
+- **`GET /api/messages-stats?date=&programId=`** - Message stats since epoch (authenticated)
+- **`POST /api/admin/auth/login`** (etc.) - Admin accounts (separate from app users)
 
 ### Key Features
-- ✅ **Combined Profile Endpoint**: Single call for complete user state
+- ✅ **Combined Profile Endpoint**: Single call for complete user state (including `premium` and org summary)
 - ✅ **Unified Pairings**: Both accepted and pending pairings in one array
-- ✅ **Complete Pairing Workflow**: Full end-to-end pairing acceptance and management
-- ✅ **Program Steps**: Clean, efficient day-based therapy program structure
-- ✅ **Structured Program Data**: Programs return organized program_steps arrays instead of raw JSON (fully tested)
-- ✅ **Simplified Messages**: Clean message responses without metadata bloat
-- ✅ **Rate Limited**: 1000 requests per 15 minutes for general API
-- ✅ **Comprehensive Tests**: 95+ tests with 98%+ success rates (Profile tests: 100%)
-- ✅ **JWT Authentication**: Secure access and refresh tokens
+- ✅ **Program steps + messaging**: REST surface under `/api/programs/...` and `/api/programSteps/...`
+- ✅ **Rate Limited**: 1000 requests per 15 minutes for general API (plus stricter login / profile-update limits)
+- ✅ **JWT Authentication**: Access + refresh tokens with rotation (`npm test` exercises core flows)
 
 ### API Design Philosophy
 - **Clean Responses**: Minimal, essential data only - no unnecessary nesting or metadata
@@ -166,6 +194,11 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
       "partner_name": "Jane",
       "children": 2,
       "max_pairings": 1,
+      "premium": false,
+      "org_id": null,
+      "org_name": null,
+      "org_city": null,
+      "org_state": null,
       "created_at": "2024-01-01T00:00:00.000Z",
       "updated_at": "2024-01-01T00:00:00.000Z",
       "pairings": [
@@ -205,6 +238,8 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 **📋 Data Explanation:**
 - **`pairings`**: Contains both accepted pairings (with full partner info) and pending requests (with `partner: null`)
 - **`pairing_codes`**: Array of all partner codes for this user (both accepted and pending) for quick access
+- **`premium`**: `true` if the user has org-based premium (`is_premium`) or premium access through any accepted pairing subscription
+- **`org_id` / `org_*`**: When the user is linked to an admin-managed org code, these reflect that record; otherwise custom on-profile org fields (`org_name`, `org_city`, `org_state`) are returned when set
 
 ### Authentication
 
@@ -217,25 +252,29 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
     "password": "Test1!@#"
   }
   ```
-- **Response:**
+- **Response:** User payload and tokens are nested under `data` (top-level `message` plus `data`).
   ```json
   {
     "message": "Login successful",
-    "user": {
-      "id": "unique_id",
-      "email": "user@example.com",
-      "user_name": "John",
-      "partner_name": "Jane",
-      "children": 2,
-      "max_pairings": 1,
-      "created_at": "2024-01-01T00:00:00.000Z"
-    },
-    "access_token": "jwt_token",
-    "refresh_token": "refresh_jwt_token",
-    "expires_in": "1h",
-    "refresh_expires_in": "14d"
+    "data": {
+      "user": {
+        "id": "unique_id",
+        "email": "user@example.com",
+        "user_name": "John",
+        "partner_name": "Jane",
+        "children": 2,
+        "max_pairings": 1,
+        "premium": false,
+        "created_at": "2024-01-01T00:00:00.000Z"
+      },
+      "access_token": "jwt_token",
+      "refresh_token": "refresh_jwt_token",
+      "expires_in": 86400,
+      "refresh_expires_in": 1209600
+    }
   }
   ```
+  **`expires_in` / `refresh_expires_in`** are **seconds** (derived from `JWT_*_EXPIRES_IN` / `JWT_*_EXPIRES_IN_SECONDS`; default access **24h**, refresh **14d**).
 
 #### Refresh Token
 - **POST** `/api/refresh`
@@ -252,8 +291,8 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
     "message": "Token refreshed successfully",
     "access_token": "new_jwt_token",
     "refresh_token": "new_refresh_jwt_token",
-    "expires_in": "1h",
-    "refresh_expires_in": "14d"
+    "expires_in": 86400,
+    "refresh_expires_in": 1209600
   }
   ```
 - **Security Note:**
@@ -282,6 +321,11 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
     "message": "Logged out successfully"
   }
   ```
+
+#### Token info (debug)
+- **POST** `/api/token-info`
+- **Body:** `{ "access_token": "jwt..." }`
+- **Description:** Decodes JWT payload **without verifying the signature** — for local debugging only. Returns issued/expiry times, user id/email, and `is_expired`.
 
 ### Subscriptions
 
@@ -407,12 +451,13 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 
 #### Get User by ID
 - **GET** `/api/users/:id`
-- **Response:** Single user object
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:** User object with computed `premium` and org summary fields (not wrapped in `{ user: ... }`).
 
 #### Update User
 - **PUT** `/api/users/:id`
 - **Headers:** `Authorization: Bearer {access_token}`
-- **Rate Limit:** 3 requests per 5 minutes per IP
+- **Rate Limit:** Default 3 requests per 5 minutes per IP (`USER_UPDATE_RATE_LIMIT`)
 - **Description:** Update user profile including relationship details and org association. Users can only update their own profile.
 - **Body:**
   ```json
@@ -487,57 +532,26 @@ Passing a valid `org_code` string activates premium status on the user record wi
 }
 ```
 
-**Rate limiting note:** This endpoint is throttled at 3 requests per 5 minutes per IP to prevent org code farming/enumeration attacks. Exceeding the limit returns `429 Too Many Requests`.
+**Rate limiting note:** This endpoint is throttled at 3 requests per 5 minutes per IP by default (`USER_UPDATE_RATE_LIMIT`) to prevent org code farming/enumeration attacks. Exceeding the limit returns `429 Too Many Requests`.
 
-#### Get User Profile with Pairings & Requests (Combined)
-- **GET** `/api/profile`
+#### Soft-delete user
+- **DELETE** `/api/users/:id`
 - **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Returns the authenticated user's complete profile combined with their pairing information and pending pairing requests
-- **Response:**
-  ```json
-  {
-    "message": "User profile retrieved successfully",
-    "profile": {
-      "id": "unique_id",
-      "email": "user@example.com",
-      "user_name": "John",
-      "partner_name": "Jane",
-      "children": 2,
-      "password_hash": "$2b$10$...",
-      "max_pairings": 1,
-      "deleted_at": null,
-      "created_at": "2024-01-01T00:00:00.000Z",
-      "updated_at": "2024-01-01T00:00:00.000Z",
-      "pairings": [
-        {
-          "id": "pairing_id",
-          "status": "accepted",
-          "partner_code": "ABC123",
-          "created_at": "2024-01-01T00:30:00.000Z",
-          "updated_at": "2024-01-01T00:35:00.000Z",
-          "partner": {
-            "id": "partner_user_id",
-            "user_name": "Jane",
-            "email": "jane.doe@example.com"
-          }
-        },
-        {
-          "id": "pending_pairing_id",
-          "status": "pending",
-          "partner_code": "XYZ789",
-          "created_at": "2024-01-01T00:45:00.000Z",
-          "updated_at": "2024-01-01T00:45:00.000Z",
-          "partner": null
-        }
-      ],
-      "pairing_codes": ["ABC123", "XYZ789"]
-    }
-  }
-  ```
+- **Description:** Soft-deletes the user (and cascades per model rules).
+
+#### Restore user
+- **PATCH** `/api/users/:id/restore`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Restores a soft-deleted user record.
+
+#### List deleted users
+- **GET** `/api/users/deleted/all`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Returns users in deleted state (support/admin-style).
 
 ### Organization Code Management
 
-Organization codes are used to manage organizational access and configuration. They contain organization information and can include address details. Only admin users can create, update, or delete org codes, while regular authenticated users can list all org codes.
+Organization codes are used to manage organizational access and configuration. They contain organization information and can include address details. **Admin JWT** (`POST /api/admin/auth/login`) is required to create, read by id, update, delete org codes, or view audit logs. Regular authenticated **app** users can **list** org codes; LLM prompt fields (`initial_program_prompt`, `next_program_prompt`, `therapy_response_prompt`) are **stripped** from that list unless the caller’s token has `type: "admin"`.
 
 #### Create Organization Code
 - **POST** `/api/org-codes`
@@ -583,8 +597,8 @@ Organization codes are used to manage organizational access and configuration. T
 
 #### Get All Organization Codes
 - **GET** `/api/org-codes`
-- **Headers:** `Authorization: Bearer {access_token}` (Regular user authentication)
-- **Description:** Returns all organization codes with address information. Note: Prompt properties are excluded from responses for privacy
+- **Headers:** `Authorization: Bearer {access_token}` (any authenticated **app** user; **admin** tokens list with prompt fields intact)
+- **Description:** Returns all organization codes with address information. For non-admin callers, `initial_program_prompt`, `next_program_prompt`, and `therapy_response_prompt` are omitted.
 - **Response:**
   ```json
   {
@@ -606,6 +620,12 @@ Organization codes are used to manage organizational access and configuration. T
     ]
   }
   ```
+
+#### Org linkage audit (admin)
+- **GET** `/api/org-codes/audit/org-linkages`
+- **Headers:** `Authorization: Bearer {admin_access_token}`
+- **Query:** optional `user_id`, `limit`, `offset`
+- **Description:** Returns `user_org_code_audit_logs` entries for org-code linkage changes.
 
 #### Get Organization Code by ID
 - **GET** `/api/org-codes/:id`
@@ -698,7 +718,7 @@ This makes pairing more flexible since you don't need to know the other person's
 - **POST** `/api/pairing/request`
 - **Headers:** `Authorization: Bearer {access_token}`
 - **Body:** No body required
-- **Response:**
+- **Response:** **201 Created**
   ```json
   {
     "message": "Partner code generated successfully. Share this code with someone to pair with you.",
@@ -843,34 +863,54 @@ This makes pairing more flexible since you don't need to know the other person's
 - **Headers:** `Authorization: Bearer {access_token}`
 - **Response:** Detailed pairing information
 
+#### Soft-delete pairing
+- **DELETE** `/api/pairing/:pairingId`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Soft-deletes the pairing; caller must be `user1_id` or `user2_id`.
+
+#### Restore pairing
+- **PATCH** `/api/pairing/:pairingId/restore`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Restores a soft-deleted pairing (intended for admin/support tooling).
+
+#### List deleted pairings
+- **GET** `/api/pairing/deleted/all`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Returns soft-deleted pairings (support/admin-style endpoint).
+
 ### Programs
 
-Programs are AI-generated couples therapy programs that can be created with or without pairings. Each program contains structured daily exercises designed to help couples improve their relationship. When a program is created, OpenAI automatically generates personalized content based on the user's input.
+Programs are AI-generated couples therapy programs that can be created with or without pairings. Each program contains structured daily exercises. When a program is created, the API runs LLM generation **asynchronously** (immediate HTTP response, then steps appear once generation completes).
+
+**Helpful vs Hopeful:** Program generation picks a prompt stack per user: **Helpful** (default, secular EFT/Gottman-oriented) or **Hopeful** (faith-based) when the user has a linked admin **org code** (with optional per-org prompt overrides) **or** custom org fields on their profile (`org_name` / `org_city` / `org_state`). Pairing-based **step messages** use the same selection for chime-in and couples therapy responses.
+
+**Reliability:** If the first LLM call fails, a **follow-up attempt** is scheduled after `PROGRAM_GENERATION_FOLLOWUP_DELAY_MS` (default **60000** ms) unless `PROGRAM_GENERATION_FOLLOWUP_ENABLED=false`. Persistent failures set `generation_error` on the program row.
 
 **Key Features:**
-- **AI-Generated Content**: Each program contains 14 days of structured exercises
-- **Flexible Pairing**: Programs can be created independently or linked to pairings
-- **Automatic Conversation Creation**: Each program day gets its own conversation thread
-- **Privacy Protection**: Sensitive fields are excluded from list endpoints
+- **AI-Generated Content**: Each program is structured as **14** day-level steps once generation succeeds
+- **Flexible Pairing**: Programs can be created with or without `pairing_id` (pairing must be **accepted** for paired step messaging / couples therapy responses)
+- **Program owner must set `user_name`**: `POST /api/programs` returns **400** if `user_name` is missing on the profile
+- **Observability:** `GET /api/programs/metrics` exposes queue/latency counters for both prompt services
 
-**Privacy Note**: The `user_input` and `pairing_id` fields are returned in the POST creation response and the individual `GET /api/programs/:id` response. The list endpoint `GET /api/programs` excludes these fields for privacy protection.
+**Privacy / fields:** `GET /api/programs` and `GET /api/programs/:id` both return `user_input` and `pairing_id` for authorized users (owner or accepted pair partner). Raw `therapy_response` is not included in these responses.
 
 #### Create Program
 - **POST** `/api/programs`
 - **Headers:** `Authorization: Bearer {access_token}`
+- **Success:** **201 Created**
 - **Body:**
   ```json
   {
     "user_input": "I feel less and less connected with my wife. I want a plan that will help us have what we used to. We would laugh and joke all the time and now things feel disconnected and distant",
     "pairing_id": "pairing_id",
-    "steps_required_for_unlock": 7
+    "steps_required_for_unlock": 5
   }
   ```
   **Note**: 
   - `pairing_id` is optional. Programs can be created independently without a pairing.
-  - `steps_required_for_unlock` is optional (default: 7). This sets how many program steps need at least one message before unlocking the next program.
-  - User names and relationship details are now managed through the user profile (PUT /users/:id).
-  - Therapy response generation happens automatically in the background. If it fails, use the manual endpoint below.
+  - `steps_required_for_unlock` is optional; if omitted it defaults to `DEFAULT_STEPS_REQUIRED_FOR_UNLOCK` (**0** when that env var is unset). This is how many distinct steps must have at least one message before `next_program_unlocked` becomes `true`.
+  - Set `user_name` (and ideally `partner_name`) via `PUT /api/users/:id` before creating a program.
+  - Initial generation runs in the background after **201/200** returns; poll `GET /api/programs/:id` or `GET /api/programs/:id/programSteps` for steps. If generation fails, check the program row / logs for `generation_error`, or call the manual endpoint below.
 - **Response:**
   ```json
   {
@@ -880,7 +920,7 @@ Programs are AI-generated couples therapy programs that can be created with or w
       "user_id": "user_id",
       "user_input": "I feel less and less connected with my wife...",
       "pairing_id": "pairing_id",
-      "steps_required_for_unlock": 7,
+      "steps_required_for_unlock": 5,
       "next_program_unlocked": false,
       "created_at": "2024-01-01T00:00:00.000Z"
     }
@@ -910,15 +950,20 @@ Programs are AI-generated couples therapy programs that can be created with or w
   }
   ```
   
-  **503 Service Unavailable** - OpenAI API key not configured:
+  **503 Service Unavailable** - Prompt service not configured:
   ```json
   {
-    "error": "ChatGPT service is not configured. Please set OPENAI_API_KEY environment variable.",
-    "details": "The OpenAI API key is required to generate therapy responses."
+    "error": "Prompt service is not configured. Please set OPENAI_API_KEY.",
+    "details": "An LLM API key is required to generate therapy responses."
   }
   ```
   
-  **Note**: The therapy response is generated asynchronously. Check the program steps after a few seconds to see if they were created. This endpoint can only be used once per program - if program steps already exist, you'll receive a 409 Conflict error.
+  **Note**: The therapy response is generated asynchronously with the same follow-up behavior as automatic generation. Check program steps after a short delay. This endpoint returns **409** if steps already exist. **503** if no prompt service is configured (`OPENAI_API_KEY`).
+
+#### Prompt service metrics
+- **GET** `/api/programs/metrics`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** JSON snapshot of request counts, timing, and queue depth for **Hopeful** and **Helpful** services (each includes `configured` and `model` when active).
 
 #### Get User's Programs
 - **GET** `/api/programs`
@@ -934,7 +979,7 @@ Programs are AI-generated couples therapy programs that can be created with or w
         "user_id": "user_id",
         "user_input": "I feel less and less connected with my wife...",
         "pairing_id": "pairing_id",
-        "steps_required_for_unlock": 7,
+        "steps_required_for_unlock": 5,
         "next_program_unlocked": false,
         "created_at": "2024-01-01T00:00:00.000Z",
         "updated_at": "2024-01-01T00:00:00.000Z",
@@ -968,7 +1013,7 @@ Programs are AI-generated couples therapy programs that can be created with or w
       "user_id": "user_id",
       "user_input": "I feel less and less connected with my wife...",
       "pairing_id": "pairing_id",
-      "steps_required_for_unlock": 7,
+      "steps_required_for_unlock": 5,
       "next_program_unlocked": false,
       "created_at": "2024-01-01T00:00:00.000Z",
       "updated_at": "2024-01-01T00:00:00.000Z",
@@ -990,20 +1035,20 @@ Programs are AI-generated couples therapy programs that can be created with or w
 #### Create Next Program
 - **POST** `/api/programs/:id/next_program`
 - **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Creates a follow-up therapy program based on the previous program's conversation starters. The previous program must be unlocked (`next_program_unlocked: true`) before a next program can be created.
+- **Description:** Creates a follow-up program from an existing one. The caller must have access to the previous program. There is **no** `next_program_unlocked` gate in the current API — this endpoint bases eligibility on ownership/access checks only.
 - **Body:**
   ```json
   {
     "user_input": "We've made great progress on communication. Now we want to work on spending more quality time together and being more present.",
-    "steps_required_for_unlock": 7
+    "steps_required_for_unlock": 5
   }
   ```
   **Note**: 
-  - `user_input` is required. This describes what the couple wants to work on next.
-  - `steps_required_for_unlock` is optional (default: 7).
-  - The new program automatically inherits the `pairing_id` from the previous program.
-  - User names are automatically pulled from the user profile and pairing.
-  - The AI prompt includes all conversation starters from the previous program that have user messages.
+  - `user_input` is required.
+  - `steps_required_for_unlock` is optional; when omitted it defaults like `POST /api/programs` (`DEFAULT_STEPS_REQUIRED_FOR_UNLOCK`, default **0**).
+  - The new program inherits `pairing_id` from the previous program.
+  - User names come from profile / pairing resolution, same as initial program creation.
+  - The prompt can include conversation starters from the prior program where users posted messages.
 - **Response:**
   ```json
   {
@@ -1014,7 +1059,7 @@ Programs are AI-generated couples therapy programs that can be created with or w
       "user_input": "We've made great progress on communication...",
       "pairing_id": "pairing_id",
       "previous_program_id": "previous_program_id",
-      "steps_required_for_unlock": 7,
+      "steps_required_for_unlock": 5,
       "next_program_unlocked": false,
       "created_at": "2024-01-15T00:00:00.000Z"
     }
@@ -1022,7 +1067,7 @@ Programs are AI-generated couples therapy programs that can be created with or w
   ```
 - **Validation Errors:**
   - `400`: Missing `user_input` field
-  - `403`: Previous program not unlocked or user doesn't have access
+  - `403`: User doesn't have access to previous program
   - `404`: Previous program not found
 
 **How It Works:**
@@ -1044,21 +1089,18 @@ Programs are AI-generated couples therapy programs that can be created with or w
 
 ### Program Unlock Feature
 
-The program unlock feature tracks user engagement and automatically unlocks access to the next program when a configurable threshold is met. This encourages consistent participation and ensures users complete enough of the current program before moving forward.
+The program unlock feature tracks user engagement and can require participation across multiple steps before `next_program_unlocked` becomes `true` (drives client UX; **not** a hard gate for `POST /api/programs/:id/next_program`).
 
 **How It Works:**
-1. Each program has a `steps_required_for_unlock` threshold (default: 7)
-2. When users add messages to program steps, the system tracks which steps have at least one message
-3. Once the threshold is met (e.g., 7 steps have messages), `next_program_unlocked` automatically changes to `true`
-4. The unlock status is checked automatically whenever a message is added to any program step
-5. For paired programs, messages from either user count toward the unlock threshold
+1. Each program has a `steps_required_for_unlock` threshold (API default **0** when omitted — set `DEFAULT_STEPS_REQUIRED_FOR_UNLOCK` or pass an explicit integer)
+2. When users add messages to program steps, the service counts how many steps have at least one message (paired programs count both users)
+3. When the count reaches the threshold and the threshold is greater than zero, `next_program_unlocked` flips to `true`
+4. After each new message, unlock status is re-checked on a short delay from the request path
 
 **Key Features:**
-- **Automatic Tracking**: No manual intervention needed - unlocks happen automatically when messages are added
-- **Configurable Threshold**: Set different unlock requirements per program (default: 7 steps)
-- **Shared Progress**: In paired programs, both users' contributions count toward unlocking
-- **Real-Time Updates**: Unlock status is checked immediately after each message is posted
-- **Persistent State**: Once unlocked, the status remains true even if messages are deleted
+- **Automatic Tracking**: Updates when messages are added
+- **Configurable Threshold**: Per-program via create / next-program bodies or env default
+- **Shared Progress**: In paired programs, both users' contributions count
 
 **Example Usage:**
 ```javascript
@@ -1100,105 +1142,34 @@ The program steps system allows users to engage with each day of their therapy p
 - **Background Therapy Responses**: Automatic AI-powered therapeutic guidance when both users engage
 - **Separate Message Storage**: Each message is stored as a separate database record for better organization
 - **User Participation**: Both users in a pairing can contribute messages to any day's program step
-- **Message Management**: Users can add, edit, and view their own messages
-- **Progress Tracking**: Messages can include metadata to track exercise completion and engagement
-- **Access Control**: Only program owners and paired users can access program steps
-- **Unlock Integration**: Adding messages to steps automatically updates program unlock status
+- **Message Management**: Users can add and edit their own messages (**edits**: `content` only on `PUT`); metadata is set server-side for system messages
 
 **Database Structure:**
 - **Program Steps Table**: Stores day-level metadata (theme, conversation starter, science explanation)
 - **Messages Table**: Stores individual messages within program steps with full user tracking
 
-## Background Therapy Response System
+## Background therapy & step messaging
 
-The API includes an intelligent background therapy response system that automatically provides therapeutic guidance when both users in a pairing engage in conversation. This feature uses advanced AI to deliver contextual, personalized therapy insights based on Emotionally Focused Therapy (EFT) and Gottman Method principles.
+### Couples therapy response (paired programs)
 
-### How It Works
+When a program has an **accepted** `pairing_id`, both partners can post `user_message` rows on the same program step. After **both** users have posted, the API runs **Hopeful** or **Helpful** (per org context) to append one or more **`system`** messages with metadata such as `type: "chime_in_response_1"`, `triggered_by: "both_users_posted"`. Processing is kicked off via `setImmediate` so HTTP responses stay fast.
 
-1. **Trigger Condition**: When both users in a pairing have posted at least one message to a program step
-2. **Timing**: Activates 2 seconds after the second user posts their first message
-3. **Non-Blocking**: Runs in the background without affecting API response times
-4. **AI Processing**: Uses OpenAI GPT to generate therapeutic responses based on both users' messages
-5. **System Messages**: Responses are stored as system messages (up to 3 per trigger)
+### Chime-in (“Hopeful” / “Helpful”) prompts
 
-### Therapeutic Approach
+If the **latest** user message contains **`hopeful`** or **`helpful`** (case-insensitive), the API treats it as a request for an extra reflection and may add **`system`** messages with `type: "chime_in_prompt"` (driven by the same prompt service).
 
-The AI responses are designed using evidence-based couples therapy methods:
+### First-step welcome
 
-- **Emotionally Focused Therapy (EFT)**: Primary therapeutic framework focusing on emotional connection
-- **Gottman Method**: Complementary techniques for relationship strengthening
-- **Personalized Guidance**: Responses reference specific user names and message content
-- **Progressive Support**: Each response builds on the program step context
+On the **first** program (no `previous_program_id`), **day 1**, the **first** user message on that step triggers a synchronous welcome **`system`** message (`type: "first_message_welcome"`) that explains the chime-in behavior. The HTTP **201** response from `POST /api/programSteps/:id/messages` can include `system_messages: [...]` in that case.
 
-### Example Therapy Response Flow
+### Legacy “conversation” routes
 
-```json
-{
-  "step_messages": [
-    {
-      "id": "msg1",
-      "message_type": "user_message",
-      "sender": "Steve",
-      "content": "I feel like we've grown apart over the years. I miss the closeness we used to have."
-    },
-    {
-      "id": "msg2", 
-      "message_type": "user_message",
-      "sender": "Becca",
-      "content": "I feel the same way. I want us to find our way back to each other."
-    },
-    {
-      "id": "sys1",
-      "message_type": "system",
-      "sender_id": null,
-      "content": "Thank you both for sharing your feelings with me. I can hear the longing in both of your voices for deeper connection.",
-      "metadata": {
-        "type": "therapy_response",
-        "sequence": 1,
-        "total_messages": 3
-      }
-    },
-    {
-      "id": "sys2",
-      "message_type": "system", 
-      "sender_id": null,
-      "content": "Steve, when you shared that you miss the closeness you used to have, what emotions were you experiencing in that moment?",
-      "metadata": {
-        "type": "therapy_response",
-        "sequence": 2,
-        "total_messages": 3
-      }
-    },
-    {
-      "id": "sys3",
-      "message_type": "system",
-      "sender_id": null, 
-      "content": "Becca, your response shows such openness to rebuilding that bond together. Can you help us understand what finding your way back means to you?",
-      "metadata": {
-        "type": "therapy_response",
-        "sequence": 3,
-        "total_messages": 3
-      }
-    }
-  ]
-}
-```
+Older docs referred to `/api/programs/.../conversations` and `/api/conversations/...`. **Those paths are not mounted in the current server.** Use **`/api/programSteps/...`** for all step messaging.
 
-### System Message Characteristics
+### Technical notes
 
-- **Message Type**: `system` (distinct from `user_message` and `openai_response`)
-- **No Sender**: `sender_id` is always `null` for system messages
-- **Metadata**: Includes sequence information and therapy response type
-- **Content**: Therapeutic guidance, questions, and insights
-- **Timing**: Appears 2 seconds after trigger condition is met
-
-### Technical Implementation
-
-- **Non-Blocking Architecture**: API responses return immediately while therapy processing happens in background
-- **Error Resilience**: Therapy response failures don't affect main program step functionality  
-- **Rate Limiting**: Built-in OpenAI request queuing and rate limiting
-- **Security**: Input sanitization and validation for all user content sent to AI
-- **Pairing Requirement**: Only works for programs with accepted pairings
+- Requires `OPENAI_API_KEY` (or `TEST_MOCK_LLM=true` for deterministic stubs in dev/CI).
+- Honors per-org **therapy_response_prompt** on linked org codes when using Hopeful.
 
 ### Configuration
 
@@ -1307,9 +1278,11 @@ Without this configuration, the system will log warnings but continue normal ope
       "sender_id": "user_id",
       "content": "This exercise really helped us reconnect! We spent over an hour talking about our favorite memories together.",
       "created_at": "2024-01-01T02:00:00.000Z"
-    }
+    },
+    "system_messages": []
   }
   ```
+- **Note:** Status **201**. For the first user message on **day 1** of a user's **first** program, `system_messages` may contain a short welcome string; other therapy/system replies are loaded asynchronously — use `GET .../messages` to poll.
 
 #### Update Message in Program Step
 - **PUT** `/api/programSteps/:stepId/messages/:messageId`
@@ -1317,15 +1290,7 @@ Without this configuration, the system will log warnings but continue normal ope
 - **Body:**
   ```json
   {
-    "content": "Updated message content with more details about our experience.",
-    "metadata": {
-      "completed_exercise": true,
-      "partner_participated": true,
-      "duration_minutes": 75,
-      "satisfaction_rating": 5,
-      "edited": true,
-      "edit_reason": "Added more details"
-    }
+    "content": "Updated message content with more details about our experience."
   }
   ```
 - **Response:**
@@ -1334,31 +1299,180 @@ Without this configuration, the system will log warnings but continue normal ope
     "message": "Message updated successfully"
   }
   ```
-- **Note**: Only the message sender can edit their own messages. OpenAI responses cannot be edited.
+- **Note**: Only the message sender can edit their own messages. System / LLM messages cannot be edited.
 
-#### Get Conversations for Specific Day (Legacy)
-- **GET** `/api/programs/:programId/conversations/day/:day`
+### Admin authentication (dashboard / org tooling)
+
+Admin accounts are separate from app users (`admin_users` table). Tokens use the same `JWT_SECRET` as app users but embed `type: "admin"` in the JWT payload; use these with org-code admin routes (`/api/org-codes`, audit, etc.).
+
+| Method | Path | Notes |
+|--------|------|--------|
+| POST | `/api/admin/auth/login` | Body: `email`, `password`. Same rate limits as app login. |
+| POST | `/api/admin/auth/register` | Bootstrap / create admin (protect in production). |
+| GET | `/api/admin/auth/profile` | Admin profile. |
+| PUT | `/api/admin/auth/profile` | Update admin email / names. |
+| POST | `/api/admin/auth/refresh` | Body: `refresh_token` (admin refresh uses `JWT_REFRESH_SECRET`). |
+| POST | `/api/admin/auth/logout` | Requires admin **access** token. |
+
+### Device tokens (push)
+
+Device tokens are FCM registration tokens obtained from the Firebase SDK on the client side (iOS, Android, or web). Registering them here allows the server's `PushNotificationService` to fan out push notifications to all of a user's active devices. Token strings are **never** returned to HTTP clients after registration — only the opaque record `id` is exposed, which is used only for deletion.
+
+**Per-user limit:** A user may have at most **25** registered device tokens. Attempting to register a 26th token (without first removing an existing one) returns `400 Device token limit reached`.
+
+#### Register Device Token
+- **POST** `/api/device-tokens`
 - **Headers:** `Authorization: Bearer {access_token}`
-- **Note**: This endpoint is maintained for backward compatibility. For new implementations, use the root-level conversation endpoints above.
+- **Body:**
+  ```json
+  {
+    "device_token": "fcm_registration_token_from_client_sdk",
+    "platform": "ios"
+  }
+  ```
+  - `device_token` — required; string between 10–512 characters
+  - `platform` — required; one of `"ios"`, `"android"`, `"web"`
+- **Response:** `201 Created` on first registration, `200 OK` on idempotent re-registration (same token already exists for the user — only `platform` is updated if it changed):
+  ```json
+  {
+    "device_token": {
+      "id": "record_id",
+      "platform": "ios"
+    }
+  }
+  ```
+- **Error Responses:**
+  - `400`: `device_token is required` / `platform is required` / `Invalid platform. Must be one of: ios, android, web` / `Device token limit reached. A user may have at most 25 registered devices`
+  - `404`: `User not found`
 
-#### Add Message to Specific Day (Legacy)
-- **POST** `/api/programs/:programId/conversations/day/:day`
+#### List Device Tokens
+- **GET** `/api/device-tokens`
 - **Headers:** `Authorization: Bearer {access_token}`
-- **Note**: This endpoint is maintained for backward compatibility. For new implementations, use `POST /api/conversations/:id/messages`.
-
-### Health Check
-- **GET** `/health`
+- **Description:** Returns all device token records for the authenticated user. Token strings are intentionally omitted; use the record `id` to delete.
 - **Response:**
   ```json
   {
-    "status": "OK",
-    "timestamp": "2024-01-01T00:00:00.000Z"
+    "device_tokens": [
+      {
+        "id": "record_id",
+        "user_id": "user_id",
+        "platform": "ios",
+        "created_at": "2024-01-01T00:00:00.000Z",
+        "updated_at": "2024-01-01T00:00:00.000Z"
+      }
+    ],
+    "count": 1
   }
   ```
 
+#### Delete Device Token
+- **DELETE** `/api/device-tokens/:id`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Removes a specific token record by its `id`. Only removes tokens owned by the authenticated user.
+- **Response:** `200 OK`
+  ```json
+  { "success": true }
+  ```
+- **Error Responses:**
+  - `404`: `Device token not found`
+
+### Push Notification Service (server-side)
+
+`PushNotificationService` (`services/PushNotificationService.js`) is instantiated once at startup and exposed via `app.locals.pushNotificationService`. Routes and background jobs call it to send push notifications to users' registered devices via **Firebase Cloud Messaging (FCM HTTP v1 API)**, which handles delivery to APNs (iOS), FCM (Android), and Web Push.
+
+#### Configuration
+
+Firebase credentials must be provided via one of two env vars:
+
+| Env var | When to use |
+|---------|-------------|
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Recommended for Railway/containerized deploys — paste the full service-account JSON as a single-line string |
+| `FIREBASE_SERVICE_ACCOUNT_PATH` | Recommended for local dev — path to a service-account JSON file on disk (ensure the file is gitignored) |
+
+If neither is set, the service starts in **unconfigured mode**: every send silently no-ops and returns `{ skipped: true }` — the rest of the API stays healthy. This is the default for local dev and CI environments that don't need real push.
+
+Set `TEST_MOCK_PUSH=true` to force a deterministic in-memory mock that always returns success without making real FCM calls. This mirrors `TEST_MOCK_LLM=true` for the same purpose.
+
+#### High-level API
+
+Use these from routes or background jobs:
+
+```javascript
+const push = req.app.locals.pushNotificationService;
+
+// Send to every device registered for one user
+await push.sendToUser(userId, payload);
+
+// Fan out the same payload to every device of every user in the array
+await push.sendToUsers([userId1, userId2], payload);
+```
+
+Both methods automatically **prune dead FCM tokens** — if FCM responds with `registration-token-not-registered` or similar, those token rows are deleted from `device_tokens` so they're never retried.
+
+#### Payload shape
+
+```javascript
+{
+  // Visible notification (at least one of title/body required unless using data-only)
+  title: "You have a new message",
+  body: "Your partner just replied.",
+  imageUrl: "https://example.com/icon.png",  // optional
+
+  // Arbitrary data (all values coerced to strings per FCM spec)
+  data: {
+    screen: "program_step",
+    step_id: "abc123"
+  },
+
+  // iOS / APNs extras (optional)
+  badge: 1,
+  sound: "default",
+  apnsContentAvailable: true,  // silent background push
+
+  // Android extras (optional)
+  android: {
+    priority: "high",
+    channelId: "reminders"
+  }
+}
+```
+
+A payload with **only** `data` (no `title`/`body`) is valid and delivers a silent data push.
+
+#### Low-level API
+
+```javascript
+// Send directly to raw FCM token strings (no model lookup, no auto-prune)
+await push.sendToTokens(tokenStrings, payload);
+// Returns { successCount, failureCount, invalidTokens }
+```
+
+#### Dead token cleanup
+
+FCM returns per-token error codes. The high-level `sendToUser` / `sendToUsers` methods automatically call `DeviceToken.removeDeviceTokenByString()` for any token FCM reports as permanently dead (e.g. the app was uninstalled). This keeps the `device_tokens` table lean without any manual maintenance.
+
+#### Status checks
+
+```javascript
+push.isConfigured()  // true if Firebase or mock is active
+push.isMockMode()    // true if running against TEST_MOCK_PUSH or injected test double
+```
+
+### Message stats
+
+- **GET** `/api/messages-stats?date={epoch_ms}&programId={uuid}` (authenticated) — returns aggregate stats for messages since `date` on the given program.
+
+### Health Check
+- **GET** `/health`
+- **Response:** Plain text `OK` with `Content-Type: text/plain` (suitable for load balancers).
+
+### Diagnostics
+- **GET** `/health/diagnostics`
+- **Response:** JSON such as `{ "ok": true, "test_mock_llm": false }` for local/CI checks.
+
 ## Database Schema
 
-The MySQL database automatically creates the following tables:
+The MySQL database automatically creates the following tables (and incremental migrations add columns on older installs). **`org_codes`**, **`admin_users`**, **`device_tokens`**, **`ios_subscriptions`**, **`android_subscriptions`**, and related indexes/FKs are defined in the matching `models/*.js` files — the snippets below focus on the core app entities.
 
 ### Users Table
 ```sql
@@ -1370,28 +1484,41 @@ CREATE TABLE users (
   partner_name VARCHAR(255) DEFAULT NULL,
   children INT DEFAULT NULL,
   max_pairings INT DEFAULT 1,
+  org_code_id VARCHAR(50) DEFAULT NULL,
+  org_name VARCHAR(255) DEFAULT NULL,
+  org_city VARCHAR(100) DEFAULT NULL,
+  org_state VARCHAR(50) DEFAULT NULL,
+  is_premium TINYINT(1) NOT NULL DEFAULT 0,
+  bypass_password TINYINT(1) NOT NULL DEFAULT 0,
   deleted_at DATETIME DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_email (email),
-  INDEX idx_deleted_at (deleted_at)
+  INDEX idx_deleted_at (deleted_at),
+  INDEX idx_org_code_id (org_code_id),
+  CONSTRAINT fk_users_org_code
+    FOREIGN KEY (org_code_id) REFERENCES org_codes(id)
+    ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
+(Plus `user_org_code_audit_logs` for org linkage history — created by the same model.)
 
 ### Refresh Tokens Table
 ```sql
 CREATE TABLE refresh_tokens (
   id VARCHAR(50) PRIMARY KEY,
   user_id VARCHAR(50) NOT NULL,
+  user_type ENUM('user', 'admin') DEFAULT 'user',
   token VARCHAR(500) UNIQUE NOT NULL,
   expires_at DATETIME NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_user_id (user_id),
+  INDEX idx_user_type (user_type),
   INDEX idx_token (token),
-  INDEX idx_expires_at (expires_at),
-  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+  INDEX idx_expires_at (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
+App **user** refresh rows align with `users.id`; **admin** rows align with `admin_users.id` (no FK in schema — enforced in services).
 
 ### Pairings Table
 ```sql
@@ -1401,6 +1528,7 @@ CREATE TABLE pairings (
   user2_id VARCHAR(50) DEFAULT NULL,
   partner_code VARCHAR(10) DEFAULT NULL,
   status VARCHAR(20) DEFAULT 'pending',
+  premium TINYINT(1) NOT NULL DEFAULT 0,
   deleted_at DATETIME DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1408,6 +1536,7 @@ CREATE TABLE pairings (
   INDEX idx_user2_id (user2_id),
   INDEX idx_partner_code (partner_code),
   INDEX idx_status (status),
+  INDEX idx_premium (premium),
   INDEX idx_deleted_at (deleted_at),
   FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
   FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE
@@ -1423,6 +1552,11 @@ CREATE TABLE programs (
   pairing_id VARCHAR(50) DEFAULT NULL,
   previous_program_id VARCHAR(50) DEFAULT NULL,
   therapy_response LONGTEXT DEFAULT NULL,
+  generation_prompt LONGTEXT DEFAULT NULL,
+  generation_error TEXT DEFAULT NULL,
+  regenerate_therapy_response BOOLEAN DEFAULT FALSE,
+  llm_used VARCHAR(100) DEFAULT NULL,
+  seconds_to_load DECIMAL(8,4) DEFAULT NULL,
   steps_required_for_unlock INT DEFAULT 7,
   next_program_unlocked BOOLEAN DEFAULT FALSE,
   deleted_at DATETIME DEFAULT NULL,
@@ -1439,10 +1573,11 @@ CREATE TABLE programs (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
-**Program Unlock Feature:**
-- `steps_required_for_unlock`: Number of program steps that need at least one message before unlocking the next program (default: 7)
-- `next_program_unlocked`: Boolean flag indicating if the unlock threshold has been met (automatically updated when messages are added). API responses return JavaScript boolean values (`true`/`false`) instead of numeric values (0/1)
-- `previous_program_id`: References the previous program in a sequence, enabling continuity across multiple therapy programs
+**Program metadata:**
+- `steps_required_for_unlock`: Stored per program; the HTTP API defaults **omitted** values to `DEFAULT_STEPS_REQUIRED_FOR_UNLOCK` (env, default **0**) on create.
+- `next_program_unlocked`: Updated as users post messages (threshold must be greater than zero to flip the flag).
+- `generation_error` / `generation_prompt`: Auditing fields when LLM generation fails or succeeds.
+- `regenerate_therapy_response`: When set, a background poller may re-run initial generation.
 
 ### Program Steps Table
 ```sql
@@ -1493,7 +1628,28 @@ CREATE TABLE messages (
 **Message Types:**
 - `user_message`: Messages posted by users in the pairing
 - `openai_response`: AI-generated program content (legacy)
-- `system`: Background therapy responses triggered by user interactions
+- `system`: Server-originated messages — welcome copy, chime-in prompts, couples therapy follow-ups, etc. (see `metadata.type` such as `first_message_welcome`, `chime_in_prompt`, `chime_in_response_1`)
+
+### Device Tokens Table
+```sql
+CREATE TABLE device_tokens (
+  id VARCHAR(50) PRIMARY KEY,
+  user_id VARCHAR(50) NOT NULL,
+  device_token VARCHAR(512) NOT NULL,
+  platform ENUM('ios', 'android', 'web') NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_user_device (user_id, device_token),
+  INDEX idx_user_id (user_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Notes:**
+- `device_token` is a raw FCM registration token (10–512 chars). The `UNIQUE KEY unique_user_device` ensures a token can only appear once per user — re-registering the same token updates `platform` in place (upsert) without creating duplicates.
+- `platform` is `NOT NULL`; existing rows with a `NULL` platform are automatically backfilled to `'ios'` on startup via an incremental migration.
+- Per-user cap: **25 tokens**. The model enforces this before inserting a new row.
+- `ON DELETE CASCADE`: when a user is deleted, all their device token rows are removed automatically.
 
 ## Password Requirements
 
@@ -1517,15 +1673,15 @@ Partner codes are temporarily generated when users request pairings:
 
 The API uses JWT (JSON Web Tokens) for authentication with automatic refresh token rotation:
 
-- **Access Tokens**: Short-lived (1 hour) for API requests
-- **Refresh Tokens**: Long-lived (14 days) with automatic rotation and sliding expiration
+- **Access Tokens**: Lifetime from `JWT_EXPIRES_IN` (default **24h**) for app users
+- **Refresh Tokens**: Long-lived (**14d** by default) with rotation and sliding extension on activity
 - **Bearer Token**: Include `Authorization: Bearer {token}` in request headers
 
 ### Refresh Token Rotation & Automatic Extension
 
 For enhanced security and user experience, the API implements automatic refresh token rotation with activity-based extension:
 
-1. **Sliding Expiration**: Each time you refresh, the expiration window extends by 7 days
+1. **Sliding Expiration**: Each successful **refresh** issues a new refresh token with a fresh **14-day** window (per `JWT_REFRESH_EXPIRES_IN` / stored expiry)
 2. **Token Invalidation**: Old refresh tokens are immediately invalidated after use
 3. **Reuse Prevention**: Attempting to reuse an old refresh token will fail with 401 error
 4. **Automatic Extension**: Every authenticated API call resets refresh token expiration to 14 days
@@ -1548,10 +1704,11 @@ For enhanced security and user experience, the API implements automatic refresh 
 The API includes comprehensive error handling for:
 
 - **400 Bad Request**: Missing fields, invalid email format, password validation
-- **401 Unauthorized**: Missing or invalid access token
-- **403 Forbidden**: Invalid refresh token, unauthorized pairing actions
+- **401 Unauthorized**: Missing or invalid access token (or invalid/expired refresh token where applicable)
+- **403 Forbidden**: Authorization failed (wrong user, admin-only route, etc.)
 - **404 Not Found**: User or pairing not found
 - **409 Conflict**: Duplicate email, pairing already exists
+- **423 Locked**: Too many failed logins / account lockout window
 - **500 Internal Server Error**: Database errors, server issues
 
 ## Development
@@ -1573,157 +1730,24 @@ The API includes a comprehensive test suite with multiple test categories:
 npm test
 ```
 
-### Individual Test Suites
+### Individual scripts (`package.json`)
 
-#### API Functionality Tests
-```bash
-npm run test:api
-```
-Tests all endpoints including user creation, authentication, pairing system, and error handling.
+| Command | Purpose |
+|--------|---------|
+| `npm test` | Full orchestrated run (`tests/run-all-tests.js`) |
+| `npm run test:ci` | Same runner with `--skip-server-check` |
+| `npm run test:quick` | `--no-load` variant |
+| `npm run test:security` | `tests/security-test.js` |
+| `npm run test:load` | `tests/load-test.js` |
+| `npm run test:auth` | `tests/auth-test.js` (also `test:mysql`) |
+| `npm run test:programs` | `tests/programs-test.js` |
+| `npm run test:steps` | `tests/program-steps-test.js` |
+| `npm run test:messages` | `tests/messages-test.js` |
+| `npm run test:therapy-trigger` | `tests/therapy-trigger-test.js` |
+| `npm run test:push` | `tests/push-notification-service-test.js` |
+| `npm run test:cleanup` | `tests/cleanup-test-data.js` |
 
-#### Security Tests  
-```bash
-npm run test:security
-```
-Tests security measures including rate limiting, input validation, and prompt injection protection.
-
-#### Load Tests
-```bash
-npm run test:load
-```
-Tests API performance under concurrent load conditions.
-
-#### OpenAI Integration Tests
-```bash
-npm run test:openai
-```
-Tests OpenAI service integration and content generation.
-
-#### Therapy Response Tests
-```bash
-npm run test:therapy
-```
-Tests the background therapy response system including:
-- Trigger logic for both users posting messages
-- Non-blocking API behavior
-- System message storage and metadata
-- Error handling and recovery
-- Mock OpenAI responses for testing without API calls
-
-#### Authentication Tests
-```bash
-npm run test:auth
-```
-Comprehensive authentication system tests (19 tests) including:
-- User registration with password validation
-- Login and logout functionality
-- Token refresh with automatic rotation
-- Refresh token rotation verification (new tokens issued, old tokens invalidated)
-- Invalid credential handling
-- Profile endpoint access control
-- JWT token structure validation
-- Error scenarios and edge cases
-
-#### Refresh Token Reset Tests
-```bash
-node tests/refresh-token-reset-test.js
-```
-Comprehensive test suite for automatic refresh token expiration reset:
-- Refresh tokens reset to 14 days on every authenticated API call
-- Non-blocking behavior (API responses not delayed by reset)
-- Proper database updates with new expiration timestamps
-- Error handling (reset failures don't break API calls)
-- Concurrent API calls work correctly
-- Cross-endpoint functionality verification
-- Token rotation still works with reset functionality
-
-#### User Profile Tests
-```bash
-node tests/user-profile-test.js
-```
-Comprehensive test suite for the GET `/api/profile` endpoint including:
-
-**Core Functionality Tests:**
-- Basic profile endpoint functionality and response structure
-- User profile data accuracy and completeness
-- Authentication and authorization scenarios (invalid tokens, expired tokens, etc.)
-
-**Pairing Integration Tests:**
-- Profile with no pairings/requests (new user scenario)
-- Profile with pending pairing requests (partner code functionality)
-- Profile with accepted pairings (full partner information)
-- Verification of `pairing_requests` array with null partner field for pending codes
-- Verification of `pairings` array with complete partner information for accepted pairings
-
-**Advanced Testing:**
-- Edge cases and error scenarios (nonexistent users, invalid data)
-- Data consistency across multiple requests
-- Performance testing and response time validation
-- Concurrent request handling (3 simultaneous requests)
-- Response structure validation for all required fields
-
-**Test Coverage:**
-- ✅ GET `/api/profile` endpoint functionality
-- ✅ JWT authentication and authorization
-- ✅ Pairing requests with partner codes (partner: null)
-- ✅ Accepted pairings with partner data
-- ✅ Pairing codes array validation and content verification
-- ✅ Error handling (404, 401, 403 responses)
-- ✅ Performance benchmarks (<5s response, <8s concurrent)
-- ✅ 67 comprehensive tests with 100% success rate
-
-**Sample Test Output:**
-```
-🧪 Starting User Profile Endpoint Test Suite
-📊 User Profile Test Results Summary
-Total Tests: 67
-Passed: 67
-Failed: 0
-Success Rate: 100.0%
-🎉 All user profile tests passed! The endpoint is working correctly.
-```
-
-#### Pairings Endpoint Tests
-```bash
-node tests/pairings-endpoint-test.js
-```
-Comprehensive test suite for the updated GET `/api/pairings` endpoint including:
-
-**Core Functionality Tests:**
-- Basic pairings endpoint functionality and response structure
-- Authentication and authorization scenarios
-- Response format validation and field presence
-
-**Pairing Integration Tests:**
-- Pairings with pending requests (partner code functionality)
-- Pairings with accepted pairings (full partner information)
-- Mixed scenarios with both pending and accepted pairings
-- Verification that pending requests show `partner: null`
-- Verification that accepted pairings show complete partner data
-
-**Advanced Testing:**
-- Response structure validation for all required fields
-- Sorting verification (most recent first by created_at)
-- Data consistency and proper partner information mapping
-- Authentication and authorization edge cases
-
-**Test Coverage:**
-- ✅ GET `/api/pairings` endpoint functionality
-- ✅ JWT authentication and authorization
-- ✅ Pending pairings with partner codes (partner: null)
-- ✅ Accepted pairings with partner data
-- ✅ Mixed pending and accepted pairings in single response
-- ✅ Response sorting and structure validation
-- ✅ 30+ comprehensive tests with 98%+ success rate
-
-### Test Categories
-
-- **Unit Tests**: Test individual components and business logic
-- **Integration Tests**: Test full API workflows with real HTTP requests
-- **Program Structure Tests**: Verify program_steps arrays and absence of therapy_response
-- **Security Tests**: Validate security measures and input sanitization
-- **Performance Tests**: Ensure API can handle concurrent load
-- **Therapy System Tests**: Validate background AI therapy response functionality
+Additional one-off runners under `tests/` (execute with `node tests/...`) include `user-profile-test.js`, `pairings-endpoint-test.js`, and `refresh-token-reset-test.js`.
 
 ## Example Usage
 
@@ -1742,8 +1766,7 @@ curl -X POST http://localhost:9000/api/users \
   -H "Content-Type: application/json" \
   -d '{
     "email": "jane.doe@example.com",
-    "password": "Test2!@#",
-    "max_pairings": 1
+    "password": "Test2!@#"
   }'
 
 # 2. Login as both users
@@ -1780,78 +1803,36 @@ curl -X GET http://localhost:9000/api/pairing/accepted \
   -H "Authorization: Bearer {john_access_token}"
 ```
 
-### Complete Program and Conversation Workflow
+### Program and program-step workflow
 
 ```bash
-# 1. Create a therapy program (after pairing is established)
+# 0. Ensure profile has user_name (and optional partner_name) before POST /programs
+curl -X PUT http://localhost:9000/api/users/{user_id} \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {access_token}" \
+  -d '{"user_name":"Steve","partner_name":"Becca"}'
+
+# 1. Create a program (pairing_id optional but required for paired step threads)
 curl -X POST http://localhost:9000/api/programs \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {access_token}" \
   -d '{
-    "user_name": "Steve",
-    "partner_name": "Becca",
-    "children": 2,
     "user_input": "We want to improve our communication and spend more quality time together.",
     "pairing_id": "pairing_id"
   }'
 
-# This automatically generates 14 days of therapy content and creates conversation threads
-
-# 2. View all program conversations organized by days
-curl -X GET http://localhost:9000/api/programs/{program_id}/conversations \
+# Generation runs in the background — poll steps until 14 days exist
+curl -s http://localhost:9000/api/programs/{program_id}/programSteps \
   -H "Authorization: Bearer {access_token}"
 
-# 3. View specific day conversation (e.g., day 1)
-curl -X GET http://localhost:9000/api/programs/{program_id}/conversations/day/1 \
-  -H "Authorization: Bearer {access_token}"
-
-# 4. Add a message to day 1 conversation
-curl -X POST http://localhost:9000/api/programs/{program_id}/conversations/day/1 \
+# 2. Post a message on a step (use step id from the list above)
+curl -X POST http://localhost:9000/api/programSteps/{step_id}/messages \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {access_token}" \
-  -d '{
-    "content": "Becca and I completed day 1 together! We talked about our first vacation and remembered why we fell in love. This exercise really helped us reconnect.",
-    "metadata": {
-      "completed_exercise": true,
-      "partner_participated": true,
-      "duration_minutes": 30,
-      "rating": 5
-    }
-  }'
+  -d "{\"content\":\"We tried today's prompt — it sparked a good talk.\"}"
 
-# 5. Using the new root-level conversation endpoints
-# Get the conversation directly
-curl -X GET http://localhost:9000/api/conversations/{conversation_id} \
+curl -s http://localhost:9000/api/programSteps/{step_id}/messages \
   -H "Authorization: Bearer {access_token}"
-
-# Add a message using the conversation ID
-curl -X POST http://localhost:9000/api/conversations/{conversation_id}/messages \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {access_token}" \
-  -d '{
-    "content": "This is our follow-up reflection on day 1. We continue to feel more connected!",
-    "metadata": {
-      "follow_up": true,
-      "satisfaction_rating": 5
-    }
-  }'
-
-# Get all messages for the conversation
-curl -X GET http://localhost:9000/api/conversations/{conversation_id}/messages \
-  -H "Authorization: Bearer {access_token}"
-
-# Update a message
-curl -X PUT http://localhost:9000/api/conversations/{conversation_id}/messages/{message_id} \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {access_token}" \
-  -d '{
-    "content": "Updated: This is our follow-up reflection on day 1. We continue to feel more connected and are excited for day 2!",
-    "metadata": {
-      "follow_up": true,
-      "satisfaction_rating": 5,
-      "edited": true
-    }
-  }'
 ```
 
 ### Background Therapy Response Example
@@ -1879,7 +1860,7 @@ curl -X POST http://localhost:9000/api/programSteps/{step_id}/messages \
 # API responds immediately (non-blocking)
 # Response: {"message": "Message added successfully", "data": {...}}
 
-# 3. After 2 seconds, system automatically adds therapy response messages
+# 3. After background processing, re-fetch messages to see optional system replies
 # Check messages to see the system responses:
 curl -X GET http://localhost:9000/api/programSteps/{step_id}/messages \
   -H "Authorization: Bearer {access_token}"
@@ -1929,37 +1910,42 @@ curl -X GET http://localhost:9000/api/programSteps/{step_id}/messages \
 ```
 helpful-api/
 ├── config/
-│   └── database.js          # MySQL connection configuration
+│   └── database.js
 ├── models/
-│   ├── User.js              # User data model
-│   ├── RefreshToken.js      # Refresh token model
-│   ├── Pairing.js           # Pairing model
-│   ├── Program.js           # Program model
-│   ├── ProgramStep.js       # Program step model (day-level containers)
-│   └── Message.js           # Message model (individual messages)
+│   ├── User.js
+│   ├── RefreshToken.js
+│   ├── Pairing.js
+│   ├── Program.js
+│   ├── ProgramStep.js
+│   ├── Message.js
+│   ├── OrgCode.js
+│   ├── AdminUser.js
+│   ├── DeviceToken.js
+│   ├── IosSubscription.js
+│   └── AndroidSubscription.js
 ├── services/
-│   ├── AuthService.js       # Authentication service
-│   ├── PairingService.js    # Pairing business logic
-│   ├── ChatGPTService.js    # OpenAI integration service
-│   └── SubscriptionService.js # Subscription receipt processing
+│   ├── AuthService.js
+│   ├── AdminAuthService.js
+│   ├── PairingService.js
+│   ├── SubscriptionService.js
+│   ├── PushNotificationService.js
+│   ├── BasePromptService.js
+│   ├── HelpfulPromptService.js
+│   └── HopefulPromptService.js
 ├── routes/
-│   ├── users.js             # User endpoints
-│   ├── auth.js              # Authentication endpoints
-│   ├── pairing.js           # Pairing endpoints
-│   ├── programs.js          # Program endpoints
-│   └── conversations.js     # Conversation and message endpoints
+│   ├── users.js
+│   ├── auth.js
+│   ├── admin-auth.js
+│   ├── pairing.js
+│   ├── programs.js
+│   ├── programSteps.js
+│   ├── subscription.js
+│   ├── org-codes.js
+│   └── device-tokens.js
 ├── middleware/
-│   ├── auth.js              # JWT authentication middleware
-│   └── security.js          # Rate limiting and security
-├── tests/
-│   ├── security-test.js     # Security and validation tests
-│   ├── load-test.js         # Performance and load tests
-│   ├── openai-test.js       # OpenAI integration tests
-│   ├── auth-test.js         # Authentication system tests
-│   ├── therapy-response-test.js           # Therapy response unit tests
-│   ├── therapy-response-integration-test.js # Therapy response integration tests
-│   ├── run-therapy-tests.js # Therapy test runner
-│   └── run-all-tests.js     # Comprehensive test suite runner
-├── server.js                # Main application
+│   ├── auth.js
+│   └── security.js
+├── tests/                   # many focused integration / load scripts
+├── server.js
 └── package.json
 ``` 

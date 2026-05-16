@@ -23,6 +23,7 @@ const HopefulPromptService = require('./services/HopefulPromptService');
 const HelpfulPromptService = require('./services/HelpfulPromptService');
 const { SubscriptionService } = require('./services/SubscriptionService');
 const AdminAuthService = require('./services/AdminAuthService');
+const PushNotificationService = require('./services/PushNotificationService');
 
 // Import routes
 const createUserRoutes = require('./routes/users');
@@ -134,7 +135,7 @@ async function setupDatabase() {
 setupDatabase();
 
 // Initialize models and services
-let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, deviceTokenModel, authService, pairingService, hopefulPromptService, helpfulPromptService, subscriptionService, adminAuthService;
+let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, deviceTokenModel, authService, pairingService, hopefulPromptService, helpfulPromptService, subscriptionService, adminAuthService, pushNotificationService;
 
 async function initializeApp() {
   try {
@@ -192,7 +193,14 @@ async function initializeApp() {
       userModel,
       pairingModel
     );
-    
+    // Push notifications (FCM via firebase-admin). Fails soft when no Firebase
+    // credentials are present so local/dev/CI environments stay healthy; sends
+    // become no-ops in that case. Set FIREBASE_SERVICE_ACCOUNT_JSON (or _PATH)
+    // in production, or TEST_MOCK_PUSH=true for a deterministic mock client.
+    pushNotificationService = new PushNotificationService({
+      deviceTokenModel: deviceTokenModelInstance
+    });
+
     // Setup routes
     setupRoutes();
 
@@ -214,6 +222,14 @@ function setupRoutes() {
   // Make models available to routes for soft delete cascading
   if (pairingModel) {
     app.locals.pairingModel = pairingModel;
+  }
+
+  // Expose the push notification service so any route or background job
+  // can call it via `req.app.locals.pushNotificationService`. The service
+  // itself fails soft when not configured, so callers do not need to
+  // null-check before invoking sendToUser / sendToUsers.
+  if (pushNotificationService) {
+    app.locals.pushNotificationService = pushNotificationService;
   }
   
   // Setup user routes

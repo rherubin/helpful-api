@@ -149,6 +149,50 @@ class DeviceToken {
   }
 
   /**
+   * Server-side variant that DOES include the raw device_token string.
+   * For use by PushNotificationService only — never expose this output to
+   * HTTP clients. The HTTP-facing getUserDeviceTokens deliberately omits
+   * the token string so it can never leak through the API surface.
+   */
+  async getUserDeviceTokensWithStrings(userId) {
+    try {
+      return await this.query(
+        `SELECT id, user_id, device_token, platform, created_at, updated_at
+         FROM device_tokens
+         WHERE user_id = ?
+         ORDER BY updated_at DESC, created_at DESC`,
+        [userId]
+      );
+    } catch (err) {
+      throw new Error('Failed to fetch user device tokens (with strings)');
+    }
+  }
+
+  /**
+   * Server-side bulk variant: returns rows for many users in one query.
+   * Returns an empty array for an empty userIds list. For internal push
+   * fan-out only — never expose token strings to HTTP clients.
+   */
+  async getDeviceTokensForUsers(userIds) {
+    if (!Array.isArray(userIds) || userIds.length === 0) return [];
+    const unique = [...new Set(userIds.filter(Boolean))];
+    if (unique.length === 0) return [];
+
+    const placeholders = unique.map(() => '?').join(',');
+    try {
+      return await this.query(
+        `SELECT id, user_id, device_token, platform, created_at, updated_at
+         FROM device_tokens
+         WHERE user_id IN (${placeholders})
+         ORDER BY updated_at DESC, created_at DESC`,
+        unique
+      );
+    } catch (err) {
+      throw new Error('Failed to fetch device tokens for users');
+    }
+  }
+
+  /**
    * Remove a device token by its record ID, scoped to the given user.
    * Returns true if a row was deleted, false if not found.
    */
@@ -161,6 +205,25 @@ class DeviceToken {
       return result.affectedRows > 0;
     } catch (err) {
       throw new Error('Failed to remove device token');
+    }
+  }
+
+  /**
+   * Remove ALL rows for a given raw device_token string (regardless of user).
+   * Used by PushNotificationService when FCM reports a token as
+   * unregistered/invalid so we can prune it before the next send.
+   * Returns the number of rows deleted.
+   */
+  async removeDeviceTokenByString(deviceToken) {
+    if (typeof deviceToken !== 'string' || deviceToken.length === 0) return 0;
+    try {
+      const result = await this.query(
+        'DELETE FROM device_tokens WHERE device_token = ?',
+        [deviceToken]
+      );
+      return result.affectedRows || 0;
+    } catch (err) {
+      throw new Error('Failed to remove device token by string');
     }
   }
 

@@ -15,6 +15,15 @@ yarn-error.log*
 # Note: MySQL database is hosted externally (Railway/cloud)
 *.db
 
+# Firebase service account credentials (never commit)
+firebase-service-account*.json
+firebase-adminsdk-*.json
+*-firebase-adminsdk-*.json
+
+# Apple Push Notification Service (APNs) auth keys (never commit)
+AuthKey_*.p8
+*.p8
+
 # Logs
 logs
 *.log

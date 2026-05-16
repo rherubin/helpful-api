@@ -16,6 +16,7 @@ const DeviceTokenTestRunner = require('./device-tokens-test');
 const HelpfulPromptServiceTestRunner = require('./helpful-prompt-service-test');
 const HopefulPromptServiceTestRunner = require('./hopeful-prompt-service-test');
 const ProgramOrgContextTestRunner = require('./program-org-context-test');
+const PushNotificationServiceTestRunner = require('./push-notification-service-test');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -44,6 +45,7 @@ class TestSuiteRunner {
       runHelpfulPromptService: options.runHelpfulPromptService !== false, // Default true
       runHopefulPromptService: options.runHopefulPromptService !== false, // Default true
       runProgramOrgContext: options.runProgramOrgContext !== false, // Default true
+      runPushNotificationService: options.runPushNotificationService !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
@@ -68,6 +70,7 @@ class TestSuiteRunner {
       helpfulPromptService: null,
       hopefulPromptService: null,
       programOrgContext: null,
+      pushNotificationService: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -711,6 +714,41 @@ class TestSuiteRunner {
     }
   }
 
+  async runPushNotificationServiceTests() {
+    if (!this.options.runPushNotificationService) {
+      this.log('Skipping PushNotificationService unit tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('📲 Running PushNotificationService Unit Test Suite', 'section');
+
+    try {
+      const runner = new PushNotificationServiceTestRunner();
+      const success = await runner.run();
+
+      this.results.pushNotificationService = {
+        success,
+        skipped: false,
+        details: 'FCM (firebase-admin) push send + auto-prune — fully mocked, no real Firebase calls',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('PushNotificationService unit tests completed successfully', 'success');
+      } else {
+        this.log('PushNotificationService unit tests failed', 'error');
+      }
+
+      return this.results.pushNotificationService;
+    } catch (error) {
+      this.log(`PushNotificationService unit tests failed: ${error.message}`, 'error');
+      this.results.pushNotificationService = { success: false, error: error.message };
+      return this.results.pushNotificationService;
+    }
+  }
+
   async runDeviceTokenTests() {
     if (!this.options.runDeviceTokens) {
       this.log('Skipping device tokens tests', 'warn');
@@ -773,6 +811,7 @@ class TestSuiteRunner {
     this.log(`  HelpfulPromptService Unit Tests: ${this.options.runHelpfulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HopefulPromptService Unit Tests: ${this.options.runHopefulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Program Org Context Tests: ${this.options.runProgramOrgContext ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  PushNotificationService Unit Tests: ${this.options.runPushNotificationService ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
     // Check server health
@@ -942,6 +981,15 @@ class TestSuiteRunner {
     if (this.options.runProgramOrgContext) {
       await this.runProgramOrgContextTests();
       if (this.results.programOrgContext && !this.results.programOrgContext.success && !this.results.programOrgContext.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run PushNotificationService unit tests (fully mocked, no real FCM)
+    if (this.options.runPushNotificationService) {
+      await this.runPushNotificationServiceTests();
+      if (this.results.pushNotificationService && !this.results.pushNotificationService.success && !this.results.pushNotificationService.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -1159,6 +1207,17 @@ class TestSuiteRunner {
       }
     }
 
+    // PushNotificationService unit test results
+    if (this.results.pushNotificationService) {
+      if (this.results.pushNotificationService.skipped) {
+        this.log('📲 PushNotificationService Unit Tests: SKIPPED', 'warn');
+      } else if (this.results.pushNotificationService.success) {
+        this.log(`📲 PushNotificationService Unit Tests: PASSED (${this.results.pushNotificationService.passed}/${this.results.pushNotificationService.total})`, 'success');
+      } else {
+        this.log(`📲 PushNotificationService Unit Tests: FAILED (${this.results.pushNotificationService.failed}/${this.results.pushNotificationService.total} failures)`, 'error');
+      }
+    }
+
     console.log('');
 
     // Overall result
@@ -1197,7 +1256,8 @@ class TestSuiteRunner {
                this.results.wwwAuthenticate?.success && this.results.subscription?.success &&
                this.results.userOrgCode?.success && this.results.deviceTokens?.success &&
                this.results.helpfulPromptService?.success &&
-               this.results.hopefulPromptService?.success && this.results.programOrgContext?.success,
+               this.results.hopefulPromptService?.success && this.results.programOrgContext?.success &&
+               this.results.pushNotificationService?.success,
       results: {
         security: this.results.security,
         load: this.results.load,
@@ -1216,7 +1276,8 @@ class TestSuiteRunner {
         deviceTokens: this.results.deviceTokens,
         helpfulPromptService: this.results.helpfulPromptService,
         hopefulPromptService: this.results.hopefulPromptService,
-        programOrgContext: this.results.programOrgContext
+        programOrgContext: this.results.programOrgContext,
+        pushNotificationService: this.results.pushNotificationService
       },
       summary: {
         totalTests: (this.results.security?.total || 0) +
@@ -1226,7 +1287,8 @@ class TestSuiteRunner {
                    (this.results.wwwAuthenticate?.total || 0) + (this.results.subscription?.total || 0) +
                    (this.results.userOrgCode?.total || 0) + (this.results.deviceTokens?.total || 0) +
                    (this.results.helpfulPromptService?.total || 0) +
-                   (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0),
+                   (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0) +
+                   (this.results.pushNotificationService?.total || 0),
         totalPassed: (this.results.security?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) + (this.results.userProfile?.passed || 0) +
                     (this.results.refreshTokenReset?.passed || 0) + (this.results.programs?.passed || 0) + (this.results.programSteps?.passed || 0) +
@@ -1234,7 +1296,8 @@ class TestSuiteRunner {
                     (this.results.wwwAuthenticate?.passed || 0) + (this.results.subscription?.passed || 0) +
                     (this.results.userOrgCode?.passed || 0) + (this.results.deviceTokens?.passed || 0) +
                     (this.results.helpfulPromptService?.passed || 0) +
-                    (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0),
+                    (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0) +
+                    (this.results.pushNotificationService?.passed || 0),
         totalFailed: (this.results.security?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) + (this.results.userProfile?.failed || 0) +
                     (this.results.refreshTokenReset?.failed || 0) + (this.results.programs?.failed || 0) + (this.results.programSteps?.failed || 0) +
@@ -1242,7 +1305,8 @@ class TestSuiteRunner {
                     (this.results.wwwAuthenticate?.failed || 0) + (this.results.subscription?.failed || 0) +
                     (this.results.userOrgCode?.failed || 0) + (this.results.deviceTokens?.failed || 0) +
                     (this.results.helpfulPromptService?.failed || 0) +
-                    (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0)
+                    (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0) +
+                    (this.results.pushNotificationService?.failed || 0)
       }
     };
   }
@@ -1272,6 +1336,7 @@ function parseArgs() {
     if (arg === '--no-helpful-prompt-service') options.runHelpfulPromptService = false;
     if (arg === '--no-hopeful-prompt-service') options.runHopefulPromptService = false;
     if (arg === '--no-program-org-context') options.runProgramOrgContext = false;
+    if (arg === '--no-push-notification-service') options.runPushNotificationService = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];
     if (arg.startsWith('--timeout=')) options.timeout = parseInt(arg.split('=')[1]);
