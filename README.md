@@ -67,6 +67,9 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
    # Optional: rate limit for PUT /api/users/:id (org code / profile updates)
    # USER_UPDATE_RATE_LIMIT=3
 
+   # Optional: rate limit for POST /api/device-tokens (default 10 req/5min per IP)
+   # DEVICE_TOKEN_RATE_LIMIT=10
+
    # Optional: program generation — second LLM attempt after failures (default on; ~60s delay)
    # PROGRAM_GENERATION_FOLLOWUP_ENABLED=true
    # PROGRAM_GENERATION_FOLLOWUP_DELAY_MS=60000
@@ -1332,18 +1335,22 @@ Device tokens are FCM registration tokens obtained from the Firebase SDK on the 
   ```
   - `device_token` — required; string between 10–512 characters
   - `platform` — required; one of `"ios"`, `"android"`, `"web"`
+- **Rate Limit:** 10 requests per 5 minutes per IP (overridable via `DEVICE_TOKEN_RATE_LIMIT` env var)
 - **Response:** `201 Created` on first registration, `200 OK` on idempotent re-registration (same token already exists for the user — only `platform` is updated if it changed):
   ```json
   {
+    "message": "Device token registered successfully",
     "device_token": {
       "id": "record_id",
       "platform": "ios"
     }
   }
   ```
+  Re-registration returns `message: "Device token updated successfully"`.
 - **Error Responses:**
   - `400`: `device_token is required` / `platform is required` / `Invalid platform. Must be one of: ios, android, web` / `Device token limit reached. A user may have at most 25 registered devices`
   - `404`: `User not found`
+  - `429`: Rate limit exceeded
 
 #### List Device Tokens
 - **GET** `/api/device-tokens`
@@ -1352,6 +1359,7 @@ Device tokens are FCM registration tokens obtained from the Firebase SDK on the 
 - **Response:**
   ```json
   {
+    "message": "Device tokens retrieved successfully",
     "device_tokens": [
       {
         "id": "record_id",
@@ -1371,7 +1379,7 @@ Device tokens are FCM registration tokens obtained from the Firebase SDK on the 
 - **Description:** Removes a specific token record by its `id`. Only removes tokens owned by the authenticated user.
 - **Response:** `200 OK`
   ```json
-  { "success": true }
+  { "message": "Device token deleted successfully" }
   ```
 - **Error Responses:**
   - `404`: `Device token not found`

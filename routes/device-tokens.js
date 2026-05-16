@@ -1,5 +1,6 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
+const { deviceTokenLimiter } = require('../middleware/security');
 
 const VALID_PLATFORMS = ['ios', 'android', 'web'];
 
@@ -11,7 +12,7 @@ function createDeviceTokenRoutes(deviceTokenModel, authService) {
   // Register a push notification device token for the authenticated user.
   // Body: { device_token: string, platform: 'ios' | 'android' | 'web' }
   // Returns 201 on first registration, 200 on re-registration (idempotent).
-  router.post('/', authenticateToken, async (req, res) => {
+  router.post('/', authenticateToken, deviceTokenLimiter, async (req, res) => {
     try {
       const userId = req.user.id;
       const { device_token: deviceToken, platform } = req.body;
@@ -32,6 +33,7 @@ function createDeviceTokenRoutes(deviceTokenModel, authService) {
       const result = await deviceTokenModel.registerDeviceToken(userId, deviceToken, platform);
 
       res.status(result.isNew ? 201 : 200).json({
+        message: result.isNew ? 'Device token registered successfully' : 'Device token updated successfully',
         device_token: {
           id: result.id,
           platform
@@ -57,6 +59,7 @@ function createDeviceTokenRoutes(deviceTokenModel, authService) {
       const userId = req.user.id;
       const deviceTokens = await deviceTokenModel.getUserDeviceTokens(userId);
       res.status(200).json({
+        message: 'Device tokens retrieved successfully',
         device_tokens: deviceTokens,
         count: deviceTokens.length
       });
@@ -77,7 +80,7 @@ function createDeviceTokenRoutes(deviceTokenModel, authService) {
       const removed = await deviceTokenModel.removeDeviceToken(userId, tokenId);
 
       if (removed) {
-        return res.status(200).json({ success: true });
+        return res.status(200).json({ message: 'Device token deleted successfully' });
       }
       return res.status(404).json({ error: 'Device token not found' });
     } catch (error) {

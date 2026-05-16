@@ -25,6 +25,21 @@ const strictLoginLimiter = rateLimit({
   skipSuccessfulRequests: true
 });
 
+// Rate limiting for POST /api/device-tokens to prevent token cycling abuse.
+// The per-user 25-token cap in the model prevents DB flooding, but this limiter
+// throttles how quickly tokens can be cycled through (register → delete → register).
+// DEVICE_TOKEN_RATE_LIMIT env var allows overriding the limit (e.g. for tests).
+const deviceTokenLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: parseInt(process.env.DEVICE_TOKEN_RATE_LIMIT || '10', 10),
+  message: {
+    error: 'Too many device token registrations, please try again later',
+    retryAfter: '5 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // Rate limiting for PUT /users/:id to prevent org_code farming
 // USER_UPDATE_RATE_LIMIT env var allows overriding the limit (e.g. for test environments)
 const userUpdateLimiter = rateLimit({
@@ -135,6 +150,7 @@ module.exports = {
   loginLimiter,
   strictLoginLimiter,
   userUpdateLimiter,
+  deviceTokenLimiter,
   apiLimiter,
   isAccountLocked,
   recordFailedAttempt,
