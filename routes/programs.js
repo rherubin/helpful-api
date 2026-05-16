@@ -1,7 +1,7 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
 
-function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptService, programStepModel = null, userModel = null, pairingModel = null, authService = null, userModelForOrgCode = null) {
+function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptService, programStepModel = null, userModel = null, pairingModel = null, authService = null, userModelForOrgCode = null, pushNotificationService = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
   const GENERATION_FOLLOWUP_ENABLED = process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED !== 'false';
@@ -258,7 +258,7 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       });
 
       // Generate LLM response asynchronously in the background
-      const push = req.app.locals.pushNotificationService;
+      const push = pushNotificationService;
       if (anyServiceConfigured()) {
         (async () => {
           console.log('Generating next program LLM response for program:', newProgram.id);
@@ -485,7 +485,7 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       });
 
       // Generate LLM response asynchronously in the background
-      const push = req.app.locals.pushNotificationService;
+      const push = pushNotificationService;
       if (anyServiceConfigured()) {
         (async () => {
           console.log('Generating LLM response for program:', program.id);

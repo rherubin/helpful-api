@@ -1386,7 +1386,7 @@ Device tokens are FCM registration tokens obtained from the Firebase SDK on the 
 
 ### Push Notification Service (server-side)
 
-`PushNotificationService` (`services/PushNotificationService.js`) is instantiated once at startup and exposed via `app.locals.pushNotificationService`. Routes and background jobs call it to send push notifications to users' registered devices via **Firebase Cloud Messaging (FCM HTTP v1 API)**, which handles delivery to APNs (iOS), FCM (Android), and Web Push.
+`PushNotificationService` (`services/PushNotificationService.js`) is instantiated once at startup in `server.js` and passed explicitly to every route factory that needs it (`createPairingRoutes`, `createProgramRoutes`, `createProgramStepRoutes`, `createAdminRoutes`) — same convention as `authService`, `userModel`, and the prompt services. Routes and background jobs call it to send push notifications to users' registered devices via **Firebase Cloud Messaging (FCM HTTP v1 API)**, which handles delivery to APNs (iOS), FCM (Android), and Web Push.
 
 #### Configuration
 
@@ -1403,17 +1403,24 @@ Set `TEST_MOCK_PUSH=true` to force a deterministic in-memory mock that always re
 
 #### High-level API
 
-Use these from routes or background jobs:
+Each route factory that needs to send push notifications receives the service as a constructor argument (see `setupRoutes()` in `server.js`), so handlers just close over the local reference:
 
 ```javascript
-const push = req.app.locals.pushNotificationService;
-
-// Send to every device registered for one user
-await push.sendToUser(userId, payload);
+function createPairingRoutes(pairingService, authService, pushNotificationService = null) {
+  // ...
+  router.post('/accept', authenticateToken, async (req, res) => {
+    // ...
+    if (pushNotificationService) {
+      await pushNotificationService.sendToUser(userId, payload);
+    }
+  });
+}
 
 // Fan out the same payload to every device of every user in the array
-await push.sendToUsers([userId1, userId2], payload);
+await pushNotificationService.sendToUsers([userId1, userId2], payload);
 ```
+
+The parameter is optional and defaults to `null` so routers can still be constructed in environments where push isn't wired up — handlers should null-check before calling.
 
 Both methods automatically **prune dead FCM tokens** — if FCM responds with `registration-token-not-registered` or similar, those token rows are deleted from `device_tokens` so they're never retried.
 

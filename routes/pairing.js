@@ -1,7 +1,7 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
 
-function createPairingRoutes(pairingService, authService) {
+function createPairingRoutes(pairingService, authService, pushNotificationService = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
 
@@ -45,7 +45,7 @@ function createPairingRoutes(pairingService, authService) {
 
       // Notify the original requester that someone accepted their invite (fire-and-forget).
       if (requesterId) {
-        const push = req.app.locals.pushNotificationService;
+        const push = pushNotificationService;
         if (push) {
           pairingService.userModel.getUserById(userId)
             .then(accepter => {

@@ -1,7 +1,7 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
 
-function createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, hopefulPromptService, helpfulPromptService, authService, userModelForOrgCode = null) {
+function createProgramStepRoutes(programStepModel, messageModel, programModel, pairingModel, userModel, hopefulPromptService, helpfulPromptService, authService, userModelForOrgCode = null, pushNotificationService = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
 
@@ -405,7 +405,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
       // Notify the other partner in real-time that a new message was posted (fire-and-forget).
       if (program.pairing_id && pairingModel) {
-        const push = req.app.locals.pushNotificationService;
+        const push = pushNotificationService;
         if (push) {
           setImmediate(async () => {
             try {
@@ -458,8 +458,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       // background trigger so the response is never delayed by LLM calls.
       if (systemMessages.length === 0) {
         setImmediate(() => {
-          const push = req.app.locals.pushNotificationService;
-          checkAndTriggerTherapyResponse(id, userId, push || null);
+          checkAndTriggerTherapyResponse(id, userId, pushNotificationService || null);
         });
       }
 
