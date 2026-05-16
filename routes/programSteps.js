@@ -48,7 +48,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
   }
 
   // Helper function to check if we should trigger background therapy response
-  async function checkAndTriggerTherapyResponse(stepId, currentUserId) {
+  async function checkAndTriggerTherapyResponse(stepId, currentUserId, push = null) {
     console.log(`[THERAPY_TRIGGER] Checking therapy response for step ${stepId}, user ${currentUserId}`);
 
     try {
@@ -220,6 +220,15 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         }
 
         console.log(`Therapy response added to step ${stepId} (${messages.length} message(s))`);
+
+        // Notify both partners that a new therapy reflection is available (fire-and-forget).
+        if (push) {
+          push.sendToUsers([user1Id, user2Id], {
+            title: 'New reflection ready',
+            body: 'Your therapist added a new reflection to your step.',
+            data: { kind: 'therapy_response', step_id: stepId }
+          }).catch(err => console.warn('[push] therapy_response failed:', err.message));
+        }
       } else if (existingTherapyResponse) {
         console.log(`Therapy response already exists for step ${stepId}, skipping duplicate trigger`);
       }
@@ -393,6 +402,33 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       // so we can add the welcome system message synchronously and return it in the response.
       let systemMessages = [];
       const program = await programModel.getProgramById(step.program_id);
+
+      // Notify the other partner in real-time that a new message was posted (fire-and-forget).
+      if (program.pairing_id && pairingModel) {
+        const push = req.app.locals.pushNotificationService;
+        if (push) {
+          setImmediate(async () => {
+            try {
+              const pairing = await pairingModel.getPairingById(program.pairing_id);
+              if (pairing && pairing.status === 'accepted') {
+                const otherUserId = pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
+                if (otherUserId) {
+                  const sender = await userModel.getUserById(userId);
+                  const senderName = sender?.user_name || 'Your partner';
+                  const preview = content.length > 100 ? `${content.substring(0, 100)}…` : content;
+                  await push.sendToUser(otherUserId, {
+                    title: `${senderName} shared a reflection`,
+                    body: preview,
+                    data: { kind: 'step_message', step_id: id, program_id: program.id, step_day: String(step.day) }
+                  });
+                }
+              }
+            } catch (err) {
+              console.warn('[push] step_message notify failed:', err.message);
+            }
+          });
+        }
+      }
       const isFirstProgram = !program.previous_program_id;
       const isFirstStep = step.day === 1;
 
@@ -422,7 +458,8 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       // background trigger so the response is never delayed by LLM calls.
       if (systemMessages.length === 0) {
         setImmediate(() => {
-          checkAndTriggerTherapyResponse(id, userId);
+          const push = req.app.locals.pushNotificationService;
+          checkAndTriggerTherapyResponse(id, userId, push || null);
         });
       }
 
