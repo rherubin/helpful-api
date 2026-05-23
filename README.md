@@ -1473,6 +1473,34 @@ push.isConfigured()  // true if Firebase or mock is active
 push.isMockMode()    // true if running against TEST_MOCK_PUSH or injected test double
 ```
 
+### Admin push-test endpoint
+
+`POST /api/admin/push-test` — smoke-test FCM credentials and device token registration by manually sending a push notification to a specific user. Requires an **admin JWT**.
+
+**Request body:**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `user_id` | string | ✅ | ID of the target user (must exist) |
+| `title` | string | one of title/body | Visible notification title |
+| `body` | string | one of title/body | Visible notification body |
+| `data` | object | ❌ | Arbitrary key-value data (values coerced to strings) |
+
+**Responses:**
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Sent successfully — returns `{ message, result }` |
+| 400 | Missing `user_id`, or both `title` and `body` are absent |
+| 401 | No token or expired token |
+| 403 | Token is not an admin token |
+| 404 | Target `user_id` not found |
+| 503 | Push not configured (no Firebase credentials, and `TEST_MOCK_PUSH` is not set) |
+
+Rate-limited to 100 requests per 15 minutes per IP (shared with the `loginLimiter`).
+
+Run standalone: `npm run test:admin-push` (requires a live API with `TEST_MOCK_PUSH=true`).
+
 ### Message stats
 
 - **GET** `/api/messages-stats?date={epoch_ms}&programId={uuid}` (authenticated) — returns aggregate stats for messages since `date` on the given program.

@@ -18,7 +18,8 @@
     "test:steps": "node tests/program-steps-test.js",
     "test:messages": "node tests/messages-test.js",
     "test:therapy-trigger": "node tests/therapy-trigger-test.js",
-    "test:push": "node tests/push-notification-service-test.js"
+    "test:push": "node tests/push-notification-service-test.js",
+    "test:admin-push": "node tests/admin-push-test-test.js"
   },
   "keywords": [
     "api",

@@ -1,7 +1,7 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
 
-function createPairingRoutes(pairingService, authService, pushNotificationService = null) {
+function createPairingRoutes(pairingService, authService, pushNotificationService = null, userModel = null, pairingModel = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
 
@@ -34,30 +34,31 @@ function createPairingRoutes(pairingService, authService, pushNotificationServic
       }
 
       // Capture the requester's ID before the accept changes the pairing status.
+      // Only needed for the fire-and-forget push notification below; if pairingModel
+      // wasn't wired (shouldn't happen in production), the notification is skipped.
       let requesterId = null;
-      try {
-        const pending = await pairingService.pairingModel.getPendingPairingByPartnerCode(partner_code);
-        if (pending) requesterId = pending.user1_id;
-      } catch { /* non-fatal — push is best-effort */ }
+      if (pairingModel) {
+        try {
+          const pending = await pairingModel.getPendingPairingByPartnerCode(partner_code);
+          if (pending) requesterId = pending.user1_id;
+        } catch { /* non-fatal — push is best-effort */ }
+      }
 
       await pairingService.acceptPairingByCode(userId, partner_code);
       res.status(200).end();
 
       // Notify the original requester that someone accepted their invite (fire-and-forget).
-      if (requesterId) {
-        const push = pushNotificationService;
-        if (push) {
-          pairingService.userModel.getUserById(userId)
-            .then(accepter => {
-              const name = accepter?.user_name || 'Someone';
-              return push.sendToUser(requesterId, {
-                title: 'Pairing accepted!',
-                body: `${name} accepted your pairing request.`,
-                data: { kind: 'pairing_accepted' }
-              });
-            })
-            .catch(err => console.warn('[push] pairing_accepted failed:', err.message));
-        }
+      if (requesterId && pushNotificationService) {
+        const namePromise = userModel
+          ? userModel.getUserById(userId).then(u => u?.user_name || 'Someone').catch(() => 'Someone')
+          : Promise.resolve('Someone');
+        namePromise
+          .then(name => pushNotificationService.sendToUser(requesterId, {
+            title: 'Pairing accepted!',
+            body: `${name} accepted your pairing request.`,
+            data: { kind: 'pairing_accepted' }
+          }))
+          .catch(err => console.warn('[push] pairing_accepted failed:', err.message));
       }
     } catch (error) {
       if (error.message === 'No pending pairing found for this partner code') {

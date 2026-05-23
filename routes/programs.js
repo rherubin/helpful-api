@@ -258,7 +258,6 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       });
 
       // Generate LLM response asynchronously in the background
-      const push = pushNotificationService;
       if (anyServiceConfigured()) {
         (async () => {
           console.log('Generating next program LLM response for program:', newProgram.id);
@@ -279,7 +278,7 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
           });
 
           // Notify once generation succeeds.
-          if (push && await hasProgramSteps(newProgram.id)) {
+          if (pushNotificationService && await hasProgramSteps(newProgram.id)) {
             const notifyIds = [userId];
             if (newProgram.pairing_id && pairingModel) {
               try {
@@ -290,7 +289,7 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
                 }
               } catch { /* non-fatal */ }
             }
-            push.sendToUsers(notifyIds, {
+            pushNotificationService.sendToUsers(notifyIds, {
               title: 'Your next program is ready',
               body: 'Your next 14-day couples program has been created.',
               data: { kind: 'program_ready', program_id: newProgram.id }
@@ -485,7 +484,6 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       });
 
       // Generate LLM response asynchronously in the background
-      const push = pushNotificationService;
       if (anyServiceConfigured()) {
         (async () => {
           console.log('Generating LLM response for program:', program.id);
@@ -500,7 +498,7 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
           });
 
           // Notify once generation succeeds (steps exist means no error).
-          if (push && await hasProgramSteps(program.id)) {
+          if (pushNotificationService && await hasProgramSteps(program.id)) {
             const notifyIds = [userId];
             if (pairing_id && pairingModel) {
               try {
@@ -511,7 +509,7 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
                 }
               } catch { /* non-fatal */ }
             }
-            push.sendToUsers(notifyIds, {
+            pushNotificationService.sendToUsers(notifyIds, {
               title: 'Your program is ready',
               body: 'Your 14-day couples program has been created.',
               data: { kind: 'program_ready', program_id: program.id }

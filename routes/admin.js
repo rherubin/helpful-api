@@ -1,5 +1,6 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
+const { adminActionLimiter } = require('../middleware/security');
 
 function createAdminRoutes(adminAuthService, pushNotificationService, userModel) {
   const router = express.Router();
@@ -8,8 +9,12 @@ function createAdminRoutes(adminAuthService, pushNotificationService, userModel)
   // Manually send a push notification to a specific user.
   // Useful for smoke-testing FCM credentials and device token registration.
   // POST /api/admin/push-test
-  router.post('/push-test', authenticateToken, async (req, res) => {
+  router.post('/push-test', adminActionLimiter, authenticateToken, async (req, res) => {
     try {
+      if (req.user.type !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
       const { user_id, title, body, data } = req.body;
 
       if (!user_id) {
