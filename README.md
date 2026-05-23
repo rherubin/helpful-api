@@ -1497,7 +1497,7 @@ push.isMockMode()    // true if running against TEST_MOCK_PUSH or injected test 
 | 404 | Target `user_id` not found |
 | 503 | Push not configured (no Firebase credentials, and `TEST_MOCK_PUSH` is not set) |
 
-Rate-limited to 100 requests per 15 minutes per IP (shared with the `loginLimiter`).
+Rate-limited to 100 requests per 15 minutes per IP via `adminActionLimiter` (`middleware/security.js`). Unlike `loginLimiter`, this limiter counts all requests — both successful and failed — so every send counts toward the cap.
 
 Run standalone: `npm run test:admin-push` (requires a live API with `TEST_MOCK_PUSH=true`).
 
