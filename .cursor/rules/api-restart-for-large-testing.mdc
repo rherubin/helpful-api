@@ -23,7 +23,7 @@ Default restart pattern:
 
 Example:
 - `kill $(lsof -ti:9000) 2>/dev/null`
-- `TEST_MOCK_LLM=true USER_UPDATE_RATE_LIMIT=100 npm start`
+- `TEST_MOCK_LLM=true npm start`
 - `curl http://127.0.0.1:9000/health`
 
 `TEST_MOCK_LLM=true` is the default for routine test runs so the server returns

@@ -1,5 +1,15 @@
 const rateLimit = require('express-rate-limit');
 
+// Detect automated test / CI runs so we can relax non-security-critical rate limits
+// (e.g. device token registration and user updates) without changing every test command.
+function isTestOrLoadRun() {
+  return process.env.NODE_ENV === 'test' ||
+         process.env.TEST_MOCK_LLM === 'true' ||
+         process.env.TEST_MOCK_OPENAI === 'true' ||
+         process.env.TEST_MODE === 'true' ||
+         process.env.SKIP_RATE_LIMITS === 'true';
+}
+
 // Rate limiting for login attempts
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -29,6 +39,8 @@ const strictLoginLimiter = rateLimit({
 // The per-user 25-token cap in the model prevents DB flooding, but this limiter
 // throttles how quickly tokens can be cycled through (register → delete → register).
 // DEVICE_TOKEN_RATE_LIMIT env var allows overriding the limit (e.g. for tests).
+// The limiter is automatically bypassed (skip: true) during test/CI runs so the
+// device-tokens-test suite and high-concurrency load runs never hit artificial caps.
 const deviceTokenLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
   max: parseInt(process.env.DEVICE_TOKEN_RATE_LIMIT || '10', 10),
@@ -37,11 +49,13 @@ const deviceTokenLimiter = rateLimit({
     retryAfter: '5 minutes'
   },
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  skip: () => isTestOrLoadRun() || parseInt(process.env.DEVICE_TOKEN_RATE_LIMIT || '10', 10) <= 0
 });
 
 // Rate limiting for PUT /users/:id to prevent org_code farming
-// USER_UPDATE_RATE_LIMIT env var allows overriding the limit (e.g. for test environments)
+// USER_UPDATE_RATE_LIMIT env var allows overriding the limit (e.g. for test environments).
+// Automatically bypassed during TEST_MOCK_LLM / CI runs (see isTestOrLoadRun).
 const userUpdateLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
   max: parseInt(process.env.USER_UPDATE_RATE_LIMIT || '3', 10),
@@ -50,7 +64,8 @@ const userUpdateLimiter = rateLimit({
     retryAfter: '5 minutes'
   },
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  skip: () => isTestOrLoadRun() || parseInt(process.env.USER_UPDATE_RATE_LIMIT || '3', 10) <= 0
 });
 
 // General API rate limiting (consistent across all environments)

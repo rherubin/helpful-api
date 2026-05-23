@@ -14,7 +14,7 @@ Use this standard sequence for stress-style API validation to keep results compa
 
 Suggested baseline:
 - `kill $(lsof -ti:9000) 2>/dev/null`
-- `TEST_MOCK_LLM=true USER_UPDATE_RATE_LIMIT=100 PROGRAM_GENERATION_FOLLOWUP_DELAY_MS=5000 npm start`
+- `TEST_MOCK_LLM=true PROGRAM_GENERATION_FOLLOWUP_DELAY_MS=5000 npm start`
 - `curl -s http://127.0.0.1:9000/health`
 
 `TEST_MOCK_LLM=true` makes the server return deterministic mock LLM responses so
@@ -40,6 +40,7 @@ Examples:
   - follow-up success or final persisted error.
 
 ## 4) Tuning guidance
-- If API/rate limiting appears, reduce concurrency first (e.g., 8 -> 6 -> 4).
+- Device-token and user-update rate limiters are automatically bypassed when `TEST_MOCK_LLM=true` (or `SKIP_RATE_LIMITS=true`), so high-concurrency test runs no longer need explicit `*_RATE_LIMIT` overrides.
+- If other rate limiting appears, reduce concurrency first (e.g., 8 -> 6 -> 4).
 - If follow-up latency is too high, adjust `PROGRAM_GENERATION_FOLLOWUP_DELAY_MS`.
 - Keep one variable change per run so comparisons remain meaningful.

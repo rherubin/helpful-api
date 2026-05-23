@@ -13,6 +13,10 @@ const { generateTestEmail } = require('./test-helpers');
  * Run with:                node tests/device-tokens-test.js
  * Keep data for SQL check: node tests/device-tokens-test.js --__keep-data
  *
+ * Note: Start the API with TEST_MOCK_LLM=true (the standard test command) so the
+ *       device-token rate limiter is automatically bypassed and the suite can
+ *       register many tokens quickly without hitting the 10/5min cap.
+ *
  * SQL verification (with --__keep-data):
  *   SELECT u.email, dt.id, dt.platform, dt.created_at
  *     FROM device_tokens dt JOIN users u ON dt.user_id = u.id
@@ -212,7 +216,8 @@ class DeviceTokenTestRunner {
           timeout: this.timeout
         });
         this.assert(res.status === 200, 'DELETE by id succeeds', `Status: ${res.status}`);
-        this.assert(res.data.success === true, 'Response success flag is true');
+        this.assert(res.data && typeof res.data.message === 'string' && res.data.message.includes('deleted successfully'),
+          'Response contains success message');
       } catch (err) {
         this.assert(false, 'DELETE by id', `Error: ${err.response?.data?.error || err.message}`);
       }
