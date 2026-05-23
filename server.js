@@ -237,7 +237,7 @@ function setupRoutes() {
 
   // Setup pairing routes
   if (pairingService && authService) {
-    app.use('/api/pairing', createPairingRoutes(pairingService, authService, pushNotificationService || null));
+    app.use('/api/pairing', createPairingRoutes(pairingService, authService, pushNotificationService || null, userModel || null, pairingModel || null));
   }
 
   // Setup program routes

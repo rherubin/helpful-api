@@ -17,6 +17,7 @@ const HelpfulPromptServiceTestRunner = require('./helpful-prompt-service-test');
 const HopefulPromptServiceTestRunner = require('./hopeful-prompt-service-test');
 const ProgramOrgContextTestRunner = require('./program-org-context-test');
 const PushNotificationServiceTestRunner = require('./push-notification-service-test');
+const AdminPushTestRunner = require('./admin-push-test-test');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -46,6 +47,7 @@ class TestSuiteRunner {
       runHopefulPromptService: options.runHopefulPromptService !== false, // Default true
       runProgramOrgContext: options.runProgramOrgContext !== false, // Default true
       runPushNotificationService: options.runPushNotificationService !== false, // Default true
+      runAdminPushTest: options.runAdminPushTest !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
@@ -71,6 +73,7 @@ class TestSuiteRunner {
       hopefulPromptService: null,
       programOrgContext: null,
       pushNotificationService: null,
+      adminPushTest: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -749,6 +752,44 @@ class TestSuiteRunner {
     }
   }
 
+  async runAdminPushTestTests() {
+    if (!this.options.runAdminPushTest) {
+      this.log('Skipping admin push-test endpoint tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🔔 Running Admin Push-Test Endpoint Tests', 'section');
+
+    try {
+      const runner = new AdminPushTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.adminPushTest = {
+        success,
+        skipped: false,
+        details: 'POST /api/admin/push-test — auth gate, validation, 404, and happy-path',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Admin push-test endpoint tests completed successfully', 'success');
+      } else {
+        this.log('Admin push-test endpoint tests failed', 'error');
+      }
+
+      return this.results.adminPushTest;
+    } catch (error) {
+      this.log(`Admin push-test endpoint tests failed: ${error.message}`, 'error');
+      this.results.adminPushTest = { success: false, error: error.message };
+      return this.results.adminPushTest;
+    }
+  }
+
   async runDeviceTokenTests() {
     if (!this.options.runDeviceTokens) {
       this.log('Skipping device tokens tests', 'warn');
@@ -990,6 +1031,15 @@ class TestSuiteRunner {
     if (this.options.runPushNotificationService) {
       await this.runPushNotificationServiceTests();
       if (this.results.pushNotificationService && !this.results.pushNotificationService.success && !this.results.pushNotificationService.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run admin push-test endpoint integration tests
+    if (this.options.runAdminPushTest) {
+      await this.runAdminPushTestTests();
+      if (this.results.adminPushTest && !this.results.adminPushTest.success && !this.results.adminPushTest.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -1337,6 +1387,7 @@ function parseArgs() {
     if (arg === '--no-hopeful-prompt-service') options.runHopefulPromptService = false;
     if (arg === '--no-program-org-context') options.runProgramOrgContext = false;
     if (arg === '--no-push-notification-service') options.runPushNotificationService = false;
+    if (arg === '--no-admin-push-test') options.runAdminPushTest = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];
     if (arg.startsWith('--timeout=')) options.timeout = parseInt(arg.split('=')[1]);

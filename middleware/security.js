@@ -65,6 +65,22 @@ const apiLimiter = rateLimit({
   legacyHeaders: false
 });
 
+// Rate limiting for admin action endpoints (push-test, etc.) that trigger external
+// side effects. Counts ALL requests — both successful and failed — so the cap applies
+// to actual sends, not just errors. loginLimiter is intentionally not reused here
+// because its skipSuccessfulRequests:true setting would let successful sends through
+// without counting them.
+const adminActionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // 100 actions per 15 minutes per IP
+  message: {
+    error: 'Too many admin action requests, please try again later',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // Account lockout tracking (in-memory store - use Redis in production)
 const failedAttempts = new Map();
 const lockedAccounts = new Map();
@@ -152,6 +168,7 @@ module.exports = {
   userUpdateLimiter,
   deviceTokenLimiter,
   apiLimiter,
+  adminActionLimiter,
   isAccountLocked,
   recordFailedAttempt,
   clearFailedAttempts,

@@ -13,10 +13,10 @@ This applies to `authService`, `userModel`, `pairingModel`, prompt services, `pu
 
 ```javascript
 // server.js
-app.use('/api/pairing', createPairingRoutes(pairingService, authService, pushNotificationService || null));
+app.use('/api/pairing', createPairingRoutes(pairingService, authService, pushNotificationService || null, userModel || null, pairingModel || null));
 
 // routes/pairing.js
-function createPairingRoutes(pairingService, authService, pushNotificationService = null) {
+function createPairingRoutes(pairingService, authService, pushNotificationService = null, userModel = null, pairingModel = null) {
   router.post('/accept', authenticateToken, async (req, res) => {
     // ...
     if (pushNotificationService) {

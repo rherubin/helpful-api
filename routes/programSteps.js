@@ -404,30 +404,27 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       const program = await programModel.getProgramById(step.program_id);
 
       // Notify the other partner in real-time that a new message was posted (fire-and-forget).
-      if (program.pairing_id && pairingModel) {
-        const push = pushNotificationService;
-        if (push) {
-          setImmediate(async () => {
-            try {
-              const pairing = await pairingModel.getPairingById(program.pairing_id);
-              if (pairing && pairing.status === 'accepted') {
-                const otherUserId = pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
-                if (otherUserId) {
-                  const sender = await userModel.getUserById(userId);
-                  const senderName = sender?.user_name || 'Your partner';
-                  const preview = content.length > 100 ? `${content.substring(0, 100)}…` : content;
-                  await push.sendToUser(otherUserId, {
-                    title: `${senderName} shared a reflection`,
-                    body: preview,
-                    data: { kind: 'step_message', step_id: id, program_id: program.id, step_day: String(step.day) }
-                  });
-                }
+      if (program.pairing_id && pairingModel && pushNotificationService) {
+        setImmediate(async () => {
+          try {
+            const pairing = await pairingModel.getPairingById(program.pairing_id);
+            if (pairing && pairing.status === 'accepted') {
+              const otherUserId = pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
+              if (otherUserId) {
+                const sender = await userModel.getUserById(userId);
+                const senderName = sender?.user_name || 'Your partner';
+                const preview = content.length > 100 ? `${content.substring(0, 100)}…` : content;
+                await pushNotificationService.sendToUser(otherUserId, {
+                  title: `${senderName} shared a reflection`,
+                  body: preview,
+                  data: { kind: 'step_message', step_id: id, program_id: program.id, step_day: String(step.day) }
+                });
               }
-            } catch (err) {
-              console.warn('[push] step_message notify failed:', err.message);
             }
-          });
-        }
+          } catch (err) {
+            console.warn('[push] step_message notify failed:', err.message);
+          }
+        });
       }
       const isFirstProgram = !program.previous_program_id;
       const isFirstStep = step.day === 1;
