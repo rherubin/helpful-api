@@ -18,6 +18,7 @@ const HopefulPromptServiceTestRunner = require('./hopeful-prompt-service-test');
 const ProgramOrgContextTestRunner = require('./program-org-context-test');
 const PushNotificationServiceTestRunner = require('./push-notification-service-test');
 const AdminPushTestRunner = require('./admin-push-test-test');
+const PromptSessionsTestRunner = require('./prompt-sessions-test');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -48,6 +49,7 @@ class TestSuiteRunner {
       runProgramOrgContext: options.runProgramOrgContext !== false, // Default true
       runPushNotificationService: options.runPushNotificationService !== false, // Default true
       runAdminPushTest: options.runAdminPushTest !== false, // Default true
+      runPromptSessions: options.runPromptSessions !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
@@ -74,6 +76,7 @@ class TestSuiteRunner {
       programOrgContext: null,
       pushNotificationService: null,
       adminPushTest: null,
+      promptSessions: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -790,6 +793,44 @@ class TestSuiteRunner {
     }
   }
 
+  async runPromptSessionsTests() {
+    if (!this.options.runPromptSessions) {
+      this.log('Skipping prompt sessions tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🪑 Running Prompt Sessions ("Sit Sessions") Test Suite', 'section');
+
+    try {
+      const runner = new PromptSessionsTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.promptSessions = {
+        success,
+        skipped: false,
+        details: '/api/prompt-sessions CRUD, prep flow, visibility policy, and generation stub',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Prompt sessions tests completed successfully', 'success');
+      } else {
+        this.log('Prompt sessions tests failed', 'error');
+      }
+
+      return this.results.promptSessions;
+    } catch (error) {
+      this.log(`Prompt sessions tests failed: ${error.message}`, 'error');
+      this.results.promptSessions = { success: false, error: error.message };
+      return this.results.promptSessions;
+    }
+  }
+
   async runDeviceTokenTests() {
     if (!this.options.runDeviceTokens) {
       this.log('Skipping device tokens tests', 'warn');
@@ -1045,6 +1086,15 @@ class TestSuiteRunner {
       console.log('');
     }
 
+    // Run prompt sessions ("Sit Sessions") integration tests
+    if (this.options.runPromptSessions) {
+      await this.runPromptSessionsTests();
+      if (this.results.promptSessions && !this.results.promptSessions.success && !this.results.promptSessions.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
     this.results.endTime = Date.now();
     this.printOverallSummary(overallSuccess);
 
@@ -1268,6 +1318,17 @@ class TestSuiteRunner {
       }
     }
 
+    // Prompt sessions test results
+    if (this.results.promptSessions) {
+      if (this.results.promptSessions.skipped) {
+        this.log('🪑 Prompt Sessions Tests: SKIPPED', 'warn');
+      } else if (this.results.promptSessions.success) {
+        this.log(`🪑 Prompt Sessions Tests: PASSED (${this.results.promptSessions.passed}/${this.results.promptSessions.total})`, 'success');
+      } else {
+        this.log(`🪑 Prompt Sessions Tests: FAILED (${this.results.promptSessions.failed}/${this.results.promptSessions.total} failures)`, 'error');
+      }
+    }
+
     console.log('');
 
     // Overall result
@@ -1307,7 +1368,7 @@ class TestSuiteRunner {
                this.results.userOrgCode?.success && this.results.deviceTokens?.success &&
                this.results.helpfulPromptService?.success &&
                this.results.hopefulPromptService?.success && this.results.programOrgContext?.success &&
-               this.results.pushNotificationService?.success,
+               this.results.pushNotificationService?.success && this.results.promptSessions?.success,
       results: {
         security: this.results.security,
         load: this.results.load,
@@ -1327,7 +1388,8 @@ class TestSuiteRunner {
         helpfulPromptService: this.results.helpfulPromptService,
         hopefulPromptService: this.results.hopefulPromptService,
         programOrgContext: this.results.programOrgContext,
-        pushNotificationService: this.results.pushNotificationService
+        pushNotificationService: this.results.pushNotificationService,
+        promptSessions: this.results.promptSessions
       },
       summary: {
         totalTests: (this.results.security?.total || 0) +
@@ -1338,7 +1400,7 @@ class TestSuiteRunner {
                    (this.results.userOrgCode?.total || 0) + (this.results.deviceTokens?.total || 0) +
                    (this.results.helpfulPromptService?.total || 0) +
                    (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0) +
-                   (this.results.pushNotificationService?.total || 0),
+                   (this.results.pushNotificationService?.total || 0) + (this.results.promptSessions?.total || 0),
         totalPassed: (this.results.security?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) + (this.results.userProfile?.passed || 0) +
                     (this.results.refreshTokenReset?.passed || 0) + (this.results.programs?.passed || 0) + (this.results.programSteps?.passed || 0) +
@@ -1347,7 +1409,7 @@ class TestSuiteRunner {
                     (this.results.userOrgCode?.passed || 0) + (this.results.deviceTokens?.passed || 0) +
                     (this.results.helpfulPromptService?.passed || 0) +
                     (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0) +
-                    (this.results.pushNotificationService?.passed || 0),
+                    (this.results.pushNotificationService?.passed || 0) + (this.results.promptSessions?.passed || 0),
         totalFailed: (this.results.security?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) + (this.results.userProfile?.failed || 0) +
                     (this.results.refreshTokenReset?.failed || 0) + (this.results.programs?.failed || 0) + (this.results.programSteps?.failed || 0) +
@@ -1356,7 +1418,7 @@ class TestSuiteRunner {
                     (this.results.userOrgCode?.failed || 0) + (this.results.deviceTokens?.failed || 0) +
                     (this.results.helpfulPromptService?.failed || 0) +
                     (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0) +
-                    (this.results.pushNotificationService?.failed || 0)
+                    (this.results.pushNotificationService?.failed || 0) + (this.results.promptSessions?.failed || 0)
       }
     };
   }
@@ -1388,6 +1450,7 @@ function parseArgs() {
     if (arg === '--no-program-org-context') options.runProgramOrgContext = false;
     if (arg === '--no-push-notification-service') options.runPushNotificationService = false;
     if (arg === '--no-admin-push-test') options.runAdminPushTest = false;
+    if (arg === '--no-prompt-sessions') options.runPromptSessions = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];
     if (arg.startsWith('--timeout=')) options.timeout = parseInt(arg.split('=')[1]);

@@ -11,6 +11,7 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 - **Unified Pairing System**: Request, accept, reject, and soft-delete pairings with partner codes
 - **AI Therapy Programs**: OpenAI-backed program generation with **two prompt tracks**: **Helpful** (default, secular EFT/Gottman-style) vs **Hopeful** (faith-based) when the user has an org code or custom org fields — plus automatic retry/follow-up when initial generation fails
 - **Program Steps**: Day-based program steps per program with message threading, unlock tracking, and optional paired “therapy response” system messages
+- **Prompt Sessions (“Sit Sessions”)**: Structured, time-bounded couples experiences anchored to an accepted pairing. Both partners complete a six-question **prep**; partner answers stay private until both preps are complete. Content generation (the dynamic LLM prompt built from both preps) is scaffolded but **not yet implemented**.
 
 ### Advanced Features  
 - **Smart Pairing Responses**: Pending requests show `partner: null`, accepted pairings show full partner data
@@ -154,6 +155,9 @@ A comprehensive Node.js REST API with MySQL backend featuring user management, J
 - **`GET /api/subscription`** - Active subscription / premium summary
 - **`GET /api/subscription/receipts`** - Stored receipts for current user
 - **`POST|GET|DELETE /api/device-tokens`** - Push device token registration
+- **`POST /api/prompt-sessions`** - Start a "Sit Session" for an accepted pairing (requires `pairing_id`)
+- **`POST|GET /api/prompt-sessions/:id/prep`** - Submit/merge your prep answers; read your prep + partner completion status
+- **`POST /api/prompt-sessions/:id/generate`** - Trigger content generation (**501 — not yet implemented**)
 - **`GET /api/programs/metrics`** - Prompt-service queue/latency metrics (both tracks)
 - **`GET /api/programs/:id/programSteps`** - Program steps for a program
 - **`POST /api/programSteps/:id/messages`** - Add message to a program step
@@ -1304,6 +1308,106 @@ Without this configuration, the system will log warnings but continue normal ope
   ```
 - **Note**: Only the message sender can edit their own messages. System / LLM messages cannot be edited.
 
+### Prompt Sessions ("Sit Sessions")
+
+A **Prompt Session** (publicly a "Sit Session") is a structured, time-bounded couples experience anchored to an **accepted** pairing. Both partners independently complete a six-question **prep**; once both preps are complete, a dynamic LLM prompt is meant to be built from both sets of answers to produce the "Bridge" + "Session" content.
+
+> **Status:** the model, routes, prep flow, and persistence hooks are implemented. **Content generation is intentionally stubbed** — the prompt-construction + LLM call and the final prep question copy are not defined yet. The `POST /api/prompt-sessions/:id/generate` endpoint returns **501** until that work lands. See `docs/prompt-sessions-design.md`.
+
+**Internal vs public naming:** the DB tables are `prompt_sessions` / `prompt_session_preps` and the routes live under `/api/prompt-sessions`; the public product label is "Sit Session".
+
+**Key rules:**
+- `pairing_id` is **required** on creation; the caller must be a member of the pairing and the pairing must be `accepted`.
+- **One active session per pairing** — creating a second while one is in `prep`/`bridge`/`in_session` returns **409**.
+- **Prep visibility:** a partner's raw prep answers are hidden until **both** preps are complete; only completion status is exposed before that.
+- The internal `generation_prompt` is **never** exposed to clients.
+- A prep is "complete" once all six required fields (`bringing_text`, `energy_level`, `intention`, `curiosity`, `boundary`, `gratitude`) are non-empty. `optional_focus` is optional. Submitting partial answers merges with any existing answers.
+
+#### Create Prompt Session
+- **POST** `/api/prompt-sessions`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Body:**
+  ```json
+  { "pairing_id": "pairing_id" }
+  ```
+- **Response:** **201 Created**
+  ```json
+  {
+    "message": "Prompt session created",
+    "prompt_session": {
+      "id": "session_id",
+      "pairing_id": "pairing_id",
+      "created_by_user_id": "user_id",
+      "status": "prep",
+      "current_phase": null,
+      "created_at": "2026-01-01T00:00:00.000Z"
+    }
+  }
+  ```
+- **Errors:** `400` missing `pairing_id`, `403` not a member, `400` pairing not accepted, `404` unknown pairing, `409` an active session already exists (the existing session is returned).
+- **Side effect:** the partner receives a push with `data.kind = "prompt_session_created"`.
+
+#### List Prompt Sessions
+- **GET** `/api/prompt-sessions` (optionally `?pairing_id={id}`)
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Description:** Returns all prompt sessions visible to the caller via their accepted pairings. With `pairing_id`, scopes to that pairing (caller must be a member).
+- **Response:** `{ "message": "...", "prompt_sessions": [ ... ] }`
+
+#### Get Prompt Session
+- **GET** `/api/prompt-sessions/:id`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:** `{ "message": "...", "prompt_session": { ... } }` (`403` for non-members, `404` if not found).
+
+#### Submit / Update Prep
+- **POST** `/api/prompt-sessions/:id/prep`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Body:** any subset of the prep fields (merged with existing answers):
+  ```json
+  {
+    "bringing_text": "I'm bringing curiosity and some tiredness.",
+    "energy_level": "medium",
+    "intention": "To listen more than I speak.",
+    "curiosity": "What has felt heavy for you this week?",
+    "boundary": "Let's avoid logistics tonight.",
+    "gratitude": "Thank you for planning dinner.",
+    "optional_focus": "Reconnecting after a busy month"
+  }
+  ```
+- **Response:** `200 OK`
+  ```json
+  {
+    "message": "Prep saved successfully",
+    "prep": { "id": "prep_id", "completed": true, "completed_at": "...", "...": "..." },
+    "both_preps_complete": false
+  }
+  ```
+- **Side effects:** when your prep completes but your partner's hasn't, the partner gets a push (`data.kind = "prompt_session_prep_complete"`). When **both** complete, content generation would be triggered (currently a logged no-op stub).
+
+#### Get My Prep (+ partner status)
+- **GET** `/api/prompt-sessions/:id/prep`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Response:** `200 OK`
+  ```json
+  {
+    "message": "Prep retrieved successfully",
+    "my_prep": { "id": "prep_id", "completed": true, "bringing_text": "...", "...": "..." },
+    "partner_prep": { "user_id": "partner_id", "completed": false, "completed_at": null },
+    "both_preps_complete": false
+  }
+  ```
+  Once `both_preps_complete` is `true`, `partner_prep` includes the partner's full answers.
+
+#### Update Phase / Status
+- **PATCH** `/api/prompt-sessions/:id`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Body:** `{ "current_phase": "bridge" }` and/or `{ "status": "in_session" }`
+- **Notes:** `status` must be one of `prep`, `bridge`, `in_session`, `complete`, `abandoned` (invalid → `400`). Returns the updated `prompt_session`.
+
+#### Generate Content (stub)
+- **POST** `/api/prompt-sessions/:id/generate`
+- **Headers:** `Authorization: Bearer {access_token}`
+- **Behavior:** Returns **409** until both preps are complete, then **501 Not Implemented** (prompt construction + LLM call are not built yet).
+
 ### Admin authentication (dashboard / org tooling)
 
 Admin accounts are separate from app users (`admin_users` table). Tokens use the same `JWT_SECRET` as app users but embed `type: "admin"` in the JWT payload; use these with org-code admin routes (`/api/org-codes`, audit, etc.).
@@ -1453,6 +1557,36 @@ Both methods automatically **prune dead FCM tokens** — if FCM responds with `r
 ```
 
 A payload with **only** `data` (no `title`/`body`) is valid and delivers a silent data push.
+
+#### Push Kinds (Client Contract)
+
+The backend emits a small set of well-known `data.kind` values. Mobile and web clients should switch on `kind` (and ignore unknown values for forward compatibility).
+
+| kind | When sent | Typical `data` fields | Notes |
+|------|-----------|-----------------------|-------|
+| `pairing_accepted` | Someone accepted the authenticated user's pending pairing request | (none beyond `kind`) | Title/body contains the accepter's name |
+| `program_ready` | A new 14-day program (or "next program") finished generating | `program_id` | Sent to both partners when pairing is active |
+| `step_message` | The other partner posted a reflection/message in a program step | `step_id`, `program_id`, `step_day` | Body contains a preview of the message |
+| `therapy_response` | A new therapist reflection was generated for a step (both users had posted) | `step_id` | Sent to both partners |
+| `prompt_session_created` | A partner started a Prompt Session ("Sit Session") for the pairing | `prompt_session_id` | Sent to the other partner |
+| `prompt_session_prep_complete` | One partner finished their prep while the other's is still pending | `prompt_session_id` | Nudges the partner to complete prep |
+
+All production sends also include human-readable `title` + `body` so clients can always surface a visible notification even if they don't recognize the `kind`.
+
+Example of a real emitted payload:
+
+```json
+{
+  "title": "Alex shared a reflection",
+  "body": "I really appreciated when you said...",
+  "data": {
+    "kind": "step_message",
+    "step_id": "step_abc123",
+    "program_id": "prog_xyz789",
+    "step_day": "3"
+  }
+}
+```
 
 #### Low-level API
 
@@ -1694,6 +1828,54 @@ CREATE TABLE device_tokens (
 - Per-user cap: **25 tokens**. The model enforces this before inserting a new row.
 - `ON DELETE CASCADE`: when a user is deleted, all their device token rows are removed automatically.
 
+### Prompt Sessions Tables
+
+```sql
+CREATE TABLE prompt_sessions (
+  id VARCHAR(50) PRIMARY KEY,
+  pairing_id VARCHAR(50) NOT NULL,
+  created_by_user_id VARCHAR(50) NOT NULL,
+  status ENUM('prep','bridge','in_session','complete','abandoned') DEFAULT 'prep',
+  current_phase VARCHAR(50) DEFAULT NULL,
+  generation_prompt LONGTEXT DEFAULT NULL,      -- built from both preps; never exposed to clients
+  generation_prompt_used_at DATETIME DEFAULT NULL,
+  llm_used VARCHAR(100) DEFAULT NULL,
+  bridge_content LONGTEXT DEFAULT NULL,
+  session_content LONGTEXT DEFAULT NULL,
+  generation_error TEXT DEFAULT NULL,
+  seconds_to_generate DECIMAL(8,4) DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_pairing_id (pairing_id),
+  INDEX idx_created_by (created_by_user_id),
+  INDEX idx_status (status),
+  FOREIGN KEY (pairing_id) REFERENCES pairings (id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by_user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE prompt_session_preps (
+  id VARCHAR(50) PRIMARY KEY,
+  prompt_session_id VARCHAR(50) NOT NULL,
+  user_id VARCHAR(50) NOT NULL,
+  bringing_text TEXT, energy_level TEXT, intention TEXT,
+  curiosity TEXT, boundary TEXT, gratitude TEXT,
+  optional_focus TEXT NULL,
+  completed_at DATETIME DEFAULT NULL,            -- set once all six required fields are non-empty
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_prompt_session_user (prompt_session_id, user_id),
+  INDEX idx_prompt_session_id (prompt_session_id),
+  INDEX idx_user_id (user_id),
+  FOREIGN KEY (prompt_session_id) REFERENCES prompt_sessions (id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Notes:**
+- One `prompt_session_preps` row per partner per session (enforced by `unique_prompt_session_user`).
+- Prep field names are placeholders pending final product copy.
+- Generation columns (`generation_prompt`, `bridge_content`, `session_content`, `seconds_to_generate`, `llm_used`) are populated by the persistence hooks once content generation is implemented.
+
 ## Password Requirements
 
 Passwords must meet the following criteria:
@@ -1788,6 +1970,7 @@ npm test
 | `npm run test:messages` | `tests/messages-test.js` |
 | `npm run test:therapy-trigger` | `tests/therapy-trigger-test.js` |
 | `npm run test:push` | `tests/push-notification-service-test.js` |
+| `npm run test:prompt-sessions` | `tests/prompt-sessions-test.js` |
 | `npm run test:cleanup` | `tests/cleanup-test-data.js` |
 
 Additional one-off runners under `tests/` (execute with `node tests/...`) include `user-profile-test.js`, `pairings-endpoint-test.js`, and `refresh-token-reset-test.js`.
@@ -1964,6 +2147,7 @@ helpful-api/
 │   ├── OrgCode.js
 │   ├── AdminUser.js
 │   ├── DeviceToken.js
+│   ├── PromptSession.js
 │   ├── IosSubscription.js
 │   └── AndroidSubscription.js
 ├── services/
@@ -1982,6 +2166,7 @@ helpful-api/
 │   ├── pairing.js
 │   ├── programs.js
 │   ├── programSteps.js
+│   ├── promptSessions.js
 │   ├── subscription.js
 │   ├── org-codes.js
 │   └── device-tokens.js

@@ -24,6 +24,7 @@ class DeviceToken {
         platform ENUM('ios', 'android', 'web') NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        last_used_at DATETIME NULL,
         UNIQUE KEY unique_user_device (user_id, device_token),
         INDEX idx_user_id (user_id),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -65,6 +66,30 @@ class DeviceToken {
           }
         } catch (idxErr) {
           console.warn('Migration warning (drop idx_device_token):', idxErr.message);
+        }
+
+        // Migration: add last_used_at column (used for push token activity tracking + smarter cleanup)
+        try {
+          const lastUsedCol = await this.queryOne(`
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'device_tokens'
+              AND COLUMN_NAME = 'last_used_at'
+          `);
+
+          if (!lastUsedCol) {
+            await this.query('ALTER TABLE device_tokens ADD COLUMN last_used_at DATETIME NULL AFTER updated_at');
+            // Backfill for existing rows so they are not immediately eligible for cleanup
+            await this.query(`
+              UPDATE device_tokens
+              SET last_used_at = COALESCE(updated_at, created_at)
+              WHERE last_used_at IS NULL
+            `);
+            console.log('Migrated device_tokens table: added last_used_at column (backfilled from updated_at)');
+          }
+        } catch (luErr) {
+          console.warn('Migration warning for device_tokens last_used_at column:', luErr.message);
         }
       } catch (migrationErr) {
         console.warn('Migration warning for device_tokens platform column:', migrationErr.message);
@@ -113,12 +138,14 @@ class DeviceToken {
 
       const id = existing ? existing.id : this.generateUniqueId();
 
-      // Single atomic upsert — no race between check and write
+      // Single atomic upsert — no race between check and write.
+      // last_used_at is set on registration (device is actively being used) and on push success.
       await this.query(`
-        INSERT INTO device_tokens (id, user_id, device_token, platform, created_at, updated_at)
-        VALUES (?, ?, ?, ?, NOW(), NOW())
+        INSERT INTO device_tokens (id, user_id, device_token, platform, created_at, updated_at, last_used_at)
+        VALUES (?, ?, ?, ?, NOW(), NOW(), NOW())
         ON DUPLICATE KEY UPDATE
-          platform = VALUES(platform)
+          platform = VALUES(platform),
+          last_used_at = NOW()
       `, [id, userId, deviceToken, platform]);
 
       return { id, isNew: !existing };
@@ -137,7 +164,7 @@ class DeviceToken {
   async getUserDeviceTokens(userId) {
     try {
       return await this.query(
-        `SELECT id, user_id, platform, created_at, updated_at
+        `SELECT id, user_id, platform, created_at, updated_at, last_used_at
          FROM device_tokens
          WHERE user_id = ?
          ORDER BY updated_at DESC, created_at DESC`,
@@ -157,7 +184,7 @@ class DeviceToken {
   async getUserDeviceTokensWithStrings(userId) {
     try {
       return await this.query(
-        `SELECT id, user_id, device_token, platform, created_at, updated_at
+        `SELECT id, user_id, device_token, platform, created_at, updated_at, last_used_at
          FROM device_tokens
          WHERE user_id = ?
          ORDER BY updated_at DESC, created_at DESC`,
@@ -181,7 +208,7 @@ class DeviceToken {
     const placeholders = unique.map(() => '?').join(',');
     try {
       return await this.query(
-        `SELECT id, user_id, device_token, platform, created_at, updated_at
+        `SELECT id, user_id, device_token, platform, created_at, updated_at, last_used_at
          FROM device_tokens
          WHERE user_id IN (${placeholders})
          ORDER BY updated_at DESC, created_at DESC`,
@@ -227,11 +254,36 @@ class DeviceToken {
     }
   }
 
+  /**
+   * Mark one or more device tokens as recently used (updates last_used_at = NOW()).
+   * Used by PushNotificationService after successful deliveries so cleanup
+   * doesn't evict tokens that are demonstrably still working.
+   * Silently ignores tokens that no longer exist.
+   */
+  async markDeviceTokensUsed(deviceTokens) {
+    if (!Array.isArray(deviceTokens) || deviceTokens.length === 0) return 0;
+    const unique = [...new Set(deviceTokens.filter(t => typeof t === 'string' && t.length > 0))];
+    if (unique.length === 0) return 0;
+
+    const placeholders = unique.map(() => '?').join(',');
+    try {
+      const result = await this.query(
+        `UPDATE device_tokens SET last_used_at = NOW() WHERE device_token IN (${placeholders})`,
+        unique
+      );
+      return result.affectedRows || 0;
+    } catch (err) {
+      // Non-fatal — last_used_at is best-effort hygiene, not critical path
+      console.warn('Failed to mark device tokens used:', err.message);
+      return 0;
+    }
+  }
+
   async cleanupOldTokens(daysOld = 180) {
     try {
       const result = await this.query(`
         DELETE FROM device_tokens
-        WHERE updated_at < DATE_SUB(NOW(), INTERVAL ? DAY)
+        WHERE COALESCE(last_used_at, updated_at) < DATE_SUB(NOW(), INTERVAL ? DAY)
       `, [daysOld]);
       return result.affectedRows;
     } catch (err) {

@@ -254,9 +254,13 @@ class PushNotificationService {
       return { successCount: 0, failureCount: 0, invalidTokens: [] };
     }
 
+    const kind = (payload.data && payload.data.kind) || null;
+    this.logger.log(`[push] sendToTokens → ${uniqueTokens.length} token(s)${kind ? `, kind=${kind}` : ''}`);
+
     let successCount = 0;
     let failureCount = 0;
     const invalidTokens = [];
+    const successfulTokens = [];
 
     for (let i = 0; i < uniqueTokens.length; i += MAX_TOKENS_PER_REQUEST) {
       const chunk = uniqueTokens.slice(i, i + MAX_TOKENS_PER_REQUEST);
@@ -266,7 +270,7 @@ class PushNotificationService {
       try {
         result = await this._messaging.sendEachForMulticast(message);
       } catch (err) {
-        this.logger.error(`PushNotificationService FCM call failed for chunk of ${chunk.length}: ${err.message}`);
+        this.logger.error(`[push] FCM call failed for chunk of ${chunk.length}: ${err.message}`);
         failureCount += chunk.length;
         continue;
       }
@@ -275,17 +279,34 @@ class PushNotificationService {
       failureCount += result.failureCount || 0;
 
       (result.responses || []).forEach((resp, idx) => {
-        if (resp && resp.success) return;
+        const tok = chunk[idx];
+        if (resp && resp.success) {
+          successfulTokens.push(tok);
+          return;
+        }
         const error = resp && resp.error;
         if (!error) return;
         const code = error.code || (error.errorInfo && error.errorInfo.code);
         if (code && FCM_DEAD_TOKEN_CODES.has(code)) {
-          invalidTokens.push(chunk[idx]);
+          invalidTokens.push(tok);
         } else {
-          const preview = chunk[idx].slice(0, 12);
-          this.logger.warn(`Push send error for token ${preview}…: ${code || error.message || 'unknown'}`);
+          const preview = tok.slice(0, 12);
+          this.logger.warn(`[push] send error for token ${preview}…: ${code || error.message || 'unknown'}`);
         }
       });
+    }
+
+    // Mark successfully delivered tokens as recently used so cleanup doesn't evict them
+    if (successfulTokens.length > 0 && typeof this.deviceTokenModel.markDeviceTokensUsed === 'function') {
+      try {
+        await this.deviceTokenModel.markDeviceTokensUsed(successfulTokens);
+      } catch (e) {
+        this.logger.warn(`[push] Failed to mark ${successfulTokens.length} token(s) as used: ${e.message}`);
+      }
+    }
+
+    if (successCount > 0 || failureCount > 0) {
+      this.logger.log(`[push] result: ${successCount} success, ${failureCount} failure, ${invalidTokens.length} dead (pruned upstream)`);
     }
 
     return { successCount, failureCount, invalidTokens };
@@ -297,7 +318,7 @@ class PushNotificationService {
    */
   async sendToUser(userId, payload) {
     if (!this._configured) {
-      this.logger.warn(`PushNotificationService.sendToUser(${userId}) skipped — service not configured`);
+      this.logger.warn(`[push] sendToUser(${userId}) skipped — service not configured`);
       return { successCount: 0, failureCount: 0, invalidTokens: [], skipped: true };
     }
     if (!userId) {
@@ -308,6 +329,9 @@ class PushNotificationService {
     if (!records || records.length === 0) {
       return { successCount: 0, failureCount: 0, invalidTokens: [] };
     }
+
+    const kind = (payload.data && payload.data.kind) || null;
+    this.logger.log(`[push] sendToUser(${userId}) → ${records.length} device(s)${kind ? `, kind=${kind}` : ''}`);
 
     const tokens = records.map(r => r.device_token).filter(Boolean);
     const result = await this.sendToTokens(tokens, payload);
@@ -324,21 +348,22 @@ class PushNotificationService {
    */
   async sendToUsers(userIds, payload) {
     if (!this._configured) {
-      this.logger.warn('PushNotificationService.sendToUsers skipped — service not configured');
+      this.logger.warn('[push] sendToUsers skipped — service not configured');
       return { successCount: 0, failureCount: 0, invalidTokens: [], skipped: true };
     }
     if (!Array.isArray(userIds) || userIds.length === 0) {
       return { successCount: 0, failureCount: 0, invalidTokens: [] };
     }
 
+    const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
     let records;
     if (typeof this.deviceTokenModel.getDeviceTokensForUsers === 'function') {
-      records = await this.deviceTokenModel.getDeviceTokensForUsers(userIds);
+      records = await this.deviceTokenModel.getDeviceTokensForUsers(uniqueUserIds);
     } else {
       // Fallback: per-user lookup. Slower but avoids hard-coupling to the
       // bulk helper if a future model variant doesn't expose it.
       records = [];
-      for (const id of [...new Set(userIds)]) {
+      for (const id of uniqueUserIds) {
         const rs = await this.deviceTokenModel.getUserDeviceTokensWithStrings(id);
         if (rs) records.push(...rs);
       }
@@ -348,6 +373,9 @@ class PushNotificationService {
     if (tokens.length === 0) {
       return { successCount: 0, failureCount: 0, invalidTokens: [] };
     }
+
+    const kind = (payload.data && payload.data.kind) || null;
+    this.logger.log(`[push] sendToUsers → ${uniqueUserIds.length} user(s), ${tokens.length} token(s)${kind ? `, kind=${kind}` : ''}`);
 
     const result = await this.sendToTokens(tokens, payload);
     if (result.invalidTokens.length > 0) {
@@ -368,7 +396,7 @@ class PushNotificationService {
       }
     }
     if (removed > 0) {
-      this.logger.log(`PushNotificationService pruned ${removed} dead device token(s)`);
+      this.logger.log(`[push] pruned ${removed} dead device token(s)`);
     }
     return removed;
   }

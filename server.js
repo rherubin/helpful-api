@@ -17,6 +17,7 @@ const AndroidSubscription = require('./models/AndroidSubscription');
 const OrgCode = require('./models/OrgCode');
 const AdminUser = require('./models/AdminUser');
 const DeviceToken = require('./models/DeviceToken');
+const PromptSession = require('./models/PromptSession');
 const AuthService = require('./services/AuthService');
 const PairingService = require('./services/PairingService');
 const HopefulPromptService = require('./services/HopefulPromptService');
@@ -36,6 +37,7 @@ const createOrgCodeRoutes = require('./routes/org-codes');
 const createAdminAuthRoutes = require('./routes/admin-auth');
 const createAdminRoutes = require('./routes/admin');
 const createDeviceTokenRoutes = require('./routes/device-tokens');
+const createPromptSessionRoutes = require('./routes/promptSessions');
 
 const app = express();
 
@@ -111,6 +113,47 @@ function securityHeaders(req, res, next) {
   next();
 }
 
+/**
+ * Periodic cleanup of old/stale push device tokens.
+ * Runs a DELETE using the model's cleanupOldTokens (which now keys off
+ * COALESCE(last_used_at, updated_at)). First run is delayed after boot
+ * to avoid competing with startup work.
+ */
+function startDeviceTokenCleanupJob(deviceTokenModel) {
+  const intervalHours = parseInt(process.env.PUSH_TOKEN_CLEANUP_INTERVAL_HOURS || '24', 10);
+  if (!intervalHours || intervalHours <= 0) {
+    console.log('[push-cleanup] disabled via PUSH_TOKEN_CLEANUP_INTERVAL_HOURS');
+    return;
+  }
+
+  const intervalMs = intervalHours * 60 * 60 * 1000;
+  const DAYS_OLD = 180;
+
+  // First run a few minutes after boot (gives DB/migrations time to settle)
+  setTimeout(async () => {
+    try {
+      const removed = await deviceTokenModel.cleanupOldTokens(DAYS_OLD);
+      console.log(`[push-cleanup] initial run: removed ${removed} device token(s) older than ${DAYS_OLD} days`);
+    } catch (e) {
+      console.warn('[push-cleanup] initial run failed:', e.message);
+    }
+  }, 4 * 60 * 1000); // 4 minutes
+
+  // Then repeat on the configured cadence
+  setInterval(async () => {
+    try {
+      const removed = await deviceTokenModel.cleanupOldTokens(DAYS_OLD);
+      if (removed > 0) {
+        console.log(`[push-cleanup] removed ${removed} stale device token(s) (>${DAYS_OLD} days)`);
+      }
+    } catch (e) {
+      console.warn('[push-cleanup] periodic run failed:', e.message);
+    }
+  }, intervalMs);
+
+  console.log(`[push-cleanup] scheduled every ${intervalHours}h (threshold: ${DAYS_OLD} days)`);
+}
+
 // Middleware
 app.use(cors());
 app.use(securityHeaders); // Apply security headers to all responses
@@ -136,7 +179,7 @@ async function setupDatabase() {
 setupDatabase();
 
 // Initialize models and services
-let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, deviceTokenModel, authService, pairingService, hopefulPromptService, helpfulPromptService, subscriptionService, adminAuthService, pushNotificationService;
+let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, deviceTokenModel, promptSessionModel, authService, pairingService, hopefulPromptService, helpfulPromptService, subscriptionService, adminAuthService, pushNotificationService;
 
 async function initializeApp() {
   try {
@@ -152,6 +195,7 @@ async function initializeApp() {
     const orgCodeModelInstance = new OrgCode(db);
     const adminUserModelInstance = new AdminUser(db);
     const deviceTokenModelInstance = new DeviceToken(db);
+    const promptSessionModelInstance = new PromptSession(db);
     
     // Initialize database tables
     await userModelInstance.initDatabase();
@@ -165,6 +209,7 @@ async function initializeApp() {
     await orgCodeModelInstance.initDatabase();
     await adminUserModelInstance.initDatabase();
     await deviceTokenModelInstance.initDatabase();
+    await promptSessionModelInstance.initDatabase();
     
     // Assign to global variables after successful initialization
     userModel = userModelInstance;
@@ -178,6 +223,7 @@ async function initializeApp() {
     orgCodeModel = orgCodeModelInstance;
     adminUserModel = adminUserModelInstance;
     deviceTokenModel = deviceTokenModelInstance;
+    promptSessionModel = promptSessionModelInstance;
 
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel, pairingModel);
@@ -210,6 +256,13 @@ async function initializeApp() {
     if ((hopefulPromptService && hopefulPromptService.isConfigured()) ||
         (helpfulPromptService && helpfulPromptService.isConfigured())) {
       startRegenerationPoller(programModel, programStepModel, hopefulPromptService, helpfulPromptService, userModel, pairingModel, userModel);
+    }
+
+    // Start periodic cleanup of stale device tokens for push notifications.
+    // Uses last_used_at (with updated_at fallback) to decide what is "old".
+    // Runs every PUSH_TOKEN_CLEANUP_INTERVAL_HOURS (default 24). Set to 0 to disable.
+    if (deviceTokenModelInstance) {
+      startDeviceTokenCleanupJob(deviceTokenModelInstance);
     }
     
     console.log('Application initialized successfully.');
@@ -258,6 +311,11 @@ function setupRoutes() {
   // Setup device token routes for push notifications (authenticated)
   if (deviceTokenModel && authService) {
     app.use('/api/device-tokens', createDeviceTokenRoutes(deviceTokenModel, authService));
+  }
+
+  // Setup prompt session ("Sit Sessions") routes
+  if (promptSessionModel && pairingModel && authService) {
+    app.use('/api/prompt-sessions', createPromptSessionRoutes(promptSessionModel, pairingModel, authService, pushNotificationService || null));
   }
 
   // Setup admin auth routes

@@ -19,7 +19,8 @@
     "test:messages": "node tests/messages-test.js",
     "test:therapy-trigger": "node tests/therapy-trigger-test.js",
     "test:push": "node tests/push-notification-service-test.js",
-    "test:admin-push": "node tests/admin-push-test-test.js"
+    "test:admin-push": "node tests/admin-push-test-test.js",
+    "test:prompt-sessions": "node tests/prompt-sessions-test.js"
   },
   "keywords": [
     "api",

@@ -91,6 +91,27 @@ Benchmarks real OpenAI latency and concurrency. Also intentionally not part of
 node tests/openai-load-benchmark.js
 ```
 
+### 🪑 Prompt Sessions Tests (`prompt-sessions-test.js`)
+End-to-end coverage for the `/api/prompt-sessions` ("Sit Sessions") routes:
+- Creation validation + access control (membership / accepted pairing / unknown pairing)
+- One-active-session-per-pairing policy (409)
+- Get + list (both partners have access; outsiders 403)
+- Prep submit/merge + completion detection
+- Partner prep visibility policy (raw answers hidden until BOTH preps complete)
+- Phase/status PATCH (and invalid status rejection)
+- Generation endpoint stub behavior (409 before both preps, 501 after)
+- Verifies `generation_prompt` is never exposed to clients
+
+This suite is part of `npm test` and can also run standalone:
+
+```bash
+npm run test:prompt-sessions
+# or
+node tests/prompt-sessions-test.js
+```
+
+> Start the server with `TEST_MOCK_LLM=true npm start` first. Generation is stubbed, so no tokens are spent regardless.
+
 ### 🎯 Complete Test Suite (`run-all-tests.js`)
 Orchestrates all test categories (minus the two token-spending suites above)
 with comprehensive reporting:
