@@ -1,2179 +1,786 @@
 # Helpful API
 
-A comprehensive Node.js REST API with MySQL backend featuring user management, JWT authentication, a flexible pairing system, AI-generated therapy programs with structured program steps, push notification device registration, an admin surface for org codes, and efficient combined endpoints for clients.
+Node.js / Express REST API with MySQL for couples therapy programs: user accounts, JWT auth, partner pairing, AI-generated multi-day programs (Helpful vs Hopeful tracks), step messaging with optional therapy responses, org-code premium, iOS/Android subscriptions, FCM push registration, admin tooling, and Sit Sessions (prompt sessions).
+
+**Stack:** Node ≥16, Express 4, MySQL 8, JWT + bcrypt, OpenAI Chat Completions (via `BasePromptService`), optional Firebase Admin (FCM).
+
+---
 
 ## Features
 
-### Core Functionality
-- **User Management**: Create, update, soft-delete, and retrieve users with secure password authentication
-- **JWT Authentication**: Secure login with access and refresh tokens (default access token **24h**, refresh **14d**, overridable via env)
-- **Combined Profile Endpoint**: Single API call for complete user state (profile, premium, org context, pairings)
-- **Unified Pairing System**: Request, accept, reject, and soft-delete pairings with partner codes
-- **AI Therapy Programs**: OpenAI-backed program generation with **two prompt tracks**: **Helpful** (default, secular EFT/Gottman-style) vs **Hopeful** (faith-based) when the user has an org code or custom org fields — plus automatic retry/follow-up when initial generation fails
-- **Program Steps**: Day-based program steps per program with message threading, unlock tracking, and optional paired “therapy response” system messages
-- **Prompt Sessions (“Sit Sessions”)**: Structured, time-bounded couples experiences anchored to an accepted pairing. Both partners complete a six-question **prep**; partner answers stay private until both preps are complete. Content generation (the dynamic LLM prompt built from both preps) is scaffolded but **not yet implemented**.
+### Core
+- **Users** — create, profile update, soft-delete / restore; bcrypt passwords with validation
+- **JWT auth** — access + refresh tokens, rotation, sliding refresh extension on authenticated calls
+- **Combined profile** — `GET /api/profile` (user + premium + org summary + pairings)
+- **Pairing** — request partner code → accept/reject; soft-delete / restore
+- **AI programs** — async generation of day-based program steps; two tracks:
+  - **Helpful** (default) — secular EFT/Gottman-style
+  - **Hopeful** — faith-based when the user has a linked org code or custom `org_name` / `org_city` / `org_state`
+- **Program steps + messages** — day steps, user messages, contributions tracking, unlock progress
+- **Sit Sessions** (`/api/prompt-sessions`) — paired prep flow; **content generation not implemented** (`POST .../generate` → **501**)
 
-### Advanced Features  
-- **Smart Pairing Responses**: Pending requests show `partner: null`, accepted pairings show full partner data
-- **Org Code Premium**: Users can gain premium status by validating an org code or self-registering org details — no iOS/Android subscription required
-- **Push notifications**: Register FCM device tokens (iOS/Android/web); sends are no-ops when Firebase is not configured
-- **Admin auth & org administration**: Separate admin JWT flow (`/api/admin/auth/*`) for managing org codes, including per-org LLM prompt overrides (not exposed to non-admin list responses)
-- **Rate Limiting**: Configurable limits (1000 req/15min general API, 100 req/15min login, **3 req/5min** for `PUT /api/users/:id` unless `USER_UPDATE_RATE_LIMIT` is overridden)
-- **Comprehensive Testing**: `npm test` runs the consolidated suite; additional test scripts are listed under [Testing](#testing)
-- **Complete Pairing System**: Full end-to-end pairing workflow with acceptance, rejection, and profile integration
-- **Password Security**: Bcrypt hashing with strict password requirements (uppercase, lowercase, number, special char)
-- **Token Management**: Configurable access token lifetime (default **24h**) with refresh token rotation
-- **Refresh Token Rotation**: Automatic token rotation with sliding expiration window (14 days)
-- **Automatic Refresh Token Extension**: Refresh tokens automatically reset to 14-day expiration on every authenticated API call
-- **Database Integrity**: MySQL with automatic schema creation and proper JOIN handling
-- **RESTful Design**: Clean, consistent API with comprehensive error handling and status codes
-- **Railway Deployment**: Optimized for Railway platform with MySQL database service
+### Premium & orgs
+- **Pairing premium** — active iOS/Android subscription on either partner sets `pairings.premium`
+- **Org premium** — valid `org_code` (or full custom org name/city/state) sets `users.is_premium`
+- **Computed `premium`** on profile / GET-PUT user: `hasPremiumPairing || is_premium`  
+  **Note:** login response `premium` currently reflects **pairing premium only** (does not OR `is_premium`)
+
+### Ops
+- **Push** — device token CRUD; FCM soft no-op when Firebase is not configured
+- **Admin** — separate `admin_users` JWT (`type: "admin"`) for org-code CRUD, audit, push-test
+- **Rate limits** — global API, login, user update, device tokens, admin push-test
+- **Auto schema** — tables + incremental column migrations on startup
+- **Railway-friendly** — `PORT` required, `MYSQL_URL` supported
+
+---
 
 ## Setup
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+### 1. Install
 
-2. Create a `.env` file in the root directory. **`PORT` is required** (Railway injects it automatically; for local development set e.g. `PORT=9000` or the server will exit on startup).
-   ```
-   PORT=9000
-   HOST=0.0.0.0
-   
-   # MySQL Database Configuration
-   MYSQL_HOST=localhost
-   MYSQL_PORT=3306
-   MYSQL_USER=root
-   MYSQL_PASSWORD=your_password
-   MYSQL_DATABASE=helpful_db
-   
-   # Or use MySQL connection URL (preferred for Railway)
-   # MYSQL_URL=mysql://user:password@host:port/database
-   
-   # JWT Configuration
-   JWT_SECRET=your-secret-key-change-in-production
-   JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
-   JWT_EXPIRES_IN=24h  # Access token expiry (default: 24h)
-   JWT_REFRESH_EXPIRES_IN=14d  # Refresh token expiry (default: 14 days)
+```bash
+npm install
+```
 
-   # JWT Response Configuration (optional - calculated from above if not set)
-   JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS=86400  # 24 hours in seconds
-   JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS=1209600  # 14 days in seconds
-   
-   # OpenAI API (program + step messaging features)
-   OPENAI_API_KEY=your-openai-api-key-for-therapy-content
-   # OPENAI_MODEL=gpt-4o  # Optional: override the default OpenAI model
+### 2. Environment
 
-   # Optional: rate limit for PUT /api/users/:id (org code / profile updates)
-   # USER_UPDATE_RATE_LIMIT=3
+**`PORT` is required.** If unset, the process exits on startup (Railway injects it; locally set e.g. `PORT=9000`).
 
-   # Optional: rate limit for POST /api/device-tokens (default 10 req/5min per IP)
-   # DEVICE_TOKEN_RATE_LIMIT=10
+Copy `.env.example` or create `.env`:
 
-   # Optional: program generation — second LLM attempt after failures (default on; ~60s delay)
-   # PROGRAM_GENERATION_FOLLOWUP_ENABLED=true
-   # PROGRAM_GENERATION_FOLLOWUP_DELAY_MS=60000
+```bash
+PORT=9000
+HOST=0.0.0.0
 
-   # Optional: default steps_required_for_unlock when creating a program (default 0)
-   # DEFAULT_STEPS_REQUIRED_FOR_UNLOCK=0
+# MySQL (individual vars)
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=your_password
+MYSQL_DATABASE=helpful_db
 
-   # Optional: background poller for programs flagged regenerate_therapy_response
-   # REGENERATION_POLL_INTERVAL_MS=30000
+# Or single URL (preferred on Railway; enables SSL rejectUnauthorized:false)
+# MYSQL_URL=mysql://user:password@host:port/database
 
-   # Optional: testing / CI — deterministic mock LLM responses (no tokens)
-   # TEST_MOCK_LLM=true
+# JWT
+JWT_SECRET=your-secret-key-change-in-production
+JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
+JWT_EXPIRES_IN=24h
+JWT_REFRESH_EXPIRES_IN=14d
+# Optional explicit seconds for response bodies (defaults derived from strings above for app users)
+# JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS=86400
+# JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS=1209600
 
-   # Optional: Firebase Cloud Messaging (JSON string or path to service account)
-   # FIREBASE_SERVICE_ACCOUNT_JSON=
-   # FIREBASE_SERVICE_ACCOUNT_PATH=
-   # TEST_MOCK_PUSH=true
-   ```
+# OpenAI (required for real program / step LLM work)
+OPENAI_API_KEY=your-openai-api-key
+# OPENAI_MODEL=gpt-5.4
 
-3. **Database Setup**:
-   
-   ### Local Development
-   
-   **Option 1: Local MySQL**
-   1. Install MySQL 8.0+
-   2. Create a database:
-      ```sql
-      CREATE DATABASE helpful_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-      ```
-   3. Update your `.env` file with MySQL credentials
-   4. Start the server - tables will be created automatically
-   
-   **Option 2: Docker MySQL**
-   ```bash
-   docker run --name helpful-mysql \
-     -e MYSQL_ROOT_PASSWORD=password \
-     -e MYSQL_DATABASE=helpful_db \
-     -p 3306:3306 \
-     -d mysql:8.0
-   ```
-   
-   ### Railway Deployment
-   
-   For production deployment on Railway:
-   1. See [RAILWAY_SETUP.md](./RAILWAY_SETUP.md) for detailed instructions
-   2. Add MySQL database service in Railway dashboard
-   3. Railway automatically provides `MYSQL_URL` environment variable
-   4. Set `JWT_SECRET`, `JWT_REFRESH_SECRET`, and `OPENAI_API_KEY`
-   
-   **Automatic Schema Creation**:
-   - All tables are created automatically on first connection
-   - Proper indexes and foreign keys are set up automatically
-   - No manual SQL migration needed
+# Optional rate limits
+# USER_UPDATE_RATE_LIMIT=3          # PUT /api/users/:id per IP / 5 min
+# DEVICE_TOKEN_RATE_LIMIT=10        # POST /api/device-tokens per IP / 5 min
 
-4. Start the server:
-   ```bash
-   npm start
-   ```
+# Program generation
+# PROGRAM_GENERATION_FOLLOWUP_ENABLED=true
+# PROGRAM_GENERATION_FOLLOWUP_DELAY_MS=60000
+# DEFAULT_STEPS_REQUIRED_FOR_UNLOCK=0
+# REGENERATION_POLL_INTERVAL_MS=30000
 
-   Or for development with auto-restart:
-   ```bash
-   npm run dev
-   ```
+# Push (optional — API stays healthy without these)
+# FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+# FIREBASE_SERVICE_ACCOUNT_PATH=./firebase-service-account.json
+# TEST_MOCK_PUSH=true
+# PUSH_TOKEN_CLEANUP_INTERVAL_HOURS=24   # 0 disables periodic cleanup
 
-## 🎯 Quick Reference
+# Testing / CI
+# TEST_MOCK_LLM=true
+# NODE_ENV=test
+# SKIP_RATE_LIMITS=true
+```
 
-### Most Important Endpoints
-- **`GET /health`** - Liveness probe (plain text `OK`)
-- **`GET /health/diagnostics`** - JSON (`test_mock_llm`, etc.) for local/integration checks
-- **`GET /api/profile`** - Complete user profile with pairings and org summary (recommended)
-- **`POST /api/login`** - User authentication
-- **`POST /api/refresh`** / **`POST /api/logout`** - Token rotation and logout
-- **`POST /api/token-info`** - Decode access token metadata (no signature verification; debugging)
-- **`POST /api/pairing/request`** - Create partner code for pairing (**201**)
-- **`POST /api/pairing/accept`** - Accept pairing with partner code (**200**, empty body)
-- **`GET /api/pairings`** - All pairings (accepted + pending) for current user
-- **`DELETE /api/pairing/:pairingId`** - Soft-delete a pairing (must be a participant)
-- **`GET /api/org-codes`** - List org codes (LLM prompt fields omitted unless caller is admin)
-- **`POST /api/org-codes`** / **`GET|PUT|DELETE /api/org-codes/:id`** - Org code admin CRUD (**admin JWT**)
-- **`GET /api/org-codes/audit/org-linkages`** - Org linkage audit logs (**admin**)
-- **`POST /api/subscription`** - Submit iOS/Android subscription receipts
-- **`GET /api/subscription`** - Active subscription / premium summary
-- **`GET /api/subscription/receipts`** - Stored receipts for current user
-- **`POST|GET|DELETE /api/device-tokens`** - Push device token registration
-- **`POST /api/prompt-sessions`** - Start a "Sit Session" for an accepted pairing (requires `pairing_id`)
-- **`POST|GET /api/prompt-sessions/:id/prep`** - Submit/merge your prep answers; read your prep + partner completion status
-- **`POST /api/prompt-sessions/:id/generate`** - Trigger content generation (**501 — not yet implemented**)
-- **`GET /api/programs/metrics`** - Prompt-service queue/latency metrics (both tracks)
-- **`GET /api/programs/:id/programSteps`** - Program steps for a program
-- **`POST /api/programSteps/:id/messages`** - Add message to a program step
-- **`GET /api/programSteps/:id/messages`** - Messages for a program step
-- **`GET /api/messages-stats?date=&programId=`** - Message stats since epoch (authenticated)
-- **`POST /api/admin/auth/login`** (etc.) - Admin accounts (separate from app users)
+| Variable | Required | Default | Notes |
+|----------|----------|---------|--------|
+| `PORT` | **Yes** | — | Process exits if missing |
+| `HOST` | No | `0.0.0.0` | Listen address |
+| `MYSQL_*` / `MYSQL_URL` | Yes (DB) | localhost/root/helpful_db | URL overrides individuals |
+| `JWT_SECRET` / `JWT_REFRESH_SECRET` | Prod yes | insecure strings | Change in production |
+| `JWT_EXPIRES_IN` | No | `24h` | App access token (AuthService) |
+| `JWT_REFRESH_EXPIRES_IN` | No | `14d` | App refresh token string |
+| `JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS` | No | 86400 | Admin access expiry uses this; app uses for response `expires_in` |
+| `JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS` | No | 1209600 | Admin refresh; app response `refresh_expires_in` |
+| `OPENAI_API_KEY` | For LLM | — | Soft-fail if missing (no generation) |
+| `OPENAI_MODEL` | No | `gpt-5.4` | Chat model |
+| `TEST_MOCK_LLM` | No | — | Deterministic mock responses |
+| `TEST_MOCK_PUSH` | No | — | Mock FCM success |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` / `_PATH` | No | — | Real FCM |
+| `USER_UPDATE_RATE_LIMIT` | No | `3` | ≤0 disables |
+| `DEVICE_TOKEN_RATE_LIMIT` | No | `10` | ≤0 disables |
+| `PROGRAM_GENERATION_FOLLOWUP_*` | No | on / 60s | Second LLM attempt after failure |
+| `DEFAULT_STEPS_REQUIRED_FOR_UNLOCK` | No | `0` | Create/next program body default |
+| `REGENERATION_POLL_INTERVAL_MS` | No | `30000` | Poller for `regenerate_therapy_response` |
+| `PUSH_TOKEN_CLEANUP_INTERVAL_HOURS` | No | `24` | Stale device tokens (>180 days) |
 
-### Key Features
-- ✅ **Combined Profile Endpoint**: Single call for complete user state (including `premium` and org summary)
-- ✅ **Unified Pairings**: Both accepted and pending pairings in one array
-- ✅ **Program steps + messaging**: REST surface under `/api/programs/...` and `/api/programSteps/...`
-- ✅ **Rate Limited**: 1000 requests per 15 minutes for general API (plus stricter login / profile-update limits)
-- ✅ **JWT Authentication**: Access + refresh tokens with rotation (`npm test` exercises core flows)
+**LLM provider:** OpenAI only (`BasePromptService`). There is no Anthropic/Gemini client in this codebase. Helpful vs Hopeful are **prompt product tracks**, not different vendors.
 
-### API Design Philosophy
-- **Clean Responses**: Minimal, essential data only - no unnecessary nesting or metadata
-- **Efficient Structure**: Array-based responses instead of complex nested objects
-- **Structured Data**: Program steps returned as structured arrays instead of raw JSON responses
-- **Separation of Concerns**: Messages fetched separately when needed, not bundled with program steps
-- **RESTful Design**: Intuitive endpoints that follow REST conventions
-- **Performance First**: Optimized for speed and minimal bandwidth usage
+### 3. Database
 
-## API Endpoints
+**Local MySQL**
 
-**Note**: User profiles now use `user_name` and `partner_name` fields for relationship information instead of generic first/last names.
+```sql
+CREATE DATABASE helpful_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
 
-### 🚀 User Profile (Recommended - Most Efficient)
+**Docker MySQL**
 
-#### Get User Profile with Pairings (Combined)
-- **GET** `/api/profile`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** 🎯 **Most efficient endpoint** - Returns the authenticated user's complete profile combined with all their pairing information (both accepted and pending) in a single API call
-- **Response:**
-  ```json
-  {
-    "message": "User profile retrieved successfully",
-    "profile": {
-      "id": "user_id",
-      "email": "user@example.com",
-      "user_name": "John",
-      "partner_name": "Jane",
-      "children": 2,
-      "max_pairings": 1,
-      "premium": false,
-      "org_id": null,
-      "org_name": null,
-      "org_city": null,
-      "org_state": null,
-      "created_at": "2024-01-01T00:00:00.000Z",
-      "updated_at": "2024-01-01T00:00:00.000Z",
-      "pairings": [
-        {
-          "id": "accepted_pairing_id",
-          "status": "accepted",
-          "partner_code": "ABC123",
-          "created_at": "2024-01-01T00:30:00.000Z",
-          "updated_at": "2024-01-01T00:35:00.000Z",
-          "partner": {
-            "id": "partner_user_id",
-            "user_name": "Jane",
-            "email": "jane.doe@example.com"
-          }
-        },
-        {
-          "id": "pending_pairing_id",
-          "status": "pending",
-          "partner_code": "XYZ789",
-          "created_at": "2024-01-01T00:45:00.000Z",
-          "updated_at": "2024-01-01T00:45:00.000Z",
-          "partner": null
-        }
-      ],
-      "pairing_codes": ["ABC123", "XYZ789"]
-    }
-  }
-  ```
+```bash
+docker run --name helpful-mysql \
+  -e MYSQL_ROOT_PASSWORD=password \
+  -e MYSQL_DATABASE=helpful_db \
+  -p 3306:3306 \
+  -d mysql:8.0
+```
 
-**✨ Why Use This Endpoint:**
-- **Single API Call**: Get complete user state without multiple requests
-- **Comprehensive Data**: User info + all pairings (accepted & pending) in one array
-- **Pairing Codes Array**: Quick access to all partner codes without parsing pairings
-- **Optimized Performance**: Reduces network calls and improves app responsiveness
-- **Real-time State**: Always returns current pairing status
+Tables and incremental migrations run automatically on server start. No separate migration runner.
 
-**📋 Data Explanation:**
-- **`pairings`**: Contains both accepted pairings (with full partner info) and pending requests (with `partner: null`)
-- **`pairing_codes`**: Array of all partner codes for this user (both accepted and pending) for quick access
-- **`premium`**: `true` if the user has org-based premium (`is_premium`) or premium access through any accepted pairing subscription
-- **`org_id` / `org_*`**: When the user is linked to an admin-managed org code, these reflect that record; otherwise custom on-profile org fields (`org_name`, `org_city`, `org_state`) are returned when set
+Optional local seed for org codes:
+
+```bash
+node scripts/seed-local-org-codes.js
+```
+
+### 4. Run
+
+```bash
+npm start          # node server.js
+npm run dev        # nodemon
+```
+
+- Health: `GET http://localhost:9000/health` → plain text `OK`
+- Diagnostics: `GET /health/diagnostics` → `{ "ok": true, "test_mock_llm": false }`
+- Root: `GET /` → plain text `Helpful API is running`
+
+---
+
+## Quick reference
+
+| Area | Endpoints |
+|------|-----------|
+| Health | `GET /health`, `GET /health/diagnostics`, `GET /` |
+| Auth | `POST /api/login`, `/api/refresh`, `/api/logout`, `/api/token-info`, `GET /api/profile` |
+| Users | `POST/GET/PUT/DELETE /api/users…`, restore, deleted list |
+| Pairing | `/api/pairing/*` and alias `GET /api/pairings` |
+| Programs | `POST/GET/DELETE /api/programs…`, next, therapy_response, metrics |
+| Steps | `/api/programs/:id/programSteps`, `/api/programSteps/...` |
+| Subscriptions | `POST/GET /api/subscription`, `GET .../receipts` |
+| Org codes | `/api/org-codes` (admin for mutations) |
+| Admin | `/api/admin/auth/*`, `POST /api/admin/push-test` |
+| Push devices | `/api/device-tokens` |
+| Sit sessions | `/api/prompt-sessions` |
+| Stats | `GET /api/messages-stats?date=&programId=` |
+
+Auth header: `Authorization: Bearer {access_token}` unless noted.
+
+---
+
+## Cross-cutting behavior
 
 ### Authentication
 
-#### Login
-- **POST** `/api/login`
-- **Body:**
-  ```json
-  {
-    "email": "user@example.com",
-    "password": "Test1!@#"
-  }
-  ```
-- **Response:** User payload and tokens are nested under `data` (top-level `message` plus `data`).
-  ```json
-  {
-    "message": "Login successful",
-    "data": {
-      "user": {
-        "id": "unique_id",
-        "email": "user@example.com",
-        "user_name": "John",
-        "partner_name": "Jane",
-        "children": 2,
-        "max_pairings": 1,
-        "premium": false,
-        "created_at": "2024-01-01T00:00:00.000Z"
-      },
-      "access_token": "jwt_token",
-      "refresh_token": "refresh_jwt_token",
-      "expires_in": 86400,
-      "refresh_expires_in": 1209600
-    }
-  }
-  ```
-  **`expires_in` / `refresh_expires_in`** are **seconds** (derived from `JWT_*_EXPIRES_IN` / `JWT_*_EXPIRES_IN_SECONDS`; default access **24h**, refresh **14d**).
+| Token | Lifetime | Notes |
+|-------|----------|--------|
+| App access | `JWT_EXPIRES_IN` (default **24h**) | Payload: `id`, `email`, `first_name`, `last_name` (legacy name fields; profiles use `user_name` / `partner_name`) |
+| App refresh | **14d** window stored in DB | Rotation on `/api/refresh`; **sliding extension** on every authenticated request |
+| Admin access | `JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS` (default 86400) | Payload includes `type: "admin"` |
+| Admin refresh | `JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS` | Same refresh secret; rows use `user_type = 'admin'` |
 
-#### Refresh Token
-- **POST** `/api/refresh`
-- **Description:** Refreshes the access token and rotates the refresh token for enhanced security. The old refresh token is invalidated and a new one is issued.
-- **Body:**
-  ```json
-  {
-    "refresh_token": "refresh_jwt_token"
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "message": "Token refreshed successfully",
-    "access_token": "new_jwt_token",
-    "refresh_token": "new_refresh_jwt_token",
+- Missing/invalid/expired access → **401** + `WWW-Authenticate`
+- Account lockout (login only, in-memory): **5** failed attempts in **15 min** → **423** for **5 min** (per process; not shared across replicas)
+- `bypass_password` on a user row skips password check at login (not settable via public user API)
+
+### Rate limits (`middleware/security.js`)
+
+| Limiter | Limit | Applied to |
+|---------|-------|------------|
+| `apiLimiter` | 1000 / 15 min / IP | All routes after mount (not health/root) |
+| `loginLimiter` | 100 failed / 15 min / IP | `POST /api/login`, admin login (`skipSuccessfulRequests`) |
+| `userUpdateLimiter` | 3 / 5 min / IP | `PUT /api/users/:id` |
+| `deviceTokenLimiter` | 10 / 5 min / IP | `POST /api/device-tokens` |
+| `adminActionLimiter` | 100 / 15 min / IP | `POST /api/admin/push-test` (counts all) |
+
+Skipped when `NODE_ENV=test`, `TEST_MOCK_LLM=true`, `TEST_MOCK_OPENAI=true`, `TEST_MODE=true`, or `SKIP_RATE_LIMITS=true` (where coded).
+
+### Security headers
+
+On all responses: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`. HSTS only when request is HTTPS / `x-forwarded-proto: https`. CORS is enabled (`cors()` default).
+
+### Helpful vs Hopeful
+
+Per user (and step messaging for that program owner’s context):
+
+1. Linked `org_code_id` → org prompts + org location → **Hopeful**
+2. Else any of `org_name` / `org_city` / `org_state` → **Hopeful**
+3. Else → **Helpful**
+
+Both use the same OpenAI key/model.
+
+### Program generation
+
+1. `POST /api/programs` or `.../next_program` returns **201** with the program row immediately.
+2. Background LLM generates content and creates **14** day steps (when configured).
+3. On failure: optional follow-up after `PROGRAM_GENERATION_FOLLOWUP_DELAY_MS` (default 60s) unless follow-up disabled; `generation_error` stored on failure.
+4. `POST /api/programs/:program_id/therapy_response` → **202** to manually kick generation if steps missing (**409** if steps already exist, **503** if LLM not configured).
+5. Poller every `REGENERATION_POLL_INTERVAL_MS` processes rows with `regenerate_therapy_response = true`.
+6. Successful generation may push `program_ready` to owner (+ partner if paired).
+
+### Premium
+
+| Source | Effect |
+|--------|--------|
+| Active iOS/Android sub | Updates accepted pairings’ `premium`; partners see pairing-based premium |
+| Valid `org_code` on profile update | Links org, `is_premium = true` |
+| Detach / clear org | May clear premium fields per update logic |
+| Custom org name+city+state (no code) | Creates/links org path; premium when all three present after merge |
+
+Profile: `premium = pairingPremium || is_premium`.  
+Login: `premium` = pairing premium only (implementation quirk — prefer `/api/profile` for full premium).
+
+### Push
+
+- Unconfigured Firebase → sends return `{ skipped: true }` (no-op); API stays up.
+- Exception: `POST /api/admin/push-test` → **503** if not configured.
+- Dead FCM tokens pruned on send; periodic cleanup of tokens idle >180 days.
+
+### Push kinds (`data.kind`)
+
+| kind | When |
+|------|------|
+| `pairing_accepted` | Partner accepted pairing |
+| `program_ready` | Program generation finished |
+| `step_message` | Partner posted on a step |
+| `therapy_response` | Couples therapy system messages added |
+| `prompt_session_created` | Partner started a Sit Session |
+| `prompt_session_prep_complete` | One prep complete, partner still pending |
+
+---
+
+## API endpoints
+
+User-facing names use **`user_name`** and **`partner_name`** (not first/last).
+
+### Health
+
+| Method | Path | Auth | Response |
+|--------|------|------|----------|
+| GET | `/health` | none | text `OK` |
+| GET | `/health/diagnostics` | none | `{ ok, test_mock_llm }` |
+| GET | `/` | none | text `Helpful API is running` |
+
+### Authentication
+
+#### POST `/api/login`
+
+Body: `{ "email", "password" }`  
+**200:**
+
+```json
+{
+  "message": "Login successful",
+  "data": {
+    "user": { "id": "...", "email": "...", "user_name": "...", "premium": false },
+    "access_token": "...",
+    "refresh_token": "...",
     "expires_in": 86400,
     "refresh_expires_in": 1209600
   }
-  ```
-- **Security Note:**
-  - The old refresh token is immediately invalidated after use
-  - A new refresh token is issued with extended expiration (sliding window)
-  - This prevents refresh token reuse and enhances security
-  - Always store the new refresh token for subsequent refresh requests
-
-#### Automatic Refresh Token Extension
-- **Automatic**: Every time a valid access token is used for any authenticated API call, the associated refresh token expiration is automatically reset to 14 days from that moment
-- **Non-blocking**: The token extension happens asynchronously in the background and does not slow down API responses
-- **User Experience**: Active users effectively have "infinite" session duration as long as they use the API regularly
-- **Security**: Inactive users' refresh tokens still expire normally, preventing abandoned sessions
-
-#### Logout
-- **POST** `/api/logout`
-- **Body:**
-  ```json
-  {
-    "refresh_token": "refresh_jwt_token"
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "message": "Logged out successfully"
-  }
-  ```
-
-#### Token info (debug)
-- **POST** `/api/token-info`
-- **Body:** `{ "access_token": "jwt..." }`
-- **Description:** Decodes JWT payload **without verifying the signature** — for local debugging only. Returns issued/expiry times, user id/email, and `is_expired`.
-
-### Subscriptions
-
-#### Submit Subscription Receipt
-- **POST** `/api/subscription`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Body (iOS):**
-  ```json
-  {
-    "platform": "ios",
-    "product_id": "com.helpful.yearly.29.99",
-    "transaction_id": "ios_txn_123",
-    "original_transaction_id": "ios_txn_123",
-    "jws_receipt": "base64_jws_receipt",
-    "environment": "Production",
-    "purchase_date": 1737390462000,
-    "expiration_date": 1768926462000
-  }
-  ```
-- **Body (Android):**
-  ```json
-  {
-    "platform": "android",
-    "product_id": "com.helpful.yearly.29.99",
-    "purchase_token": "token_from_google",
-    "order_id": "GPA.1234-5678-9012-34567",
-    "package_name": "com.helpful.app",
-    "purchase_date": 1737390462000,
-    "expiration_date": 1768926462000
-  }
-  ```
-- **Notes:**
-  - `environment` must be `Production` or `Sandbox` (case-insensitive accepted).
-  - `purchase_date` and `expiration_date` must be positive millisecond timestamps.
-  - If a receipt belongs to another user, the API returns `409 Conflict`.
-  - **Premium Access**: Premium status is granted to pairings, not individual users. When a user purchases a subscription, all their accepted pairings become premium-enabled, allowing both partners access to premium features.
-
-#### Get Subscription Status
-- **GET** `/api/subscription`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:**
- ```json
- {
-   "premium": true,
-   "active_subscriptions": 1,
-   "latest_expiration": 1768926462000,
-   "subscriptions": [
-     {
-       "id": "subscription_id",
-       "platform": "ios",
-       "product_id": "com.helpful.yearly.29.99",
-       "expiration_date": 1768926462000,
-       "purchase_date": 1737390462000
-     }
-   ]
- }
- ```
-- **Notes:**
-  - `premium`: Whether the user has access to premium features through any of their accepted pairings
-  - Premium access is pairing-based: users get premium access when they have accepted pairings where at least one partner has an active subscription
-
-#### Get Stored Receipts
-- **GET** `/api/subscription/receipts`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:**
-  ```json
-  {
-    "message": "Receipts retrieved successfully",
-    "data": {
-      "ios_receipts": [],
-      "android_receipts": [],
-      "total_receipts": 0
-    }
-  }
-  ```
-
-### User Management
-
-#### Create User
-- **POST** `/api/users`
-- **Body:**
-  ```json
-  {
-    "email": "user@example.com",
-    "password": "Test1!@#"
-  }
-  ```
-  **Note**: Only `email` and `password` are required.
-- **Response:**
-  ```json
-  {
-    "message": "Account created successfully",
-    "user": {
-      "id": "unique_id",
-      "email": "user@example.com",
-      "user_name": null,
-      "partner_name": null,
-      "children": null
-    },
-    "access_token": "jwt_token",
-    "refresh_token": "refresh_jwt_token", 
-    "expires_in": 3600,
-    "refresh_expires_in": 604800,
-    "pairings": [
-      {
-        "id": "pairing_id",
-        "status": "pending",
-        "partner_code": "ABC123",
-        "created_at": "2024-01-01T00:00:00.000Z",
-        "updated_at": "2024-01-01T00:00:00.000Z",
-        "partner": null
-      }
-    ],
-    "pairing_code": "ABC123"
-  }
-  ```
-  **Note**: 
-  - The response now includes a `pairings` array containing the user's current pairings
-  - A pairing request is automatically created for new users
-  - The `pairing_code` field contains the partner code for sharing (when automatic pairing is created)
-  - User object excludes sensitive fields (`max_pairings`, `created_at`, `password_hash`)
-
-
-#### Get User by ID
-- **GET** `/api/users/:id`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:** User object with computed `premium` and org summary fields (not wrapped in `{ user: ... }`).
-
-#### Update User
-- **PUT** `/api/users/:id`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Rate Limit:** Default 3 requests per 5 minutes per IP (`USER_UPDATE_RATE_LIMIT`)
-- **Description:** Update user profile including relationship details and org association. Users can only update their own profile.
-- **Body:**
-  ```json
-  {
-    "email": "johnny.smith@example.com",
-    "user_name": "Johnny",
-    "partner_name": "Sarah",
-    "children": 2
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "message": "User updated successfully",
-    "user": {
-      "id": "unique_id",
-      "email": "johnny.smith@example.com",
-      "user_name": "Johnny",
-      "partner_name": "Sarah",
-      "children": 2,
-      "max_pairings": 1,
-      "premium": false,
-      "org_code_id": null,
-      "org_name": null,
-      "org_city": null,
-      "org_state": null,
-      "created_at": "2024-01-01T00:00:00.000Z",
-      "updated_at": "2024-01-01T01:00:00.000Z"
-    }
-  }
-  ```
-  **Note**: All fields are optional. Only provided fields will be updated. The `children` field must be a non-negative integer if provided.
-
-##### Associating an Org Code (Premium via Org)
-
-Passing a valid `org_code` string activates premium status on the user record without requiring an iOS/Android subscription. This is an alternative premium pathway for users affiliated with an organization.
-
-**Path A — Validate an existing org code:**
-- Pass the `org_code` string. The API looks it up, checks it is not expired, links it to the user, and sets `premium: true`.
-  ```json
-  {
-    "org_code": "ACME2024"
-  }
-  ```
-  - `400 Invalid org code` — code does not exist
-  - `400 Org code has expired` — code exists but its `expires_at` has passed
-
-**Path B — Create a new org record on the fly:**
-- Omit `org_code` but supply all three of `org_name`, `org_city`, and `org_state`. The API creates a new org_codes record with a generated unique code, links it to the user, and sets `premium: true`. All three fields are required together; providing fewer than three has no org side-effect.
-  ```json
-  {
-    "org_name": "Acme Health",
-    "org_city": "Austin",
-    "org_state": "TX"
-  }
-  ```
-
-**Response when premium is granted (either path):**
-```json
-{
-  "message": "User updated successfully",
-  "user": {
-    "id": "unique_id",
-    "premium": true,
-    "org_code_id": "abc123",
-    "org_name": "Acme Health",
-    "org_city": "Austin",
-    "org_state": "TX",
-    "created_at": "2024-01-01T00:00:00.000Z",
-    "updated_at": "2024-01-01T01:00:00.000Z"
-  }
 }
 ```
 
-**Rate limiting note:** This endpoint is throttled at 3 requests per 5 minutes per IP by default (`USER_UPDATE_RATE_LIMIT`) to prevent org code farming/enumeration attacks. Exceeding the limit returns `429 Too Many Requests`.
+`expires_in` / `refresh_expires_in` are **seconds** (from env or defaults).  
+**400** missing fields · **401** bad credentials · **423** locked · **500** server.
 
-#### Soft-delete user
-- **DELETE** `/api/users/:id`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Soft-deletes the user (and cascades per model rules).
+#### POST `/api/refresh`
 
-#### Restore user
-- **PATCH** `/api/users/:id/restore`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Restores a soft-deleted user record.
+Body: `{ "refresh_token" }` → new access + refresh (old refresh invalidated).
 
-#### List deleted users
-- **GET** `/api/users/deleted/all`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Returns users in deleted state (support/admin-style).
+#### POST `/api/logout`
 
-### Organization Code Management
+Body: `{ "refresh_token" }` → invalidate refresh.
 
-Organization codes are used to manage organizational access and configuration. They contain organization information and can include address details. **Admin JWT** (`POST /api/admin/auth/login`) is required to create, read by id, update, delete org codes, or view audit logs. Regular authenticated **app** users can **list** org codes; LLM prompt fields (`initial_program_prompt`, `next_program_prompt`, `therapy_response_prompt`) are **stripped** from that list unless the caller’s token has `type: "admin"`.
+#### POST `/api/token-info`
 
-#### Create Organization Code
-- **POST** `/api/org-codes`
-- **Headers:** `Authorization: Bearer {access_token}` (Admin required)
-- **Description:** Creates a new organization code with organization details and optional address information
-- **Body:**
-  ```json
-  {
-    "org_code": "ACME123",
-    "organization": "ACME Corporation",
-    "address1": "123 Business St",
-    "address2": "Suite 456",
-    "city": "Business City",
-    "state": "BC",
-    "postalCode": "12345",
-    "expires_at": "2025-12-31T23:59:59.000Z"
-  }
-  ```
-- **Required Fields:** `org_code`, `organization`
-- **Optional Fields:** `address1`, `address2`, `city`, `state`, `postalCode`, `expires_at`
-- **Response:**
-  ```json
-  {
-    "message": "Org code created successfully",
-    "org_code": {
-      "id": "unique_id",
-      "org_code": "ACME123",
-      "organization": "ACME Corporation",
-      "address1": "123 Business St",
-      "address2": "Suite 456",
-      "city": "Business City",
-      "state": "BC",
-      "postalCode": "12345",
-      "expires_at": "2025-12-31T23:59:59.000Z",
-      "created_at": "2024-01-01T00:00:00.000Z",
-      "updated_at": "2024-01-01T00:00:00.000Z"
-    }
-  }
-  ```
-- **Error Responses:**
-  - `400`: `org_code already exists` or `org_code and organization are required`
-  - `403`: Admin access required
+Body: `{ "access_token" }` — **decodes without verifying signature** (local debug only). Returns expiry metadata, `user_id`, `user_email`, `is_expired`.
 
-#### Get All Organization Codes
-- **GET** `/api/org-codes`
-- **Headers:** `Authorization: Bearer {access_token}` (any authenticated **app** user; **admin** tokens list with prompt fields intact)
-- **Description:** Returns all organization codes with address information. For non-admin callers, `initial_program_prompt`, `next_program_prompt`, and `therapy_response_prompt` are omitted.
-- **Response:**
-  ```json
-  {
-    "message": "Org codes retrieved successfully",
-    "org_codes": [
-      {
-        "id": "unique_id",
-        "org_code": "ACME123",
-        "organization": "ACME Corporation",
-        "address1": "123 Business St",
-        "address2": "Suite 456",
-        "city": "Business City",
-        "state": "BC",
-        "postalCode": "12345",
-        "expires_at": "2025-12-31T23:59:59.000Z",
-        "created_at": "2024-01-01T00:00:00.000Z",
-        "updated_at": "2024-01-01T00:00:00.000Z"
-      }
-    ]
-  }
-  ```
+#### GET `/api/profile` (recommended)
 
-#### Org linkage audit (admin)
-- **GET** `/api/org-codes/audit/org-linkages`
-- **Headers:** `Authorization: Bearer {admin_access_token}`
-- **Query:** optional `user_id`, `limit`, `offset`
-- **Description:** Returns `user_org_code_audit_logs` entries for org-code linkage changes.
+Returns profile without `password_hash`, with:
 
-#### Get Organization Code by ID
-- **GET** `/api/org-codes/:id`
-- **Headers:** `Authorization: Bearer {access_token}` (Admin required)
-- **Description:** Returns a specific organization code by its ID
-- **Response:**
-  ```json
-  {
-    "message": "Org code retrieved successfully",
-    "org_code": {
-      "id": "unique_id",
-      "org_code": "ACME123",
-      "organization": "ACME Corporation",
-      "address1": "123 Business St",
-      "address2": "Suite 456",
-      "city": "Business City",
-      "state": "BC",
-      "postalCode": "12345",
-      "expires_at": "2025-12-31T23:59:59.000Z",
-      "created_at": "2024-01-01T00:00:00.000Z",
-      "updated_at": "2024-01-01T00:00:00.000Z"
-    }
-  }
-  ```
-- **Error Responses:**
-  - `403`: Admin access required
-  - `404`: OrgCode not found
+- `premium` (pairing **or** org)
+- `pairings[]` (accepted + pending; pending have `partner: null`)
+- `pairing_codes[]`
+- `org_id`, `org_name`, `org_city`, `org_state` (from linked org code or custom fields)
 
-#### Update Organization Code
-- **PUT** `/api/org-codes/:id`
-- **Headers:** `Authorization: Bearer {access_token}` (Admin required)
-- **Description:** Updates an organization code with new information. All fields are optional - only provided fields will be updated
-- **Body:**
-  ```json
-  {
-    "organization": "Updated ACME Corporation",
-    "address1": "456 Updated St",
-    "city": "Updated City",
-    "state": "UC",
-    "postalCode": "67890"
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "message": "Org code updated successfully",
-    "org_code": {
-      "id": "unique_id",
-      "org_code": "ACME123",
-      "organization": "Updated ACME Corporation",
-      "address1": "456 Updated St",
-      "address2": "Suite 456",
-      "city": "Updated City",
-      "state": "UC",
-      "postalCode": "67890",
-      "expires_at": "2025-12-31T23:59:59.000Z",
-      "created_at": "2024-01-01T00:00:00.000Z",
-      "updated_at": "2024-01-01T01:00:00.000Z"
-    }
-  }
-  ```
-- **Error Responses:**
-  - `403`: Admin access required
-  - `404`: OrgCode not found
-  - `400`: `org_code already exists`
+### Users
 
-#### Delete Organization Code
-- **DELETE** `/api/org-codes/:id`
-- **Headers:** `Authorization: Bearer {access_token}` (Admin required)
-- **Description:** Deletes an organization code permanently
-- **Response:**
-  ```json
-  {
-    "message": "OrgCode deleted successfully"
-  }
-  ```
-- **Error Responses:**
-  - `403`: Admin access required
-  - `404`: OrgCode not found
+#### POST `/api/users`
 
-### Pairing System
+Body: `{ "email", "password" }` only.  
+**201:** user + tokens + auto-created pending pairing (`pairings`, optional `pairing_code`).  
+Also sets `Authorization: Bearer …` response header.  
+**409** email exists · **400** password/email validation.
 
-**New Pairing Flow**: The pairing system now uses a two-step process:
-1. **Request**: A user creates a temporary partner code without specifying who they want to pair with
-2. **Accept**: Another user uses that partner code to pair with the original user
+#### GET `/api/users/:id`
 
-This makes pairing more flexible since you don't need to know the other person's pairing code in advance.
+Auth required. Returns flat user + computed `premium` + org summary fields. **Not** restricted to self in code.
 
-#### Request Pairing
-- **POST** `/api/pairing/request`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Body:** No body required
-- **Response:** **201 Created**
-  ```json
-  {
-    "message": "Partner code generated successfully. Share this code with someone to pair with you.",
-    "partner_code": "ABC123",
-    "pairing_id": "pairing_id",
-    "requester": {
-      "id": "user_id",
-      "user_name": "John",
-      "email": "john.doe@example.com"
-    },
-    "expires_note": "This partner code is valid until someone uses it or you cancel the request."
-  }
-  ```
-  **Note**: This generates a temporary partner code that others can use to pair with you. The response includes your information so you can share it along with the partner code.
+#### PUT `/api/users/:id`
 
-#### Accept Pairing Request
-- **POST** `/api/pairing/accept`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Body:**
-  ```json
-  {
-    "partner_code": "ABC123"
-  }
-  ```
-  **Note**: Use the partner code that someone shared with you to pair with them.
-- **Response:** `200 OK` (empty response body)
-  
-  **Note**: On successful pairing acceptance, only a 200 status code is returned. Use the "Get Accepted Pairings" endpoint to retrieve pairing details if needed.
+Auth; **must be self**. Rate-limited. Optional body: `email`, `user_name`, `partner_name`, `children`, `org_code`, `org_name`, `org_city`, `org_state`.
 
-#### Reject Pairing Request
-- **POST** `/api/pairing/reject/:pairingId`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:**
-  ```json
-  {
-    "message": "Pairing rejected successfully",
-    "pairing_id": "pairing_id"
-  }
-  ```
+**Org premium paths:**
+- `org_code` string → lookup; not expired → link + premium; **400** invalid/expired code
+- Without `org_code`, all three of `org_name`, `org_city`, `org_state` → self-register org premium path
 
-#### Get User's Pairings (All - Accepted & Pending)
-- **GET** `/api/pairings`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Returns all pairings for the authenticated user, including both accepted pairings and pending pairing requests
-- **Response:**
-  ```json
-  {
-    "message": "User pairings retrieved successfully",
-    "pairings": [
-      {
-        "id": "accepted_pairing_id",
-        "status": "accepted",
-        "partner_code": "ABC123",
-        "created_at": "2025-01-20T10:30:00.000Z",
-        "updated_at": "2025-01-20T10:35:00.000Z",
-        "partner": {
-          "id": "partner_user_id",
-          "user_name": "Jane",
-          "email": "jane.doe@example.com"
-        }
-      },
-      {
-        "id": "pending_pairing_id",
-        "status": "pending",
-        "partner_code": "XYZ789",
-        "created_at": "2025-01-20T10:45:00.000Z",
-        "updated_at": "2025-01-20T10:45:00.000Z",
-        "partner": null
-      }
-    ]
-  }
-  ```
+#### DELETE `/api/users/:id` · PATCH `/api/users/:id/restore` · GET `/api/users/deleted/all`
 
-**Note**: This endpoint now returns both accepted pairings and pending pairing requests in a single response, sorted by creation date (most recent first). For pending partner code requests, the `partner` field will be `null` until someone accepts the code. Only partner information is returned (not your own user data).
+Soft-delete / restore / list deleted. Delete may cascade soft-delete pairings when model is wired. List-deleted is authenticated but **not** admin-gated.
 
-#### Get Pending Pairings
-- **GET** `/api/pairing/pending`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:**
-  ```json
-  {
-    "message": "Pending pairings retrieved successfully",
-    "pairings": [
-      {
-        "id": "pairing_id",
-        "status": "pending",
-        "partner_code": "XYZ789",
-        "created_at": "2025-01-20T10:30:00.000Z",
-        "updated_at": "2025-01-20T10:30:00.000Z",
-        "partner": {
-          "id": "partner_user_id",
-          "user_name": "PendingUser",
-          "email": "pending@example.com"
-        }
-      }
-    ]
-  }
-  ```
-
-#### Get Accepted Pairings
-- **GET** `/api/pairing/accepted`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:**
-  ```json
-  {
-    "message": "Accepted pairings retrieved successfully",
-    "pairings": [
-      {
-        "id": "pairing_id",
-        "status": "accepted",
-        "partner_code": "ABC123",
-        "created_at": "2025-01-20T10:30:00.000Z",
-        "updated_at": "2025-01-20T10:35:00.000Z",
-        "partner": {
-          "id": "partner_user_id",
-          "user_name": "Jane",
-          "email": "jane.doe@example.com"
-        }
-      }
-    ]
-  }
-  ```
-
-#### Get Pairing Statistics
-- **GET** `/api/pairing/stats`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:**
-  ```json
-  {
-    "message": "User pairing statistics retrieved successfully",
-    "stats": {
-      "max_pairings": 1,
-      "current_pairings": 1,
-      "available_slots": 0,
-      "pending_requests": 0
-    }
-  }
-  ```
-
-#### Get Pairing Details
-- **GET** `/api/pairing/:pairingId`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:** Detailed pairing information
-
-#### Soft-delete pairing
-- **DELETE** `/api/pairing/:pairingId`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Soft-deletes the pairing; caller must be `user1_id` or `user2_id`.
-
-#### Restore pairing
-- **PATCH** `/api/pairing/:pairingId/restore`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Restores a soft-deleted pairing (intended for admin/support tooling).
-
-#### List deleted pairings
-- **GET** `/api/pairing/deleted/all`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Returns soft-deleted pairings (support/admin-style endpoint).
-
-### Programs
-
-Programs are AI-generated couples therapy programs that can be created with or without pairings. Each program contains structured daily exercises. When a program is created, the API runs LLM generation **asynchronously** (immediate HTTP response, then steps appear once generation completes).
-
-**Helpful vs Hopeful:** Program generation picks a prompt stack per user: **Helpful** (default, secular EFT/Gottman-oriented) or **Hopeful** (faith-based) when the user has a linked admin **org code** (with optional per-org prompt overrides) **or** custom org fields on their profile (`org_name` / `org_city` / `org_state`). Pairing-based **step messages** use the same selection for chime-in and couples therapy responses.
-
-**Reliability:** If the first LLM call fails, a **follow-up attempt** is scheduled after `PROGRAM_GENERATION_FOLLOWUP_DELAY_MS` (default **60000** ms) unless `PROGRAM_GENERATION_FOLLOWUP_ENABLED=false`. Persistent failures set `generation_error` on the program row.
-
-**Key Features:**
-- **AI-Generated Content**: Each program is structured as **14** day-level steps once generation succeeds
-- **Flexible Pairing**: Programs can be created with or without `pairing_id` (pairing must be **accepted** for paired step messaging / couples therapy responses)
-- **Program owner must set `user_name`**: `POST /api/programs` returns **400** if `user_name` is missing on the profile
-- **Observability:** `GET /api/programs/metrics` exposes queue/latency counters for both prompt services
-
-**Privacy / fields:** `GET /api/programs` and `GET /api/programs/:id` both return `user_input` and `pairing_id` for authorized users (owner or accepted pair partner). Raw `therapy_response` is not included in these responses.
-
-#### Create Program
-- **POST** `/api/programs`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Success:** **201 Created**
-- **Body:**
-  ```json
-  {
-    "user_input": "I feel less and less connected with my wife. I want a plan that will help us have what we used to. We would laugh and joke all the time and now things feel disconnected and distant",
-    "pairing_id": "pairing_id",
-    "steps_required_for_unlock": 5
-  }
-  ```
-  **Note**: 
-  - `pairing_id` is optional. Programs can be created independently without a pairing.
-  - `steps_required_for_unlock` is optional; if omitted it defaults to `DEFAULT_STEPS_REQUIRED_FOR_UNLOCK` (**0** when that env var is unset). This is how many distinct steps must have at least one message before `next_program_unlocked` becomes `true`.
-  - Set `user_name` (and ideally `partner_name`) via `PUT /api/users/:id` before creating a program.
-  - Initial generation runs in the background after **201/200** returns; poll `GET /api/programs/:id` or `GET /api/programs/:id/programSteps` for steps. If generation fails, check the program row / logs for `generation_error`, or call the manual endpoint below.
-- **Response:**
-  ```json
-  {
-    "message": "Program created successfully",
-    "program": {
-      "id": "unique_id",
-      "user_id": "user_id",
-      "user_input": "I feel less and less connected with my wife...",
-      "pairing_id": "pairing_id",
-      "steps_required_for_unlock": 5,
-      "next_program_unlocked": false,
-      "created_at": "2024-01-01T00:00:00.000Z"
-    }
-  }
-  ```
-
-#### Generate Therapy Response Manually
-- **POST** `/api/programs/:program_id/therapy_response`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Manually trigger therapy response generation for a program. Use this if automatic generation failed or if program steps are missing.
-- **Response (202 Accepted):**
-  ```json
-  {
-    "message": "Therapy response generation started",
-    "program_id": "program_id",
-    "status": "processing"
-  }
-  ```
-- **Error Responses:**
-  
-  **409 Conflict** - Program already has therapy response:
-  ```json
-  {
-    "error": "Therapy response already exists for this program",
-    "details": "This program already has program steps. Delete the program and create a new one if you need to regenerate.",
-    "existing_steps_count": 14
-  }
-  ```
-  
-  **503 Service Unavailable** - Prompt service not configured:
-  ```json
-  {
-    "error": "Prompt service is not configured. Please set OPENAI_API_KEY.",
-    "details": "An LLM API key is required to generate therapy responses."
-  }
-  ```
-  
-  **Note**: The therapy response is generated asynchronously with the same follow-up behavior as automatic generation. Check program steps after a short delay. This endpoint returns **409** if steps already exist. **503** if no prompt service is configured (`OPENAI_API_KEY`).
-
-#### Prompt service metrics
-- **GET** `/api/programs/metrics`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** JSON snapshot of request counts, timing, and queue depth for **Hopeful** and **Helpful** services (each includes `configured` and `model` when active).
-
-#### Get User's Programs
-- **GET** `/api/programs`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Returns all programs for the authenticated user with their program steps.
-- **Response:**
-  ```json
-  {
-    "message": "Programs retrieved successfully",
-    "programs": [
-      {
-        "id": "unique_id",
-        "user_id": "user_id",
-        "user_input": "I feel less and less connected with my wife...",
-        "pairing_id": "pairing_id",
-        "steps_required_for_unlock": 5,
-        "next_program_unlocked": false,
-        "created_at": "2024-01-01T00:00:00.000Z",
-        "updated_at": "2024-01-01T00:00:00.000Z",
-        "program_steps": [
-          {
-            "id": "step_id",
-            "day": 1,
-            "theme": "Reflecting on Happy Memories",
-            "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
-            "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
-            "started": false,
-            "created_at": "2024-01-01T00:00:00.000Z",
-            "updated_at": "2024-01-01T00:00:00.000Z"
-          }
-        ]
-      }
-    ]
-  }
-  ```
-
-#### Get Program by ID
-- **GET** `/api/programs/:id`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Returns a specific program with its program steps.
-- **Response:**
-  ```json
-  {
-    "message": "Program retrieved successfully",
-    "program": {
-      "id": "unique_id",
-      "user_id": "user_id",
-      "user_input": "I feel less and less connected with my wife...",
-      "pairing_id": "pairing_id",
-      "steps_required_for_unlock": 5,
-      "next_program_unlocked": false,
-      "created_at": "2024-01-01T00:00:00.000Z",
-      "updated_at": "2024-01-01T00:00:00.000Z",
-      "program_steps": [
-        {
-          "id": "step_id",
-          "day": 1,
-          "theme": "Reflecting on Happy Memories",
-          "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
-          "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
-          "created_at": "2024-01-01T00:00:00.000Z",
-          "updated_at": "2024-01-01T00:00:00.000Z"
-        }
-      ]
-    }
-  }
-  ```
-
-#### Create Next Program
-- **POST** `/api/programs/:id/next_program`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Creates a follow-up program from an existing one. The caller must have access to the previous program. There is **no** `next_program_unlocked` gate in the current API — this endpoint bases eligibility on ownership/access checks only.
-- **Body:**
-  ```json
-  {
-    "user_input": "We've made great progress on communication. Now we want to work on spending more quality time together and being more present.",
-    "steps_required_for_unlock": 5
-  }
-  ```
-  **Note**: 
-  - `user_input` is required.
-  - `steps_required_for_unlock` is optional; when omitted it defaults like `POST /api/programs` (`DEFAULT_STEPS_REQUIRED_FOR_UNLOCK`, default **0**).
-  - The new program inherits `pairing_id` from the previous program.
-  - User names come from profile / pairing resolution, same as initial program creation.
-  - The prompt can include conversation starters from the prior program where users posted messages.
-- **Response:**
-  ```json
-  {
-    "message": "Next program created successfully",
-    "program": {
-      "id": "new_program_id",
-      "user_id": "user_id",
-      "user_input": "We've made great progress on communication...",
-      "pairing_id": "pairing_id",
-      "previous_program_id": "previous_program_id",
-      "steps_required_for_unlock": 5,
-      "next_program_unlocked": false,
-      "created_at": "2024-01-15T00:00:00.000Z"
-    }
-  }
-  ```
-- **Validation Errors:**
-  - `400`: Missing `user_input` field
-  - `403`: User doesn't have access to previous program
-  - `404`: Previous program not found
-
-**How It Works:**
-1. The system retrieves all conversation starters from the previous program where users have posted messages
-2. These conversation starters are included in the AI prompt to provide context
-3. The AI generates 14 new conversation starters that build upon the previous work
-4. The new program is linked to the previous program via `previous_program_id`
-
-#### Delete Program
-- **DELETE** `/api/programs/:id`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:**
-  ```json
-  {
-    "message": "Program deleted successfully",
-    "deleted_at": "2024-01-01T00:00:00.000Z"
-  }
-  ```
-
-### Program Unlock Feature
-
-The program unlock feature tracks user engagement and can require participation across multiple steps before `next_program_unlocked` becomes `true` (drives client UX; **not** a hard gate for `POST /api/programs/:id/next_program`).
-
-**How It Works:**
-1. Each program has a `steps_required_for_unlock` threshold (API default **0** when omitted — set `DEFAULT_STEPS_REQUIRED_FOR_UNLOCK` or pass an explicit integer)
-2. When users add messages to program steps, the service counts how many steps have at least one message (paired programs count both users)
-3. When the count reaches the threshold and the threshold is greater than zero, `next_program_unlocked` flips to `true`
-4. After each new message, unlock status is re-checked on a short delay from the request path
-
-**Key Features:**
-- **Automatic Tracking**: Updates when messages are added
-- **Configurable Threshold**: Per-program via create / next-program bodies or env default
-- **Shared Progress**: In paired programs, both users' contributions count
-
-**Example Usage:**
-```javascript
-// Create a program with custom unlock threshold
-POST /api/programs
-{
-  "user_input": "Help us reconnect",
-  "steps_required_for_unlock": 5  // Unlock after 5 steps have messages
-}
-
-// Add messages to program steps
-POST /api/programSteps/{step_id}/messages
-{
-  "content": "We tried the exercise today..."
-}
-
-// Check unlock status
-GET /api/programs/{program_id}
-// Response includes:
-{
-  "steps_required_for_unlock": 5,
-  "next_program_unlocked": true  // Unlocked after 5 steps had messages
-}
-```
-
-**Use Cases:**
-- **Progress Gates**: Require users to complete X exercises before accessing advanced content
-- **Engagement Tracking**: Ensure consistent participation before program progression
-- **Pairing Coordination**: Track combined progress of both users in a relationship
-- **Flexible Requirements**: Different programs can have different unlock thresholds based on complexity
-
-### Program Steps
-
-The program steps system allows users to engage with each day of their therapy program. When a program is created, each day automatically gets its own program step containing the AI-generated exercise content. Users can then add their own messages to discuss their progress, experiences, and reflections for each specific day.
-
-**Key Features:**
-- **Day-Based Organization**: Each program day (1-14) has its own program step
-- **AI Content Integration**: Each day's theme, conversation starter, and science explanation are stored as program steps
-- **Background Therapy Responses**: Automatic AI-powered therapeutic guidance when both users engage
-- **Separate Message Storage**: Each message is stored as a separate database record for better organization
-- **User Participation**: Both users in a pairing can contribute messages to any day's program step
-- **Message Management**: Users can add and edit their own messages (**edits**: `content` only on `PUT`); metadata is set server-side for system messages
-
-**Database Structure:**
-- **Program Steps Table**: Stores day-level metadata (theme, conversation starter, science explanation)
-- **Messages Table**: Stores individual messages within program steps with full user tracking
-
-## Background therapy & step messaging
-
-### Couples therapy response (paired programs)
-
-When a program has an **accepted** `pairing_id`, both partners can post `user_message` rows on the same program step. After **both** users have posted, the API runs **Hopeful** or **Helpful** (per org context) to append one or more **`system`** messages with metadata such as `type: "chime_in_response_1"`, `triggered_by: "both_users_posted"`. Processing is kicked off via `setImmediate` so HTTP responses stay fast.
-
-### Chime-in (“Hopeful” / “Helpful”) prompts
-
-If the **latest** user message contains **`hopeful`** or **`helpful`** (case-insensitive), the API treats it as a request for an extra reflection and may add **`system`** messages with `type: "chime_in_prompt"` (driven by the same prompt service).
-
-### First-step welcome
-
-On the **first** program (no `previous_program_id`), **day 1**, the **first** user message on that step triggers a synchronous welcome **`system`** message (`type: "first_message_welcome"`) that explains the chime-in behavior. The HTTP **201** response from `POST /api/programSteps/:id/messages` can include `system_messages: [...]` in that case.
-
-### Legacy “conversation” routes
-
-Older docs referred to `/api/programs/.../conversations` and `/api/conversations/...`. **Those paths are not mounted in the current server.** Use **`/api/programSteps/...`** for all step messaging.
-
-### Technical notes
-
-- Requires `OPENAI_API_KEY` (or `TEST_MOCK_LLM=true` for deterministic stubs in dev/CI).
-- Honors per-org **therapy_response_prompt** on linked org codes when using Hopeful.
-
-### Configuration
-
-The therapy response system requires:
-
-```env
-OPENAI_API_KEY=your-openai-api-key-for-therapy-responses
-```
-
-Without this configuration, the system will log warnings but continue normal operation without therapy responses.
-
-#### Get All Program Steps (Organized by Days)
-- **GET** `/api/programs/:programId/programSteps`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Returns all program steps for a program without messages. Use `GET /programSteps/:id/messages` to get messages for a specific step.
-- **Response:**
-  ```json
-  {
-    "message": "Program steps retrieved successfully",
-    "total_steps": 14,
-    "program_steps": [
-      {
-        "id": "step_id",
-        "day": 1,
-        "theme": "Reflecting on Happy Memories",
-        "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
-        "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
-        "started": true,
-        "created_at": "2024-01-01T00:00:00.000Z",
-        "updated_at": "2024-01-01T00:00:00.000Z"
-      },
-      {
-        "id": "step_id_2",
-        "day": 2,
-        "theme": "Appreciating Each Other",
-        "conversation_starter": "Share three things you appreciate about your partner today...",
-        "science_behind_it": "Expressing appreciation strengthens positive emotions...",
-        "started": false,
-        "created_at": "2024-01-01T00:00:00.000Z",
-        "updated_at": "2024-01-01T00:00:00.000Z"
-      }
-    ]
-  }
-  ```
-
-#### Get Specific Program Step
-- **GET** `/api/programSteps/:id`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:**
-  ```json
-  {
-    "message": "Program step retrieved successfully",
-    "step": {
-      "id": "step_id",
-      "program_id": "program_id",
-      "day": 1,
-      "theme": "Reflecting on Happy Memories",
-      "conversation_starter": "Hey Steve, do you remember the time we went on that spontaneous road trip?",
-      "science_behind_it": "Reflecting on happy memories together can help strengthen emotional bonds...",
-      "started": true,
-      "created_at": "2024-01-01T00:00:00.000Z",
-      "updated_at": "2024-01-01T00:00:00.000Z"
-    }
-  }
-  ```
-
-#### Get All Messages in a Program Step
-- **GET** `/api/programSteps/:id/messages`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:**
-  ```json
-  {
-    "message": "Messages retrieved successfully",
-    "step_id": "step_id",
-    "messages": [
-      {
-        "id": "message_id",
-        "step_id": "step_id",
-        "message_type": "user_message",
-        "sender_id": "user_id",
-        "content": "Becca and I completed day 1 together! We talked about our first vacation and remembered why we fell in love.",
-        "created_at": "2024-01-01T01:00:00.000Z",
-        "updated_at": "2024-01-01T01:00:00.000Z"
-      }
-    ]
-  }
-  ```
-
-#### Add Message to Program Step
-- **POST** `/api/programSteps/:id/messages`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Body:**
-  ```json
-  {
-    "content": "This exercise really helped us reconnect! We spent over an hour talking about our favorite memories together."
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "message": "Message added successfully",
-    "data": {
-      "id": "message_id",
-      "step_id": "step_id",
-      "message_type": "user_message",
-      "sender_id": "user_id",
-      "content": "This exercise really helped us reconnect! We spent over an hour talking about our favorite memories together.",
-      "created_at": "2024-01-01T02:00:00.000Z"
-    },
-    "system_messages": []
-  }
-  ```
-- **Note:** Status **201**. For the first user message on **day 1** of a user's **first** program, `system_messages` may contain a short welcome string; other therapy/system replies are loaded asynchronously — use `GET .../messages` to poll.
-
-#### Update Message in Program Step
-- **PUT** `/api/programSteps/:stepId/messages/:messageId`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Body:**
-  ```json
-  {
-    "content": "Updated message content with more details about our experience."
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "message": "Message updated successfully"
-  }
-  ```
-- **Note**: Only the message sender can edit their own messages. System / LLM messages cannot be edited.
-
-### Prompt Sessions ("Sit Sessions")
-
-A **Prompt Session** (publicly a "Sit Session") is a structured, time-bounded couples experience anchored to an **accepted** pairing. Both partners independently complete a six-question **prep**; once both preps are complete, a dynamic LLM prompt is meant to be built from both sets of answers to produce the "Bridge" + "Session" content.
-
-> **Status:** the model, routes, prep flow, and persistence hooks are implemented. **Content generation is intentionally stubbed** — the prompt-construction + LLM call and the final prep question copy are not defined yet. The `POST /api/prompt-sessions/:id/generate` endpoint returns **501** until that work lands. See `docs/prompt-sessions-design.md`.
-
-**Internal vs public naming:** the DB tables are `prompt_sessions` / `prompt_session_preps` and the routes live under `/api/prompt-sessions`; the public product label is "Sit Session".
-
-**Key rules:**
-- `pairing_id` is **required** on creation; the caller must be a member of the pairing and the pairing must be `accepted`.
-- **One active session per pairing** — creating a second while one is in `prep`/`bridge`/`in_session` returns **409**.
-- **Prep visibility:** a partner's raw prep answers are hidden until **both** preps are complete; only completion status is exposed before that.
-- The internal `generation_prompt` is **never** exposed to clients.
-- A prep is "complete" once all six required fields (`bringing_text`, `energy_level`, `intention`, `curiosity`, `boundary`, `gratitude`) are non-empty. `optional_focus` is optional. Submitting partial answers merges with any existing answers.
-
-#### Create Prompt Session
-- **POST** `/api/prompt-sessions`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Body:**
-  ```json
-  { "pairing_id": "pairing_id" }
-  ```
-- **Response:** **201 Created**
-  ```json
-  {
-    "message": "Prompt session created",
-    "prompt_session": {
-      "id": "session_id",
-      "pairing_id": "pairing_id",
-      "created_by_user_id": "user_id",
-      "status": "prep",
-      "current_phase": null,
-      "created_at": "2026-01-01T00:00:00.000Z"
-    }
-  }
-  ```
-- **Errors:** `400` missing `pairing_id`, `403` not a member, `400` pairing not accepted, `404` unknown pairing, `409` an active session already exists (the existing session is returned).
-- **Side effect:** the partner receives a push with `data.kind = "prompt_session_created"`.
-
-#### List Prompt Sessions
-- **GET** `/api/prompt-sessions` (optionally `?pairing_id={id}`)
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Returns all prompt sessions visible to the caller via their accepted pairings. With `pairing_id`, scopes to that pairing (caller must be a member).
-- **Response:** `{ "message": "...", "prompt_sessions": [ ... ] }`
-
-#### Get Prompt Session
-- **GET** `/api/prompt-sessions/:id`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:** `{ "message": "...", "prompt_session": { ... } }` (`403` for non-members, `404` if not found).
-
-#### Submit / Update Prep
-- **POST** `/api/prompt-sessions/:id/prep`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Body:** any subset of the prep fields (merged with existing answers):
-  ```json
-  {
-    "bringing_text": "I'm bringing curiosity and some tiredness.",
-    "energy_level": "medium",
-    "intention": "To listen more than I speak.",
-    "curiosity": "What has felt heavy for you this week?",
-    "boundary": "Let's avoid logistics tonight.",
-    "gratitude": "Thank you for planning dinner.",
-    "optional_focus": "Reconnecting after a busy month"
-  }
-  ```
-- **Response:** `200 OK`
-  ```json
-  {
-    "message": "Prep saved successfully",
-    "prep": { "id": "prep_id", "completed": true, "completed_at": "...", "...": "..." },
-    "both_preps_complete": false
-  }
-  ```
-- **Side effects:** when your prep completes but your partner's hasn't, the partner gets a push (`data.kind = "prompt_session_prep_complete"`). When **both** complete, content generation would be triggered (currently a logged no-op stub).
-
-#### Get My Prep (+ partner status)
-- **GET** `/api/prompt-sessions/:id/prep`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Response:** `200 OK`
-  ```json
-  {
-    "message": "Prep retrieved successfully",
-    "my_prep": { "id": "prep_id", "completed": true, "bringing_text": "...", "...": "..." },
-    "partner_prep": { "user_id": "partner_id", "completed": false, "completed_at": null },
-    "both_preps_complete": false
-  }
-  ```
-  Once `both_preps_complete` is `true`, `partner_prep` includes the partner's full answers.
-
-#### Update Phase / Status
-- **PATCH** `/api/prompt-sessions/:id`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Body:** `{ "current_phase": "bridge" }` and/or `{ "status": "in_session" }`
-- **Notes:** `status` must be one of `prep`, `bridge`, `in_session`, `complete`, `abandoned` (invalid → `400`). Returns the updated `prompt_session`.
-
-#### Generate Content (stub)
-- **POST** `/api/prompt-sessions/:id/generate`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Behavior:** Returns **409** until both preps are complete, then **501 Not Implemented** (prompt construction + LLM call are not built yet).
-
-### Admin authentication (dashboard / org tooling)
-
-Admin accounts are separate from app users (`admin_users` table). Tokens use the same `JWT_SECRET` as app users but embed `type: "admin"` in the JWT payload; use these with org-code admin routes (`/api/org-codes`, audit, etc.).
+### Pairing
 
 | Method | Path | Notes |
 |--------|------|--------|
-| POST | `/api/admin/auth/login` | Body: `email`, `password`. Same rate limits as app login. |
-| POST | `/api/admin/auth/register` | Bootstrap / create admin (protect in production). |
-| GET | `/api/admin/auth/profile` | Admin profile. |
-| PUT | `/api/admin/auth/profile` | Update admin email / names. |
-| POST | `/api/admin/auth/refresh` | Body: `refresh_token` (admin refresh uses `JWT_REFRESH_SECRET`). |
-| POST | `/api/admin/auth/logout` | Requires admin **access** token. |
+| POST | `/api/pairing/request` | **201** partner code; returns existing pending code if one already open |
+| POST | `/api/pairing/accept` | Body `{ "partner_code" }` → **200 empty body**; push to requester |
+| POST | `/api/pairing/reject/:pairingId` | Reject pending |
+| GET | `/api/pairing/` | All pairings for user |
+| GET | `/api/pairings` | **Same as** `GET /api/pairing/` (alias in `server.js`) |
+| GET | `/api/pairing/pending` | Pending only |
+| GET | `/api/pairing/accepted` | Accepted only |
+| GET | `/api/pairing/stats` | `max_pairings`, `current_pairings`, `available_slots`, `pending_requests` |
+| GET | `/api/pairing/:pairingId` | Detail |
+| DELETE | `/api/pairing/:pairingId` | Soft-delete (participant only) |
+| PATCH | `/api/pairing/:pairingId/restore` | Restore |
+| GET | `/api/pairing/deleted/all` | Soft-deleted list (auth, not admin-gated) |
 
-### Device tokens (push)
+**Partner codes:** 6 chars, `A–Z` + `0–9`, unique among active pending codes.
 
-Device tokens are FCM registration tokens obtained from the Firebase SDK on the client side (iOS, Android, or web). Registering them here allows the server's `PushNotificationService` to fan out push notifications to all of a user's active devices. Token strings are **never** returned to HTTP clients after registration — only the opaque record `id` is exposed, which is used only for deletion.
-
-**Per-user limit:** A user may have at most **25** registered device tokens. Attempting to register a 26th token (without first removing an existing one) returns `400 Device token limit reached`.
-
-#### Register Device Token
-- **POST** `/api/device-tokens`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Body:**
-  ```json
-  {
-    "device_token": "fcm_registration_token_from_client_sdk",
-    "platform": "ios"
-  }
-  ```
-  - `device_token` — required; string between 10–512 characters
-  - `platform` — required; one of `"ios"`, `"android"`, `"web"`
-- **Rate Limit:** 10 requests per 5 minutes per IP (overridable via `DEVICE_TOKEN_RATE_LIMIT` env var)
-- **Response:** `201 Created` on first registration, `200 OK` on idempotent re-registration (same token already exists for the user — only `platform` is updated if it changed):
-  ```json
-  {
-    "message": "Device token registered successfully",
-    "device_token": {
-      "id": "record_id",
-      "platform": "ios"
-    }
-  }
-  ```
-  Re-registration returns `message: "Device token updated successfully"`.
-- **Error Responses:**
-  - `400`: `device_token is required` / `platform is required` / `Invalid platform. Must be one of: ios, android, web` / `Device token limit reached. A user may have at most 25 registered devices`
-  - `404`: `User not found`
-  - `429`: Rate limit exceeded
-
-#### List Device Tokens
-- **GET** `/api/device-tokens`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Returns all device token records for the authenticated user. Token strings are intentionally omitted; use the record `id` to delete.
-- **Response:**
-  ```json
-  {
-    "message": "Device tokens retrieved successfully",
-    "device_tokens": [
-      {
-        "id": "record_id",
-        "user_id": "user_id",
-        "platform": "ios",
-        "created_at": "2024-01-01T00:00:00.000Z",
-        "updated_at": "2024-01-01T00:00:00.000Z"
-      }
-    ],
-    "count": 1
-  }
-  ```
-
-#### Delete Device Token
-- **DELETE** `/api/device-tokens/:id`
-- **Headers:** `Authorization: Bearer {access_token}`
-- **Description:** Removes a specific token record by its `id`. Only removes tokens owned by the authenticated user.
-- **Response:** `200 OK`
-  ```json
-  { "message": "Device token deleted successfully" }
-  ```
-- **Error Responses:**
-  - `404`: `Device token not found`
-
-### Push Notification Service (server-side)
-
-`PushNotificationService` (`services/PushNotificationService.js`) is instantiated once at startup in `server.js` and passed explicitly to every route factory that needs it (`createPairingRoutes`, `createProgramRoutes`, `createProgramStepRoutes`, `createAdminRoutes`) — same convention as `authService`, `userModel`, and the prompt services. Routes and background jobs call it to send push notifications to users' registered devices via **Firebase Cloud Messaging (FCM HTTP v1 API)**, which handles delivery to APNs (iOS), FCM (Android), and Web Push.
-
-#### Configuration
-
-Firebase credentials must be provided via one of two env vars:
-
-| Env var | When to use |
-|---------|-------------|
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | Recommended for Railway/containerized deploys — paste the full service-account JSON as a single-line string |
-| `FIREBASE_SERVICE_ACCOUNT_PATH` | Recommended for local dev — path to a service-account JSON file on disk (ensure the file is gitignored) |
-
-If neither is set, the service starts in **unconfigured mode**: every send silently no-ops and returns `{ skipped: true }` — the rest of the API stays healthy. This is the default for local dev and CI environments that don't need real push.
-
-Set `TEST_MOCK_PUSH=true` to force a deterministic in-memory mock that always returns success without making real FCM calls. This mirrors `TEST_MOCK_LLM=true` for the same purpose.
-
-#### High-level API
-
-Each route factory that needs to send push notifications receives the service as a constructor argument (see `setupRoutes()` in `server.js`), so handlers just close over the local reference:
-
-```javascript
-function createPairingRoutes(pairingService, authService, pushNotificationService = null) {
-  // ...
-  router.post('/accept', authenticateToken, async (req, res) => {
-    // ...
-    if (pushNotificationService) {
-      await pushNotificationService.sendToUser(userId, payload);
-    }
-  });
-}
-
-// Fan out the same payload to every device of every user in the array
-await pushNotificationService.sendToUsers([userId1, userId2], payload);
-```
-
-The parameter is optional and defaults to `null` so routers can still be constructed in environments where push isn't wired up — handlers should null-check before calling.
-
-Both methods automatically **prune dead FCM tokens** — if FCM responds with `registration-token-not-registered` or similar, those token rows are deleted from `device_tokens` so they're never retried.
-
-#### Payload shape
-
-```javascript
-{
-  // Visible notification (at least one of title/body required unless using data-only)
-  title: "You have a new message",
-  body: "Your partner just replied.",
-  imageUrl: "https://example.com/icon.png",  // optional
-
-  // Arbitrary data (all values coerced to strings per FCM spec)
-  data: {
-    screen: "program_step",
-    step_id: "abc123"
-  },
-
-  // iOS / APNs extras (optional)
-  badge: 1,
-  sound: "default",
-  apnsContentAvailable: true,  // silent background push
-
-  // Android extras (optional)
-  android: {
-    priority: "high",
-    channelId: "reminders"
-  }
-}
-```
-
-A payload with **only** `data` (no `title`/`body`) is valid and delivers a silent data push.
-
-#### Push Kinds (Client Contract)
-
-The backend emits a small set of well-known `data.kind` values. Mobile and web clients should switch on `kind` (and ignore unknown values for forward compatibility).
-
-| kind | When sent | Typical `data` fields | Notes |
-|------|-----------|-----------------------|-------|
-| `pairing_accepted` | Someone accepted the authenticated user's pending pairing request | (none beyond `kind`) | Title/body contains the accepter's name |
-| `program_ready` | A new 14-day program (or "next program") finished generating | `program_id` | Sent to both partners when pairing is active |
-| `step_message` | The other partner posted a reflection/message in a program step | `step_id`, `program_id`, `step_day` | Body contains a preview of the message |
-| `therapy_response` | A new therapist reflection was generated for a step (both users had posted) | `step_id` | Sent to both partners |
-| `prompt_session_created` | A partner started a Prompt Session ("Sit Session") for the pairing | `prompt_session_id` | Sent to the other partner |
-| `prompt_session_prep_complete` | One partner finished their prep while the other's is still pending | `prompt_session_id` | Nudges the partner to complete prep |
-
-All production sends also include human-readable `title` + `body` so clients can always surface a visible notification even if they don't recognize the `kind`.
-
-Example of a real emitted payload:
+Request response shape:
 
 ```json
 {
-  "title": "Alex shared a reflection",
-  "body": "I really appreciated when you said...",
-  "data": {
-    "kind": "step_message",
-    "step_id": "step_abc123",
-    "program_id": "prog_xyz789",
-    "step_day": "3"
-  }
+  "message": "Partner code generated successfully. Share this code with someone to pair with you.",
+  "partner_code": "ABC123",
+  "pairing_id": "...",
+  "requester": { "id": "...", "user_name": "...", "email": "..." },
+  "expires_note": "This partner code is valid until someone uses it or you cancel the request."
 }
 ```
 
-#### Low-level API
+### Programs
 
-```javascript
-// Send directly to raw FCM token strings (no model lookup, no auto-prune)
-await push.sendToTokens(tokenStrings, payload);
-// Returns { successCount, failureCount, invalidTokens }
+| Method | Path | Status | Notes |
+|--------|------|--------|--------|
+| POST | `/api/programs` | **201** | Body: `user_input` required; `pairing_id`, `steps_required_for_unlock` optional. **Requires `user_name` on profile** or **400**. Async generation. |
+| POST | `/api/programs/:id/next_program` | **201** | Body: `user_input` required; inherits `pairing_id` from previous. **No** hard gate on `next_program_unlocked`. |
+| POST | `/api/programs/:program_id/therapy_response` | **202** | Manual generation kick |
+| GET | `/api/programs/metrics` | **200** | Hopeful + Helpful queue/latency metrics |
+| GET | `/api/programs` | **200** | User’s programs + steps |
+| GET | `/api/programs/:id` | **200** | One program + steps (owner or accepted partner) |
+| DELETE | `/api/programs/:id` | **200** | Soft-delete; **owner only** |
+
+Create body example:
+
+```json
+{
+  "user_input": "We want to reconnect and communicate better.",
+  "pairing_id": "optional_accepted_pairing_id",
+  "steps_required_for_unlock": 5
+}
 ```
 
-#### Dead token cleanup
+`steps_required_for_unlock` defaults to `DEFAULT_STEPS_REQUIRED_FOR_UNLOCK` (**0**). When threshold &gt; 0 and enough steps have messages, `next_program_unlocked` becomes `true` (client UX; not enforced on next_program).
 
-FCM returns per-token error codes. The high-level `sendToUser` / `sendToUsers` methods automatically call `DeviceToken.removeDeviceTokenByString()` for any token FCM reports as permanently dead (e.g. the app was uninstalled). This keeps the `device_tokens` table lean without any manual maintenance.
+List/get include `user_input`, `pairing_id`, steps; raw `therapy_response` is not exposed in those list payloads as client content.
 
-#### Status checks
+### Program unlock
 
-```javascript
-push.isConfigured()  // true if Firebase or mock is active
-push.isMockMode()    // true if running against TEST_MOCK_PUSH or injected test double
+1. Count steps with at least one message (paired: both partners’ contributions matter for unlock tracking).
+2. When count ≥ `steps_required_for_unlock` and threshold &gt; 0 → `next_program_unlocked = true`.
+3. Re-checked shortly after each new message (`setTimeout` ~500ms).
+
+### Program steps & messages
+
+| Method | Path | Notes |
+|--------|------|--------|
+| GET | `/api/programs/:programId/programSteps` | All steps; includes `contributions`, `started`, `total_steps` |
+| GET | `/api/programSteps/:id` | One step + contributions |
+| GET | `/api/programSteps/:id/messages` | Messages for step |
+| POST | `/api/programSteps/:id/messages` | Body `{ "content" }` → **201** `{ message, data, system_messages }` |
+| PUT | `/api/programSteps/:stepId/messages/:messageId` | Own messages only; body `{ "content" }` → `{ message, data }` |
+
+**There are no `/api/conversations` or `/api/programs/.../conversations` routes.** Use programSteps paths only.
+
+#### Background therapy & chime-in
+
+- **Both partners posted** on a paired step → async couples therapy **system** messages (`message_type: "system"`) + push `therapy_response`.
+- Message content containing **`hopeful`** or **`helpful`** (case-insensitive) may trigger chime-in system messages.
+- **First** user message on **day 1** of a program **without** `previous_program_id` → sync welcome system message (may appear in `system_messages` on the 201 response).
+- Other system replies are async — poll `GET .../messages`.
+
+Message types: `user_message`, `system`, legacy `openai_response`.
+
+### Subscriptions
+
+#### POST `/api/subscription`
+
+Auth. Platform-specific body:
+
+**iOS:** `platform: "ios"`, `product_id`, `transaction_id`, `original_transaction_id`, `jws_receipt`, `environment` (`Production`|`Sandbox`), `purchase_date`, `expiration_date` (epoch **ms**).
+
+**Android:** `platform: "android"`, `product_id`, `purchase_token`, `order_id`, `package_name`, `purchase_date`, `expiration_date` (epoch **ms**).
+
+**200** update / **201** create:
+
+```json
+{
+  "message": "Subscription receipt created successfully",
+  "subscription": {
+    "id": "...",
+    "platform": "ios",
+    "product_id": "...",
+    "is_active": true,
+    "expiration_date": 1768926462000
+  },
+  "premium_status": { "active": true, "pairings_updated": 1 }
+}
 ```
 
-### Admin push-test endpoint
+Conflict if receipt belongs to another user (**409** via `SubscriptionError`).
 
-`POST /api/admin/push-test` — smoke-test FCM credentials and device token registration by manually sending a push notification to a specific user. Requires an **admin JWT**.
+#### GET `/api/subscription`
 
-**Request body:**
+```json
+{
+  "premium": true,
+  "active_subscriptions": 1,
+  "latest_expiration": 1768926462000,
+  "subscriptions": [{ "id", "platform", "product_id", "expiration_date", "purchase_date" }]
+}
+```
 
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `user_id` | string | ✅ | ID of the target user (must exist) |
-| `title` | string | one of title/body | Visible notification title |
-| `body` | string | one of title/body | Visible notification body |
-| `data` | object | ❌ | Arbitrary key-value data (values coerced to strings) |
+#### GET `/api/subscription/receipts`
 
-**Responses:**
+`{ "message", "data": { "ios_receipts", "android_receipts", "total_receipts" } }`
 
-| Status | Meaning |
-|--------|---------|
-| 200 | Sent successfully — returns `{ message, result }` |
-| 400 | Missing `user_id`, or both `title` and `body` are absent |
-| 401 | No token or expired token |
-| 403 | Token is not an admin token |
-| 404 | Target `user_id` not found |
-| 503 | Push not configured (no Firebase credentials, and `TEST_MOCK_PUSH` is not set) |
+### Organization codes
 
-Rate-limited to 100 requests per 15 minutes per IP via `adminActionLimiter` (`middleware/security.js`). Unlike `loginLimiter`, this limiter counts all requests — both successful and failed — so every send counts toward the cap.
+Admin JWT (`type: "admin"`) required for create / get-by-id / update / delete / audit.  
+**GET list** allows any authenticated app or admin JWT; non-admins get LLM prompt fields stripped (`initial_program_prompt`, `next_program_prompt`, `therapy_response_prompt`).
 
-Run standalone: `npm run test:admin-push` (requires a live API with `TEST_MOCK_PUSH=true`).
+| Method | Path | Auth |
+|--------|------|------|
+| POST | `/api/org-codes` | admin |
+| GET | `/api/org-codes` | app or admin |
+| GET | `/api/org-codes/audit/org-linkages` | admin · query: `user_id`, `limit`, `offset` |
+| GET | `/api/org-codes/:id` | admin |
+| PUT | `/api/org-codes/:id` | admin |
+| DELETE | `/api/org-codes/:id` | admin |
+
+Create required: `org_code`, `organization`. Optional: address fields, prompt overrides, `expires_at`, `duration_start`, `duration_end`.
+
+### Admin authentication
+
+Separate from app users (`admin_users` table). Same JWT secrets; access payload includes `type: "admin"`.
+
+| Method | Path | Auth | Notes |
+|--------|------|------|--------|
+| POST | `/api/admin/auth/login` | none | Body email/password; login limiter + lockout |
+| POST | `/api/admin/auth/register` | none | Creates admin — **protect/disable in production** |
+| GET | `/api/admin/auth/profile` | admin | |
+| PUT | `/api/admin/auth/profile` | admin | email, names, children |
+| POST | `/api/admin/auth/refresh` | none | Body `refresh_token` |
+| POST | `/api/admin/auth/logout` | admin access | Invalidates admin refresh tokens |
+
+### Admin tooling
+
+#### POST `/api/admin/push-test`
+
+Admin JWT. Body: `user_id` required; at least one of `title` / `body`; optional `data`.  
+**200** send result · **503** push not configured · rate-limited 100/15min.
+
+### Device tokens
+
+Max **25** tokens per user. Raw FCM token never returned after register (only record `id` + `platform`).
+
+| Method | Path | Notes |
+|--------|------|--------|
+| POST | `/api/device-tokens` | Body `device_token` (10–512 chars), `platform`: `ios`\|`android`\|`web`. **201** new / **200** upsert |
+| GET | `/api/device-tokens` | List without token strings; includes `last_used_at` when present |
+| DELETE | `/api/device-tokens/:id` | Own tokens only |
+
+### Prompt sessions (“Sit Sessions”)
+
+Anchored to an **accepted** pairing. Internal name `prompt_sessions`; product name Sit Session. Design notes: `docs/prompt-sessions-design.md`.
+
+| Method | Path | Notes |
+|--------|------|--------|
+| POST | `/api/prompt-sessions` | Body `{ "pairing_id" }` · **201** · **409** if active session exists |
+| GET | `/api/prompt-sessions` | Optional `?pairing_id=` |
+| GET | `/api/prompt-sessions/:id` | Member only |
+| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields |
+| GET | `/api/prompt-sessions/:id/prep` | Own prep + partner status; full partner answers only when both complete |
+| PATCH | `/api/prompt-sessions/:id` | `status` and/or `current_phase` |
+| POST | `/api/prompt-sessions/:id/generate` | **409** preps incomplete · **501** not implemented |
+
+**Prep fields (six required for complete):** `bringing_text`, `energy_level`, `intention`, `curiosity`, `boundary`, `gratitude`. Optional: `optional_focus`.  
+Statuses: `prep` \| `bridge` \| `in_session` \| `complete` \| `abandoned`.  
+`generation_prompt` never exposed to clients. Both-prep-complete triggers a **stub** only (log), not LLM.
 
 ### Message stats
 
-- **GET** `/api/messages-stats?date={epoch_ms}&programId={uuid}` (authenticated) — returns aggregate stats for messages since `date` on the given program.
+#### GET `/api/messages-stats?date={epoch_seconds}&programId={id}`
 
-### Health Check
-- **GET** `/health`
-- **Response:** Plain text `OK` with `Content-Type: text/plain` (suitable for load balancers).
+Auth required. `date` is Unix time in **seconds** (not ms).  
+Returns map: `{ "<step_id>": { "messageCount": N }, ... }`.
 
-### Diagnostics
-- **GET** `/health/diagnostics`
-- **Response:** JSON such as `{ "ok": true, "test_mock_llm": false }` for local/CI checks.
+---
 
-## Database Schema
+## Password requirements
 
-The MySQL database automatically creates the following tables (and incremental migrations add columns on older installs). **`org_codes`**, **`admin_users`**, **`device_tokens`**, **`ios_subscriptions`**, **`android_subscriptions`**, and related indexes/FKs are defined in the matching `models/*.js` files — the snippets below focus on the core app entities.
+From `User.validatePassword` / admin validation:
 
-### Users Table
-```sql
-CREATE TABLE users (
-  id VARCHAR(50) PRIMARY KEY,
-  email VARCHAR(255) UNIQUE NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
-  user_name VARCHAR(255) DEFAULT NULL,
-  partner_name VARCHAR(255) DEFAULT NULL,
-  children INT DEFAULT NULL,
-  max_pairings INT DEFAULT 1,
-  org_code_id VARCHAR(50) DEFAULT NULL,
-  org_name VARCHAR(255) DEFAULT NULL,
-  org_city VARCHAR(100) DEFAULT NULL,
-  org_state VARCHAR(50) DEFAULT NULL,
-  is_premium TINYINT(1) NOT NULL DEFAULT 0,
-  bypass_password TINYINT(1) NOT NULL DEFAULT 0,
-  deleted_at DATETIME DEFAULT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  INDEX idx_email (email),
-  INDEX idx_deleted_at (deleted_at),
-  INDEX idx_org_code_id (org_code_id),
-  CONSTRAINT fk_users_org_code
-    FOREIGN KEY (org_code_id) REFERENCES org_codes(id)
-    ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-(Plus `user_org_code_audit_logs` for org linkage history — created by the same model.)
+- **Minimum 8**, **maximum 128** characters (not “exactly 8”)
+- At least one lowercase, one uppercase, one digit, one symbol
+- Rejects weak patterns (long repeats, common sequences/words, simple keyboard runs)
 
-### Refresh Tokens Table
-```sql
-CREATE TABLE refresh_tokens (
-  id VARCHAR(50) PRIMARY KEY,
-  user_id VARCHAR(50) NOT NULL,
-  user_type ENUM('user', 'admin') DEFAULT 'user',
-  token VARCHAR(500) UNIQUE NOT NULL,
-  expires_at DATETIME NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_user_id (user_id),
-  INDEX idx_user_type (user_type),
-  INDEX idx_token (token),
-  INDEX idx_expires_at (expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-App **user** refresh rows align with `users.id`; **admin** rows align with `admin_users.id` (no FK in schema — enforced in services).
+---
 
-### Pairings Table
-```sql
-CREATE TABLE pairings (
-  id VARCHAR(50) PRIMARY KEY,
-  user1_id VARCHAR(50) NOT NULL,
-  user2_id VARCHAR(50) DEFAULT NULL,
-  partner_code VARCHAR(10) DEFAULT NULL,
-  status VARCHAR(20) DEFAULT 'pending',
-  premium TINYINT(1) NOT NULL DEFAULT 0,
-  deleted_at DATETIME DEFAULT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  INDEX idx_user1_id (user1_id),
-  INDEX idx_user2_id (user2_id),
-  INDEX idx_partner_code (partner_code),
-  INDEX idx_status (status),
-  INDEX idx_premium (premium),
-  INDEX idx_deleted_at (deleted_at),
-  FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
-  FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
+## Database schema
 
-### Programs Table
-```sql
-CREATE TABLE programs (
-  id VARCHAR(50) PRIMARY KEY,
-  user_id VARCHAR(50) NOT NULL,
-  user_input TEXT NOT NULL,
-  pairing_id VARCHAR(50) DEFAULT NULL,
-  previous_program_id VARCHAR(50) DEFAULT NULL,
-  therapy_response LONGTEXT DEFAULT NULL,
-  generation_prompt LONGTEXT DEFAULT NULL,
-  generation_error TEXT DEFAULT NULL,
-  regenerate_therapy_response BOOLEAN DEFAULT FALSE,
-  llm_used VARCHAR(100) DEFAULT NULL,
-  seconds_to_load DECIMAL(8,4) DEFAULT NULL,
-  steps_required_for_unlock INT DEFAULT 7,
-  next_program_unlocked BOOLEAN DEFAULT FALSE,
-  deleted_at DATETIME DEFAULT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  INDEX idx_user_id (user_id),
-  INDEX idx_pairing_id (pairing_id),
-  INDEX idx_previous_program_id (previous_program_id),
-  INDEX idx_deleted_at (deleted_at),
-  INDEX idx_next_program_unlocked (next_program_unlocked),
-  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
-  FOREIGN KEY (pairing_id) REFERENCES pairings (id) ON DELETE CASCADE,
-  FOREIGN KEY (previous_program_id) REFERENCES programs (id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
+Created/migrated on startup. Core tables:
 
-**Program metadata:**
-- `steps_required_for_unlock`: Stored per program; the HTTP API defaults **omitted** values to `DEFAULT_STEPS_REQUIRED_FOR_UNLOCK` (env, default **0**) on create.
-- `next_program_unlocked`: Updated as users post messages (threshold must be greater than zero to flip the flag).
-- `generation_error` / `generation_prompt`: Auditing fields when LLM generation fails or succeeds.
-- `regenerate_therapy_response`: When set, a background poller may re-run initial generation.
+| Table | Purpose |
+|-------|---------|
+| `users` | Accounts, org fields, `is_premium`, `bypass_password`, soft delete |
+| `user_org_code_audit_logs` | Org link/unlink audit |
+| `refresh_tokens` | App + admin refresh (`user_type` ENUM) |
+| `pairings` | Partner codes, status, `premium`, soft delete |
+| `programs` | Input, pairing, generation metadata, unlock flags, soft delete |
+| `program_steps` | Day, theme, conversation_starter, science_behind_it, `started` |
+| `program_step_user_contribution` | First contribution per user per step |
+| `messages` | step messages + metadata |
+| `ios_subscriptions` / `android_subscriptions` | Store receipts |
+| `org_codes` | Codes, address, prompt overrides, duration, expires |
+| `admin_users` | Admin accounts |
+| `device_tokens` | FCM tokens, platform, `last_used_at` |
+| `prompt_sessions` / `prompt_session_preps` | Sit Sessions |
 
-### Program Steps Table
-```sql
-CREATE TABLE program_steps (
-  id VARCHAR(50) PRIMARY KEY,
-  program_id VARCHAR(50) NOT NULL,
-  day INT NOT NULL,
-  theme VARCHAR(255) NOT NULL,
-  conversation_starter TEXT DEFAULT NULL,
-  science_behind_it TEXT DEFAULT NULL,
-  started BOOLEAN DEFAULT FALSE,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  INDEX idx_program_id (program_id),
-  INDEX idx_day (day),
-  INDEX idx_program_day (program_id, day),
-  INDEX idx_started (started),
-  FOREIGN KEY (program_id) REFERENCES programs (id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-
-**Program Step Status:**
-- `started`: Boolean field (returns `true`/`false`) indicating if any message has been added to this step
-- Automatically set to `true` when the first message is added
-- Used by the program unlock logic to track engagement
-- API responses return JavaScript boolean values (`true`/`false`) instead of numeric values (0/1)
-
-### Messages Table
-```sql
-CREATE TABLE messages (
-  id VARCHAR(50) PRIMARY KEY,
-  step_id VARCHAR(50) NOT NULL,
-  message_type VARCHAR(20) NOT NULL CHECK (message_type IN ('openai_response', 'user_message', 'system')),
-  sender_id VARCHAR(50) DEFAULT NULL,
-  content TEXT NOT NULL,
-  metadata TEXT DEFAULT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  INDEX idx_step_id (step_id),
-  INDEX idx_sender_id (sender_id),
-  INDEX idx_message_type (message_type),
-  INDEX idx_created_at (created_at),
-  FOREIGN KEY (step_id) REFERENCES program_steps (id) ON DELETE CASCADE,
-  FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-
-**Message Types:**
-- `user_message`: Messages posted by users in the pairing
-- `openai_response`: AI-generated program content (legacy)
-- `system`: Server-originated messages — welcome copy, chime-in prompts, couples therapy follow-ups, etc. (see `metadata.type` such as `first_message_welcome`, `chime_in_prompt`, `chime_in_response_1`)
-
-### Device Tokens Table
-```sql
-CREATE TABLE device_tokens (
-  id VARCHAR(50) PRIMARY KEY,
-  user_id VARCHAR(50) NOT NULL,
-  device_token VARCHAR(512) NOT NULL,
-  platform ENUM('ios', 'android', 'web') NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY unique_user_device (user_id, device_token),
-  INDEX idx_user_id (user_id),
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-
-**Notes:**
-- `device_token` is a raw FCM registration token (10–512 chars). The `UNIQUE KEY unique_user_device` ensures a token can only appear once per user — re-registering the same token updates `platform` in place (upsert) without creating duplicates.
-- `platform` is `NOT NULL`; existing rows with a `NULL` platform are automatically backfilled to `'ios'` on startup via an incremental migration.
-- Per-user cap: **25 tokens**. The model enforces this before inserting a new row.
-- `ON DELETE CASCADE`: when a user is deleted, all their device token rows are removed automatically.
-
-### Prompt Sessions Tables
+### Users (representative)
 
 ```sql
-CREATE TABLE prompt_sessions (
-  id VARCHAR(50) PRIMARY KEY,
-  pairing_id VARCHAR(50) NOT NULL,
-  created_by_user_id VARCHAR(50) NOT NULL,
-  status ENUM('prep','bridge','in_session','complete','abandoned') DEFAULT 'prep',
-  current_phase VARCHAR(50) DEFAULT NULL,
-  generation_prompt LONGTEXT DEFAULT NULL,      -- built from both preps; never exposed to clients
-  generation_prompt_used_at DATETIME DEFAULT NULL,
-  llm_used VARCHAR(100) DEFAULT NULL,
-  bridge_content LONGTEXT DEFAULT NULL,
-  session_content LONGTEXT DEFAULT NULL,
-  generation_error TEXT DEFAULT NULL,
-  seconds_to_generate DECIMAL(8,4) DEFAULT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  INDEX idx_pairing_id (pairing_id),
-  INDEX idx_created_by (created_by_user_id),
-  INDEX idx_status (status),
-  FOREIGN KEY (pairing_id) REFERENCES pairings (id) ON DELETE CASCADE,
-  FOREIGN KEY (created_by_user_id) REFERENCES users (id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE prompt_session_preps (
-  id VARCHAR(50) PRIMARY KEY,
-  prompt_session_id VARCHAR(50) NOT NULL,
-  user_id VARCHAR(50) NOT NULL,
-  bringing_text TEXT, energy_level TEXT, intention TEXT,
-  curiosity TEXT, boundary TEXT, gratitude TEXT,
-  optional_focus TEXT NULL,
-  completed_at DATETIME DEFAULT NULL,            -- set once all six required fields are non-empty
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY unique_prompt_session_user (prompt_session_id, user_id),
-  INDEX idx_prompt_session_id (prompt_session_id),
-  INDEX idx_user_id (user_id),
-  FOREIGN KEY (prompt_session_id) REFERENCES prompt_sessions (id) ON DELETE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- Key columns (see models/User.js for full CREATE + migrations)
+id, email UNIQUE, password_hash,
+user_name, partner_name, children, max_pairings,
+org_code_id, org_name, org_city, org_state,
+is_premium, bypass_password,
+deleted_at, created_at, updated_at
 ```
 
-**Notes:**
-- One `prompt_session_preps` row per partner per session (enforced by `unique_prompt_session_user`).
-- Prep field names are placeholders pending final product copy.
-- Generation columns (`generation_prompt`, `bridge_content`, `session_content`, `seconds_to_generate`, `llm_used`) are populated by the persistence hooks once content generation is implemented.
+### Programs (representative)
 
-## Password Requirements
+```sql
+id, user_id, user_input, pairing_id, previous_program_id,
+therapy_response, generation_prompt, generation_error,
+regenerate_therapy_response, llm_used, seconds_to_load,
+steps_required_for_unlock,  -- API default when omitted: env DEFAULT_STEPS_REQUIRED_FOR_UNLOCK (0)
+next_program_unlocked,
+deleted_at, created_at, updated_at
+```
 
-Passwords must meet the following criteria:
-- Exactly 8 characters long
-- At least one number (0-9)
-- At least one symbol (!@#$%^&*()_+-=[]{}|;':",./<>?)
-- At least one capital letter (A-Z)
-- At least one lowercase letter (a-z)
+Note: raw `CREATE TABLE` may still show an older default of `7` for `steps_required_for_unlock`; runtime API and migrations treat omitted create values as **0** unless env/body override.
 
-## Partner Code Format
+### Device tokens
 
-Partner codes are temporarily generated when users request pairings:
-- Format: `XXXXXX` (e.g., "ABC123", "XYZ789")
-- Uses uppercase letters A-Z and numbers 0-9
-- Generated only when requesting a pairing
-- Valid until someone uses them or the request is cancelled
-- No hyphens or special characters
+Includes `last_used_at` (activity + cleanup). UNIQUE `(user_id, device_token)`. Cap 25 per user.
 
-## Authentication
+---
 
-The API uses JWT (JSON Web Tokens) for authentication with automatic refresh token rotation:
+## Error handling
 
-- **Access Tokens**: Lifetime from `JWT_EXPIRES_IN` (default **24h**) for app users
-- **Refresh Tokens**: Long-lived (**14d** by default) with rotation and sliding extension on activity
-- **Bearer Token**: Include `Authorization: Bearer {token}` in request headers
+| Status | Typical meaning |
+|--------|-----------------|
+| 400 | Validation, missing fields, bad password/email/org |
+| 401 | Missing/invalid/expired token or bad login |
+| 403 | Not allowed (wrong user, non-admin, non-member) |
+| 404 | Not found |
+| 409 | Conflict (email, receipt, active prompt session, therapy already generated) |
+| 423 | Login lockout |
+| 429 | Rate limit |
+| 500 | Server / DB |
+| 501 | Prompt session generate not implemented |
+| 503 | LLM or push not configured (where enforced) |
 
-### Refresh Token Rotation & Automatic Extension
+---
 
-For enhanced security and user experience, the API implements automatic refresh token rotation with activity-based extension:
+## Example workflows
 
-1. **Sliding Expiration**: Each successful **refresh** issues a new refresh token with a fresh **14-day** window (per `JWT_REFRESH_EXPIRES_IN` / stored expiry)
-2. **Token Invalidation**: Old refresh tokens are immediately invalidated after use
-3. **Reuse Prevention**: Attempting to reuse an old refresh token will fail with 401 error
-4. **Automatic Extension**: Every authenticated API call resets refresh token expiration to 14 days
-5. **Active Session Management**: Users stay logged in as long as they use the API regularly
-
-**How It Works:**
-- **Initial Login**: Refresh tokens expire in 14 days
-- **Token Refresh**: Extends expiration to 14 days from refresh time
-- **API Activity**: Every authenticated request resets expiration to 14 days from that moment
-- **Inactive Sessions**: Tokens still expire normally if user becomes inactive
-
-**Best Practices:**
-- Always store the new `refresh_token` returned from the `/api/refresh` endpoint
-- Implement automatic refresh logic in your client application
-- Handle 401 errors by redirecting to login when refresh fails
-- Active users enjoy extended sessions without manual intervention
-
-## Error Handling
-
-The API includes comprehensive error handling for:
-
-- **400 Bad Request**: Missing fields, invalid email format, password validation
-- **401 Unauthorized**: Missing or invalid access token (or invalid/expired refresh token where applicable)
-- **403 Forbidden**: Authorization failed (wrong user, admin-only route, etc.)
-- **404 Not Found**: User or pairing not found
-- **409 Conflict**: Duplicate email, pairing already exists
-- **423 Locked**: Too many failed logins / account lockout window
-- **500 Internal Server Error**: Database errors, server issues
-
-## Development
-
-To run the server in development mode with auto-restart:
+### Pairing
 
 ```bash
-npm run dev
+# Create users
+curl -s -X POST http://localhost:9000/api/users \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"Test1!@#"}'
+
+curl -s -X POST http://localhost:9000/api/users \
+  -H "Content-Type: application/json" \
+  -d '{"email":"bob@example.com","password":"Test2!@#"}'
+
+# Alice requests code
+curl -s -X POST http://localhost:9000/api/pairing/request \
+  -H "Authorization: Bearer $ALICE_TOKEN"
+
+# Bob accepts
+curl -s -X POST http://localhost:9000/api/pairing/accept \
+  -H "Authorization: Bearer $BOB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"partner_code":"ABC123"}'
+# → 200 empty body
 ```
 
-The server will automatically restart when you make changes to the code.
+### Program + step message
+
+```bash
+# Set names first (required for POST /programs)
+curl -s -X PUT http://localhost:9000/api/users/$USER_ID \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_name":"Alex","partner_name":"Sam"}'
+
+curl -s -X POST http://localhost:9000/api/programs \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_input":"We want to reconnect.","pairing_id":"PAIRING_ID"}'
+
+# Poll until steps exist
+curl -s http://localhost:9000/api/programs/$PROGRAM_ID/programSteps \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s -X POST http://localhost:9000/api/programSteps/$STEP_ID/messages \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"We tried today'\''s exercise together."}'
+```
+
+### Login
+
+```bash
+curl -s -X POST http://localhost:9000/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"Pass123!"}'
+```
+
+---
 
 ## Testing
 
-The API includes a comprehensive test suite with multiple test categories:
-
-### Run All Tests
-```bash
-npm test
-```
-
-### Individual scripts (`package.json`)
+Requires a running API (unless `test:ci` / `--skip-server-check`) and MySQL. Prefer `TEST_MOCK_LLM=true` (and optionally `TEST_MOCK_PUSH=true`) to avoid real OpenAI/FCM spend.
 
 | Command | Purpose |
+|---------|---------|
+| `npm test` | Full suite (`tests/run-all-tests.js`) |
+| `npm run test:ci` | Suite with `--skip-server-check` |
+| `npm run test:quick` | Suite with `--no-load` |
+| `npm run test:auth` / `test:mysql` | Auth tests (same file) |
+| `npm run test:security` | Security tests |
+| `npm run test:load` | Load test |
+| `npm run test:programs` | Programs |
+| `npm run test:steps` | Program steps |
+| `npm run test:messages` | Messages |
+| `npm run test:therapy-trigger` | Therapy trigger |
+| `npm run test:push` | Push service unit-style |
+| `npm run test:admin-push` | Admin push-test flow |
+| `npm run test:prompt-sessions` | Sit Sessions |
+| `npm run test:cleanup` | Cleanup test data |
+
+Additional scripts under `tests/` (run with `node tests/...`): profile, pairings, refresh-token, org-context, generation prompts, load benchmarks, etc.
+
+### Utility scripts
+
+| Script | Purpose |
 |--------|---------|
-| `npm test` | Full orchestrated run (`tests/run-all-tests.js`) |
-| `npm run test:ci` | Same runner with `--skip-server-check` |
-| `npm run test:quick` | `--no-load` variant |
-| `npm run test:security` | `tests/security-test.js` |
-| `npm run test:load` | `tests/load-test.js` |
-| `npm run test:auth` | `tests/auth-test.js` (also `test:mysql`) |
-| `npm run test:programs` | `tests/programs-test.js` |
-| `npm run test:steps` | `tests/program-steps-test.js` |
-| `npm run test:messages` | `tests/messages-test.js` |
-| `npm run test:therapy-trigger` | `tests/therapy-trigger-test.js` |
-| `npm run test:push` | `tests/push-notification-service-test.js` |
-| `npm run test:prompt-sessions` | `tests/prompt-sessions-test.js` |
-| `npm run test:cleanup` | `tests/cleanup-test-data.js` |
+| `node scripts/seed-local-org-codes.js` | Upsert sample org codes for local Hopeful testing |
+| `node scripts/query-mysql-database.js` | Ad-hoc DB stats (path/require may need running from repo root) |
 
-Additional one-off runners under `tests/` (execute with `node tests/...`) include `user-profile-test.js`, `pairings-endpoint-test.js`, and `refresh-token-reset-test.js`.
+---
 
-## Example Usage
-
-### Complete Pairing Workflow
-
-```bash
-# 1. Create two users
-curl -X POST http://localhost:9000/api/users \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "john.doe@example.com",
-    "password": "Test1!@#"
-  }'
-
-curl -X POST http://localhost:9000/api/users \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "jane.doe@example.com",
-    "password": "Test2!@#"
-  }'
-
-# 2. Login as both users
-curl -X POST http://localhost:9000/api/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "john.doe@example.com",
-    "password": "Test1!@#"
-  }'
-
-# 3. John requests a pairing (generates partner code)
-curl -X POST http://localhost:9000/api/pairing/request \
-  -H "Authorization: Bearer {john_access_token}"
-
-# This returns a partner_code like "ABC123" that John can share
-
-# 4. Login as Jane and accept the pairing using John's partner code
-curl -X POST http://localhost:9000/api/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "jane.doe@example.com",
-    "password": "Test2!@#"
-  }'
-
-curl -X POST http://localhost:9000/api/pairing/accept \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {jane_access_token}" \
-  -d '{
-    "partner_code": "ABC123"
-  }'
-
-# 5. View accepted pairings
-curl -X GET http://localhost:9000/api/pairing/accepted \
-  -H "Authorization: Bearer {john_access_token}"
-```
-
-### Program and program-step workflow
-
-```bash
-# 0. Ensure profile has user_name (and optional partner_name) before POST /programs
-curl -X PUT http://localhost:9000/api/users/{user_id} \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {access_token}" \
-  -d '{"user_name":"Steve","partner_name":"Becca"}'
-
-# 1. Create a program (pairing_id optional but required for paired step threads)
-curl -X POST http://localhost:9000/api/programs \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {access_token}" \
-  -d '{
-    "user_input": "We want to improve our communication and spend more quality time together.",
-    "pairing_id": "pairing_id"
-  }'
-
-# Generation runs in the background — poll steps until 14 days exist
-curl -s http://localhost:9000/api/programs/{program_id}/programSteps \
-  -H "Authorization: Bearer {access_token}"
-
-# 2. Post a message on a step (use step id from the list above)
-curl -X POST http://localhost:9000/api/programSteps/{step_id}/messages \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {access_token}" \
-  -d "{\"content\":\"We tried today's prompt — it sparked a good talk.\"}"
-
-curl -s http://localhost:9000/api/programSteps/{step_id}/messages \
-  -H "Authorization: Bearer {access_token}"
-```
-
-### Background Therapy Response Example
-
-```bash
-# 1. User 1 (Steve) posts first message to a program step
-curl -X POST http://localhost:9000/api/programSteps/{step_id}/messages \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {steve_access_token}" \
-  -d '{
-    "content": "I feel like we have grown apart over the years. I miss the closeness we used to have."
-  }'
-
-# API responds immediately (non-blocking)
-# Response: {"message": "Message added successfully", "data": {...}}
-
-# 2. User 2 (Becca) posts first message to the same program step  
-curl -X POST http://localhost:9000/api/programSteps/{step_id}/messages \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {becca_access_token}" \
-  -d '{
-    "content": "I feel the same way. I want us to find our way back to each other."
-  }'
-
-# API responds immediately (non-blocking)
-# Response: {"message": "Message added successfully", "data": {...}}
-
-# 3. After background processing, re-fetch messages to see optional system replies
-# Check messages to see the system responses:
-curl -X GET http://localhost:9000/api/programSteps/{step_id}/messages \
-  -H "Authorization: Bearer {access_token}"
-
-# Response will now include system messages like:
-# {
-#   "messages": [
-#     {
-#       "id": "user_msg_1",
-#       "message_type": "user_message", 
-#       "sender": {"user_name": "Steve", ...},
-#       "content": "I feel like we have grown apart over the years..."
-#     },
-#     {
-#       "id": "user_msg_2", 
-#       "message_type": "user_message",
-#       "sender": {"user_name": "Becca", ...}, 
-#       "content": "I feel the same way. I want us to find our way back..."
-#     },
-#     {
-#       "id": "sys_msg_1",
-#       "message_type": "system",
-#       "sender_id": null,
-#       "content": "Thank you both for sharing your feelings with me. I can hear the longing in both of your voices for deeper connection.",
-#       "metadata": {"type": "therapy_response", "sequence": 1, "total_messages": 3}
-#     },
-#     {
-#       "id": "sys_msg_2", 
-#       "message_type": "system",
-#       "sender_id": null,
-#       "content": "Steve, when you shared that you miss the closeness you used to have, what emotions were you experiencing in that moment?",
-#       "metadata": {"type": "therapy_response", "sequence": 2, "total_messages": 3}
-#     },
-#     {
-#       "id": "sys_msg_3",
-#       "message_type": "system", 
-#       "sender_id": null,
-#       "content": "Becca, your response shows such openness to rebuilding that bond together. Can you help us understand what finding your way back means to you?",
-#       "metadata": {"type": "therapy_response", "sequence": 3, "total_messages": 3}
-#     }
-#   ]
-# }
-```
-
-## Project Structure
+## Project structure
 
 ```
 helpful-api/
-├── config/
-│   └── database.js
-├── models/
-│   ├── User.js
-│   ├── RefreshToken.js
-│   ├── Pairing.js
-│   ├── Program.js
-│   ├── ProgramStep.js
-│   ├── Message.js
-│   ├── OrgCode.js
-│   ├── AdminUser.js
-│   ├── DeviceToken.js
-│   ├── PromptSession.js
-│   ├── IosSubscription.js
-│   └── AndroidSubscription.js
+├── config/database.js
+├── middleware/
+│   ├── auth.js
+│   └── security.js
+├── models/          # User, Pairing, Program, ProgramStep, Message,
+│                    # OrgCode, AdminUser, DeviceToken, PromptSession,
+│                    # RefreshToken, Ios/AndroidSubscription, …
 ├── services/
 │   ├── AuthService.js
 │   ├── AdminAuthService.js
 │   ├── PairingService.js
 │   ├── SubscriptionService.js
 │   ├── PushNotificationService.js
-│   ├── BasePromptService.js
+│   ├── BasePromptService.js      # OpenAI + TEST_MOCK_LLM
 │   ├── HelpfulPromptService.js
 │   └── HopefulPromptService.js
 ├── routes/
 │   ├── users.js
 │   ├── auth.js
-│   ├── admin-auth.js
 │   ├── pairing.js
 │   ├── programs.js
 │   ├── programSteps.js
-│   ├── promptSessions.js
 │   ├── subscription.js
 │   ├── org-codes.js
-│   └── device-tokens.js
-├── middleware/
-│   ├── auth.js
-│   └── security.js
-├── tests/                   # many focused integration / load scripts
+│   ├── device-tokens.js
+│   ├── promptSessions.js
+│   ├── admin-auth.js
+│   └── admin.js                 # push-test
+├── scripts/
+│   ├── seed-local-org-codes.js
+│   └── query-mysql-database.js
+├── docs/
+│   └── prompt-sessions-design.md
+├── tests/
 ├── server.js
-└── package.json
-``` 
+├── package.json
+├── Dockerfile
+├── railway.json
+├── nixpacks.toml
+└── .env.example
+```
+
+---
+
+## Deployment notes
+
+- **Railway / containers:** set `PORT`, `MYSQL_URL` (or MySQL vars), `JWT_*`, `OPENAI_API_KEY`, optional Firebase JSON.
+- Schema auto-creates; no separate migrate step.
+- Health checks should hit `GET /health` (plain text).
+- Multi-instance note: login lockout is **in-process memory** only.
+
+---
+
+## Removed / obsolete (do not use)
+
+| Item | Status |
+|------|--------|
+| `/api/conversations`, `/api/programs/.../conversations` | **Not mounted** — use `/api/programSteps` |
+| Anthropic / Gemini env keys as API providers | **Not implemented** — OpenAI only |
+| `RAILWAY_SETUP.md` | **Not in repo** — use this README + Railway dashboard |
+| Password “exactly 8 characters” | **Wrong** — min 8, max 128 |
+| Documenting `strictLoginLimiter` as active | **Exported but not mounted** |
+
+---
+
+## License
+
+ISC

@@ -4,18 +4,27 @@
 **Date**: 2026-05-28  
 **Related**: Existing `pairings`, `programs`, `program_steps`, `PushNotificationService`
 
-## Naming Decision
+## Naming Decision (Locked)
 
-The internal resource is named **`prompt_sessions`** (table and API).
+**Final decision:** We are keeping the internal resource as **`prompt_sessions`** (and `prompt_session_preps` for the prep/check-in step).
 
 - **Table**: `prompt_sessions`
 - **Prep table**: `prompt_session_preps`
-- **Endpoints**: rooted at `/api/prompt-sessions` (kebab-case in URLs, `prompt_sessions` in the DB)
-- **Inside the table**: still store `generation_prompt` (this preserves the technical truth that a dynamic AI prompt is built from the two preps).
+- **Endpoints**: rooted at `/api/prompt-sessions`
+- **Key column**: `generation_prompt` (LONGTEXT) on the main table — this is the dynamically constructed prompt from both users' prep answers.
 
-The public product can still call the overall experience a **"Sit Session"** — the internal/DB name does not need to match the public label.
+**Rationale (owner's call):** The feature's special sauce is the AI prompt that gets built from the two preps to make each experience unique for The Bridge and The Session. Naming it after "prompt" makes that mechanic explicit and intentional.
 
-`prompt_sessions` is explicit about what the resource is (a session that produces a dynamically generated prompt from both partners' prep). The `pairing_id` foreign key is required on creation.
+**Tradeoffs explicitly accepted:**
+- "prompt" is heavily used elsewhere in the codebase (generation_prompt, prompt services, org prompts, etc.).
+- Future developers will need context that this is the "Sit Together" dyadic experience, not general prompt tooling.
+- We explored many lighter/brand-free alternatives (`pauses`, `moments`, `breaths`, `practices`, `rituals`, etc.) and the various "xxx_sessions" variants. After discussion, `prompt_sessions` was chosen anyway.
+
+**Status:** No further naming work is required. This name is locked for implementation unless explicitly reopened.
+
+Public-facing language can remain "Sit Session" / "Sit Together". Internal code and schema use `prompt_sessions`.
+
+The `pairing_id` is required when creating a new one via `POST /api/prompt-sessions`.
 
 ## Core Concept
 
