@@ -1,457 +1,119 @@
 # Test Suite Documentation
 
-This directory contains comprehensive test suites for the Helpful API, designed for both development and CI/CD pipeline integration.
+Integration and unit tests for the Helpful API. Most suites hit a **live** server + MySQL; LLM/push are mocked via env so CI does not spend tokens.
 
-## ⚠️ MySQL Migration Update
+For API surface and product behavior, see the root [README.md](../README.md).
 
-The test suite has been updatedto MySQL. 
+## Quick start
 
-### ✅ Primary Test Suite (MySQL Compatible)
-
-**`npm run test:auth`** - **Comprehensive Authentication & Integration Tests** ✅
-- **18/18 tests passing (100% success rate)**
-- Complete coverage: Auth, Authorization, Profiles, Pairings
-- Tests against live MySQL-backed server
-- Efficient test execution (reuses users, avoids rate limiting)
-
-**Test Coverage:**
-- ✅ Health Check
-- ✅ User Registration (with duplicate prevention)
-- ✅ Login (valid, invalid password, missing credentials, non-existent user)
-- ✅ Token Management (refresh, expiry, structure validation, invalidation)
-- ✅ Protected Endpoints (with/without authentication)
-- ✅ Password Validation
-- ✅ User Profile Management
-- ✅ Pairing System
-- ✅ Logout & Token Cleanup
-
-**Quick Start:**
 ```bash
-# Start MySQL and server
-brew services start mysql
-npm start
+# Terminal 1 — mock LLM + push
+TEST_MOCK_LLM=true TEST_MOCK_PUSH=true npm start
 
-# Run comprehensive auth tests (in new terminal)
-npm run test:auth
-
-# Clean up test data after testing
-npm run test:cleanup
+# Terminal 2
+npm test                 # full suite
+npm run test:quick       # skip load tests
+npm run test:cleanup     # remove @example.com test rows
 ```
+
+All test users **must** use `@example.com` so cleanup is safe.
 
 ---
 
-## Test Categories
-
-### 🔒 Security Tests (`security-test.js`)
-Tests prompt injection protection and input validation:
-- Input sanitization (code blocks, role switching, instruction tags)
-- Safety validation (suspicious patterns, jailbreak attempts)
-- AI response validation (compromise detection)
-- Program structure validation
-- Queue management functionality
-- Edge cases and error handling
-
-**Run with:**
-```bash
-npm run test:security
-# or
-node tests/security-test.js
-```
-
-### 🚀 Load Tests (`load-test.js`)
-Tests scalability and performance under load:
-- Concurrent request handling (8+ simultaneous requests)
-- Stress testing with increasing load levels
-- Error handling and recovery
-- Performance benchmarking
-- OpenAI queue management validation
-- Response time analysis
-
-**Run with:**
-```bash
-npm run test:load
-# or
-node tests/load-test.js
-```
-
-### 🤖 OpenAI Integration Tests (`openai-test.js`) — standalone only
-Tests OpenAI API key configuration and ChatGPT service functionality. These
-tests are intentionally **not** part of `npm test` so CI runs do not burn real
-tokens. Run them manually when you want to sanity-check the OpenAI integration:
-
-```bash
-node tests/openai-test.js
-```
-
-### 🏋️ OpenAI Load Benchmark (`openai-load-benchmark.js`) — standalone only
-Benchmarks real OpenAI latency and concurrency. Also intentionally not part of
-`npm test`; run manually when you explicitly want to spend tokens.
-
-```bash
-node tests/openai-load-benchmark.js
-```
-
-### 🪑 Prompt Sessions Tests (`prompt-sessions-test.js`)
-End-to-end coverage for the `/api/prompt-sessions` ("Sit Sessions") routes:
-- Creation validation + access control (membership / accepted pairing / unknown pairing)
-- One-active-session-per-pairing policy (409)
-- Get + list (both partners have access; outsiders 403)
-- Prep submit/merge + completion detection
-- Partner prep visibility policy (raw answers hidden until BOTH preps complete)
-- Phase/status PATCH (and invalid status rejection)
-- Generation endpoint stub behavior (409 before both preps, 501 after)
-- Verifies `generation_prompt` is never exposed to clients
-
-This suite is part of `npm test` and can also run standalone:
-
-```bash
-npm run test:prompt-sessions
-# or
-node tests/prompt-sessions-test.js
-```
-
-> Start the server with `TEST_MOCK_LLM=true npm start` first. Generation is stubbed, so no tokens are spent regardless.
-
-### 🎯 Complete Test Suite (`run-all-tests.js`)
-Orchestrates all test categories (minus the two token-spending suites above)
-with comprehensive reporting:
-- Runs security, auth, load, programs, and integration tests in sequence
-- Generates detailed reports
-- Provides CI/CD integration
-- Configurable test execution
-
-> **Tip:** Start the server with `TEST_MOCK_LLM=true npm start` before running
-> `npm test`. This makes the server return deterministic mock LLM responses so
-> the test suite never spends real tokens.
-
-**Run with:**
-```bash
-npm test
-# or
-node tests/run-all-tests.js
-```
-
-## CI/CD Integration
-
-### Package.json Scripts
-
-The following npm scripts are available for different testing scenarios:
-
-```json
-{
-  "scripts": {
-    "test": "node tests/run-all-tests.js",
-    "test:security": "node tests/security-test.js",
-    "test:load": "node tests/load-test.js",
-    "test:ci": "node tests/run-all-tests.js --skip-server-check",
-    "test:quick": "node tests/run-all-tests.js --no-load"
-  }
-}
-```
-
-### Command Line Options
-
-The main test runner supports several CLI options:
-
-```bash
-# Skip server health check (useful in CI where server starts separately)
-npm run test -- --skip-server-check
-
-# Skip specific test categories
-npm run test -- --no-security  # Skip security tests
-npm run test -- --no-load      # Skip load tests
-
-# Custom server URL and timeout
-npm run test -- --url=http://localhost:3000 --timeout=60000
-```
-
-### GitHub Actions Example
-
-```yaml
-name: Test Suite
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          
-      - name: Install dependencies
-        run: npm ci
-        
-      - name: Start server
-        run: npm start &
-        
-      - name: Wait for server
-        run: sleep 10
-        
-      - name: Run tests
-        run: npm run test:ci
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          TEST_REPORT_FILE: test-report.json
-          
-      - name: Upload test report
-        uses: actions/upload-artifact@v3
-        if: always()
-        with:
-          name: test-report
-          path: test-report.json
-```
-
-### Jenkins Pipeline Example
-
-```groovy
-pipeline {
-    agent any
-    
-    environment {
-        JWT_SECRET = credentials('jwt-secret')
-        OPENAI_API_KEY = credentials('openai-api-key')
-    }
-    
-    stages {
-        stage('Install') {
-            steps {
-                sh 'npm ci'
-            }
-        }
-        
-        stage('Start Server') {
-            steps {
-                sh 'npm start &'
-                sh 'sleep 10'
-            }
-        }
-        
-        stage('Test') {
-            parallel {
-                stage('Security Tests') {
-                    steps {
-                        sh 'npm run test:security'
-                    }
-                }
-                stage('API Tests') {
-                    steps {
-                        sh 'npm run test:api'
-                    }
-                }
-                stage('Load Tests') {
-                    steps {
-                        sh 'npm run test:load'
-                    }
-                }
-            }
-        }
-    }
-    
-    post {
-        always {
-            sh 'pkill -f "node server.js" || true'
-        }
-    }
-}
-```
-
-## Test Output Examples
-
-### Security Test Output
-```
-🔒 [2024-01-01T00:00:00.000Z] Testing Input Sanitization
-✅ [2024-01-01T00:00:00.001Z] Code block removal - PASSED
-✅ [2024-01-01T00:00:00.002Z] System role removal - PASSED
-✅ [2024-01-01T00:00:00.003Z] Instruction override removal - PASSED
-
-📊 Test Results Summary
-Total Tests: 45
-Passed: 45
-Failed: 0
-Success Rate: 100.0%
-🎉 All security tests passed! The API is secure against prompt injection attacks.
-```
-
-### Load Test Output
-```
-🚀 [2024-01-01T00:00:00.000Z] Starting ConcurrentTest with 8 concurrent requests
-✅ [2024-01-01T00:00:00.050Z] Program 1 created in 45ms - ID: abc123
-✅ [2024-01-01T00:00:00.052Z] Program 2 created in 47ms - ID: def456
-
-📊 ConcurrentTest Results:
-Total time: 55ms
-Successful: 8/8 (100.0%)
-Failed: 0/8
-Average response time: 44.38ms
-
-🎯 Scalability Assessment:
-✅ EXCELLENT: API demonstrates strong scalability characteristics
-✅ Recommended for production deployment
-```
-
-### Complete Suite Output
-```
-🎯 [2024-01-01T00:00:00.000Z] Starting Comprehensive Test Suite
-✅ [2024-01-01T00:00:00.001Z] Server is running at http://localhost:9000
-
-🎯 Comprehensive Test Suite Summary
-Total Duration: 45.23 seconds
-
-🔒 Security Tests: PASSED (45/45)
-🧪 API Tests: PASSED (38/38)
-🚀 Load Tests: PASSED
-
-🎉 ALL TESTS PASSED - API is ready for production!
-✅ Security: Prompt injection protection working
-✅ Functionality: All endpoints working correctly  
-✅ Performance: API handles concurrent load well
-```
-
-## Test Configuration
-
-### Environment Variables
-
-Tests can be configured using environment variables:
-
-```bash
-# Server configuration
-BASE_URL=http://localhost:9000
-REQUEST_TIMEOUT=30000
-
-# JWT configuration  
-JWT_SECRET=your-jwt-secret
-
-# OpenAI configuration (for integration tests)
-OPENAI_API_KEY=your-openai-key
-
-# Test reporting
-TEST_REPORT_FILE=test-results.json
-```
-
-### Test Data
-
-Tests use predictable test data that can be customized:
-
-```javascript
-// Example test user
-{
-  email: "test-user@example.com",
-  first_name: "Test",
-  last_name: "User", 
-  password: "testpass123"
-}
-
-// Example test program
-{
-  user_name: "Alice",
-  partner_name: "Bob",
-  children: 1,
-  user_input: "We need help with communication..."
-}
-```
-
-## Extending Tests
-
-### Adding New Test Cases
-
-To add new security test cases:
-
-```javascript
-// In security-test.js
-const newTestCases = [
-  {
-    input: 'Your malicious input',
-    expected: 'Expected sanitized output',
-    name: 'Description of test case'
-  }
-];
-```
-
-To add new API endpoints, add tests to the appropriate focused suite (e.g. `programs-test.js`, `user-profile-test.js`, `pairings-endpoint-test.js`). Pattern:
-
-```javascript
-async testNewEndpoint() {
-  try {
-    const response = await axios.get(`${this.baseURL}/api/new-endpoint`);
-    this.assert(response.status === 200, 'New endpoint returns 200');
-  } catch (error) {
-    this.assert(false, 'New endpoint test', error.message);
-  }
-}
-```
-
-### Custom Test Runners
-
-You can create custom test configurations:
-
-```javascript
-const TestSuiteRunner = require('./tests/run-all-tests');
-
-const customRunner = new TestSuiteRunner({
-  baseURL: 'https://staging.example.com',
-  timeout: 60000,
-  runLoad: false // Skip load tests in staging
-});
-
-customRunner.runAllTests();
-```
-
-## Best Practices
-
-1. **Run tests before every deployment**
-2. **Include security tests in every CI run**
-3. **Run load tests before production releases**
-4. **Monitor test execution times for performance regression**
-5. **Keep test data isolated and predictable**
-6. **Use proper cleanup in tests to avoid side effects**
-7. **Configure appropriate timeouts for different environments**
-
-## Troubleshooting
-
-### Common Issues
-
-**Server not running:**
-```bash
-# Make sure server is started
-npm start
-
-# Or run tests with server check disabled
-npm run test:ci
-```
-
-**Timeout errors:**
-```bash
-# Increase timeout for slower environments
-npm run test -- --timeout=60000
-```
-
-**Permission errors:**
-```bash
-# Check JWT secret configuration
-export JWT_SECRET=your-secret-key
-```
-
-**OpenAI-backed tests taking too long or costing money:**
-```bash
-# Start the server with mocked LLM responses so no real tokens are spent
-TEST_MOCK_LLM=true npm start
-
-# Then run the test suite as usual
-npm test
-```
-
-## Maintenance
-
-- **Update test data** when API schemas change
-- **Add new test cases** for new features
-- **Review test coverage** regularly
-- **Update CI configurations** when deployment changes
-- **Monitor test execution times** for performance issues
-- **Keep dependencies updated** for security
-
-For questions or issues with the test suite, please refer to the main project documentation or create an issue in the repository.
+## What `npm test` runs
+
+Orchestrator: `run-all-tests.js` (order roughly: security → load → auth → users/pairings → programs/messages → subscriptions/org → device tokens → prompt services → push → prompt sessions).
+
+| Suite file | Area |
+|------------|------|
+| `security-test.js` | Prompt-injection / safety helpers (service-level) |
+| `load-test.js` | Concurrent request smoke |
+| `auth-test.js` | Register, login, refresh rotation, logout, pairing request, profile |
+| `user-creation-test.js` | `POST /api/users` |
+| `pairings-endpoint-test.js` | `GET /api/pairings`, accept flow, accepted/stats |
+| `pairing-lifecycle-test.js` | Reject, soft-delete, restore pairings |
+| `user-soft-delete-test.js` | User soft-delete / restore + pairing cascade |
+| `user-profile-test.js` | `GET /api/profile`, user GET/PUT |
+| `refresh-token-reset-test.js` | Sliding refresh extension on authenticated calls |
+| `programs-test.js` | Programs CRUD, metrics, `therapy_response`, `next_program` |
+| `program-steps-test.js` | Program steps list/get |
+| `messages-test.js` | Step message list/create/update |
+| `therapy-trigger-test.js` | Couples therapy auto-trigger, welcome, chime-in |
+| `www-authenticate-test.js` | 401 `WWW-Authenticate` header |
+| `subscription-test.js` | iOS/Android receipts, premium, GET status/receipts |
+| `user-org-code-test.js` | Org code + custom org premium on `PUT /users` |
+| `device-tokens-test.js` | Device token CRUD |
+| `helpful-prompt-service-test.js` | Helpful track unit tests (mocked fetch) |
+| `hopeful-prompt-service-test.js` | Hopeful track + custom org prompts (mocked fetch) |
+| `program-org-context-test.js` | Helpful/Hopeful routing by org context |
+| `push-notification-service-test.js` | Push service unit tests (no real FCM) |
+| `admin-push-test-test.js` | `POST /api/admin/push-test` |
+| `prompt-sessions-test.js` | Sit Sessions end-to-end |
+
+Skip categories with flags, e.g. `--no-load`, `--no-pairing-lifecycle`, `--no-user-soft-delete`, `--skip-server-check`.
+
+### npm scripts
+
+| Command | Runs |
+|---------|------|
+| `npm test` | Full orchestrator |
+| `npm run test:ci` | `--skip-server-check` |
+| `npm run test:quick` | `--no-load` |
+| `npm run test:auth` | `auth-test.js` |
+| `npm run test:security` | `security-test.js` |
+| `npm run test:load` | `load-test.js` |
+| `npm run test:programs` | `programs-test.js` |
+| `npm run test:steps` | `program-steps-test.js` |
+| `npm run test:messages` | `messages-test.js` |
+| `npm run test:therapy-trigger` | `therapy-trigger-test.js` |
+| `npm run test:pairing-lifecycle` | `pairing-lifecycle-test.js` |
+| `npm run test:user-soft-delete` | `user-soft-delete-test.js` |
+| `npm run test:push` | `push-notification-service-test.js` |
+| `npm run test:admin-push` | `admin-push-test-test.js` |
+| `npm run test:prompt-sessions` | `prompt-sessions-test.js` |
+| `npm run test:cleanup` | `cleanup-test-data.js` |
+
+---
+
+## Standalone (not in `npm test`)
+
+| File | Why separate |
+|------|----------------|
+| `openai-test.js` | Real OpenAI — burns tokens |
+| `openai-load-benchmark.js` | Real OpenAI load — burns tokens |
+| `generation-prompt-helpful-test.js` | DB assert on `generation_prompt` (Helpful path) |
+| `generation-prompt-hopeful-test.js` | DB assert on `generation_prompt` (Hopeful/org path) |
+| `llm-used-test.js` | DB assert on `llm_used` column |
+| `test-refresh-token-hashing.js` | Local hashing unit check |
+| `mysql-load-test.js` | Heavier MySQL/auth load |
+
+Run with `node tests/<file>.js` when needed.
+
+---
+
+## Coverage notes
+
+**Strong (default suite):** auth, users (create/profile/update/soft-delete), pairing lifecycle (request/accept/reject/delete/restore), org premium, programs/steps/messages/therapy, subscriptions, device tokens, Sit Sessions, Helpful/Hopeful prompts, push unit + admin push-test.
+
+**Thin / untested product edges:**
+- Admin auth profile / refresh / logout as a dedicated suite (login/register used as setup elsewhere)
+- Org-codes admin GET-by-id and PUT as first-class cases
+- `POST /api/token-info`, `GET /api/messages-stats`
+- `GET /api/users/deleted/all`, `GET /api/pairing/deleted/all`
+
+Do not add real OpenAI suites to `npm test` without an explicit decision to spend tokens.
+
+---
+
+## Environment
+
+| Variable | Role |
+|----------|------|
+| `TEST_MOCK_LLM=true` | Deterministic LLM mocks; also bypasses some rate limits |
+| `TEST_MOCK_PUSH=true` | Mock FCM for admin push-test / push paths |
+| `TEST_MOCK_OPENAI=true` | Skip waiting for async step generation in some suites |
+| `TEST_BASE_URL` | Override default `http://127.0.0.1:9000` |
+| `TEST_REPORT_FILE` | If set, `run-all-tests.js` writes a JSON report |
+| `SKIP_RATE_LIMITS=true` / `NODE_ENV=test` | Rate-limit bypass (where coded) |
+
+Shared helpers: `test-helpers.js` (`generateTestEmail`, `pollForProgramSteps`, etc.).

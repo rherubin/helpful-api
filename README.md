@@ -341,7 +341,9 @@ Auth; **must be self**. Rate-limited. Optional body: `email`, `user_name`, `part
 
 #### DELETE `/api/users/:id` · PATCH `/api/users/:id/restore` · GET `/api/users/deleted/all`
 
-Soft-delete / restore / list deleted. Delete may cascade soft-delete pairings when model is wired. List-deleted is authenticated but **not** admin-gated.
+Soft-delete / restore / list deleted. Authenticated (not self-gated on delete/restore today). List-deleted is authenticated but **not** admin-gated.
+
+**Cascade:** soft-deleting a user soft-deletes that user’s pairings. Restoring the user does **not** automatically restore those pairings — restore pairings separately via `PATCH /api/pairing/:id/restore` if needed.
 
 ### Pairing
 
@@ -349,15 +351,15 @@ Soft-delete / restore / list deleted. Delete may cascade soft-delete pairings wh
 |--------|------|--------|
 | POST | `/api/pairing/request` | **201** partner code; returns existing pending code if one already open |
 | POST | `/api/pairing/accept` | Body `{ "partner_code" }` → **200 empty body**; push to requester |
-| POST | `/api/pairing/reject/:pairingId` | Reject pending |
-| GET | `/api/pairing/` | All pairings for user |
+| POST | `/api/pairing/reject/:pairingId` | Reject **pending** only (participant); **400** if already processed/accepted; **403** outsider |
+| GET | `/api/pairing/` | All pairings for user (excludes soft-deleted) |
 | GET | `/api/pairings` | **Same as** `GET /api/pairing/` (alias in `server.js`) |
 | GET | `/api/pairing/pending` | Pending only |
 | GET | `/api/pairing/accepted` | Accepted only |
 | GET | `/api/pairing/stats` | `max_pairings`, `current_pairings`, `available_slots`, `pending_requests` |
-| GET | `/api/pairing/:pairingId` | Detail |
-| DELETE | `/api/pairing/:pairingId` | Soft-delete (participant only) |
-| PATCH | `/api/pairing/:pairingId/restore` | Restore |
+| GET | `/api/pairing/:pairingId` | Detail (active only; soft-deleted → not found) |
+| DELETE | `/api/pairing/:pairingId` | Soft-delete (**participant only**); **403** outsider |
+| PATCH | `/api/pairing/:pairingId/restore` | Restore soft-deleted pairing (any authenticated user; not membership-gated today) |
 | GET | `/api/pairing/deleted/all` | Soft-deleted list (auth, not admin-gated) |
 
 **Partner codes:** 6 chars, `A–Z` + `0–9`, unique among active pending codes.
@@ -682,26 +684,67 @@ curl -s -X POST http://localhost:9000/api/login \
 
 ## Testing
 
-Requires a running API (unless `test:ci` / `--skip-server-check`) and MySQL. Prefer `TEST_MOCK_LLM=true` (and optionally `TEST_MOCK_PUSH=true`) to avoid real OpenAI/FCM spend.
+Requires a running API (unless `test:ci` / `--skip-server-check`) and MySQL. Prefer mock modes so CI does not spend OpenAI/FCM:
+
+```bash
+TEST_MOCK_LLM=true TEST_MOCK_PUSH=true npm start
+# other terminal:
+npm test
+```
+
+Test emails use **`@example.com`** so `npm run test:cleanup` can remove them safely. Details: `tests/README.md`.
+
+### Commands
 
 | Command | Purpose |
 |---------|---------|
 | `npm test` | Full suite (`tests/run-all-tests.js`) |
 | `npm run test:ci` | Suite with `--skip-server-check` |
 | `npm run test:quick` | Suite with `--no-load` |
-| `npm run test:auth` / `test:mysql` | Auth tests (same file) |
-| `npm run test:security` | Security tests |
-| `npm run test:load` | Load test |
-| `npm run test:programs` | Programs |
+| `npm run test:auth` / `test:mysql` | Auth integration (`auth-test.js`) |
+| `npm run test:security` | Prompt-injection / safety (service-level) |
+| `npm run test:load` | Concurrent/load smoke |
+| `npm run test:programs` | Programs CRUD + therapy_response + next_program |
 | `npm run test:steps` | Program steps |
-| `npm run test:messages` | Messages |
-| `npm run test:therapy-trigger` | Therapy trigger |
-| `npm run test:push` | Push service unit-style |
-| `npm run test:admin-push` | Admin push-test flow |
-| `npm run test:prompt-sessions` | Sit Sessions |
-| `npm run test:cleanup` | Cleanup test data |
+| `npm run test:messages` | Step messages CRUD |
+| `npm run test:therapy-trigger` | Auto therapy response when both partners post |
+| `npm run test:pairing-lifecycle` | Pairing reject / soft-delete / restore |
+| `npm run test:user-soft-delete` | User soft-delete / restore + pairing cascade |
+| `npm run test:push` | `PushNotificationService` unit tests (mocked FCM) |
+| `npm run test:admin-push` | `POST /api/admin/push-test` integration |
+| `npm run test:prompt-sessions` | Sit Sessions end-to-end |
+| `npm run test:cleanup` | Delete `@example.com` test rows |
 
-Additional scripts under `tests/` (run with `node tests/...`): profile, pairings, refresh-token, org-context, generation prompts, load benchmarks, etc.
+Useful flags on the main runner: `--no-load`, `--no-security`, `--no-pairing-lifecycle`, `--no-user-soft-delete`, `--url=…`, `--timeout=…`, `--skip-server-check`.
+
+### Coverage map (`npm test`)
+
+What the default suite exercises vs thinner / standalone areas:
+
+| Area | Covered in `npm test` | Primary suites |
+|------|----------------------|----------------|
+| Health | Yes | `auth-test` |
+| Auth (login, refresh rotation, logout, weak password, WWW-Authenticate) | Yes | `auth-test`, `refresh-token-reset-test`, `www-authenticate-test` |
+| Users create / profile / update / authz | Yes | `user-creation-test`, `user-profile-test` |
+| User soft-delete / restore + pairing cascade | Yes | `user-soft-delete-test` |
+| Pairing request / accept / list / stats | Yes | `auth-test`, `pairings-endpoint-test` |
+| Pairing reject / soft-delete / restore | Yes | `pairing-lifecycle-test` |
+| Org code + custom org premium linking | Yes | `user-org-code-test`, `program-org-context-test` |
+| Programs CRUD, metrics, next, therapy_response | Yes | `programs-test` |
+| Steps + messages | Yes | `program-steps-test`, `messages-test` |
+| Therapy auto-trigger / chime-in / welcome | Yes | `therapy-trigger-test` |
+| Helpful vs Hopeful routing + prompt unit tests | Yes | `program-org-context-test`, `helpful-prompt-service-test`, `hopeful-prompt-service-test` |
+| Subscriptions + pairing premium | Yes | `subscription-test` |
+| Device tokens | Yes | `device-tokens-test` |
+| Sit Sessions | Yes | `prompt-sessions-test` |
+| Push unit + admin push-test | Yes | `push-notification-service-test`, `admin-push-test-test` |
+| Security (prompt injection helpers) | Yes | `security-test` |
+| Load | Yes (skip with `test:quick`) | `load-test` |
+| Admin auth full lifecycle (profile/refresh/logout) | Thin (login/register as setup) | — |
+| Org-codes GET `/:id` / PUT as first-class | Thin (create/delete fixtures + list/audit) | `user-org-code-test` |
+| `POST /api/token-info`, `GET /api/messages-stats` | Not covered | — |
+| Real OpenAI / load benchmarks | **Excluded** from `npm test` | `openai-test.js`, `openai-load-benchmark.js` (manual) |
+| `generation_prompt` / `llm_used` column E2E | Standalone | `generation-prompt-*-test.js`, `llm-used-test.js` |
 
 ### Utility scripts
 
