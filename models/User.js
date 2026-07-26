@@ -542,6 +542,7 @@ class User {
       }
       return { message: 'User restored successfully' };
     } catch (err) {
+      if (err.message === 'User not found or not deleted') throw err;
       throw new Error('Failed to restore user');
     }
   }

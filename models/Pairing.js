@@ -292,13 +292,14 @@ class Pairing {
   // Get pairing by ID (excluding soft deleted)
   async getPairingById(pairingId) {
     try {
+      // LEFT JOIN user2 so pending partner-code invites (user2_id NULL) still resolve.
       const query = `
         SELECT p.*, 
                u1.user_name as user1_user_name, u1.email as user1_email,
                u2.user_name as user2_user_name, u2.email as user2_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
-        JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
+        LEFT JOIN users u2 ON p.user2_id = u2.id AND u2.deleted_at IS NULL
         WHERE p.id = ? AND p.deleted_at IS NULL
       `;
 
@@ -309,6 +310,7 @@ class Pairing {
       row.premium = !!row.premium;
       return row;
     } catch (err) {
+      if (err.message === 'Pairing not found') throw err;
       throw new Error('Failed to fetch pairing');
     }
   }
@@ -384,6 +386,7 @@ class Pairing {
       }
       return { message: 'Pairing deleted successfully', deleted_at: new Date().toISOString() };
     } catch (err) {
+      if (err.message === 'Pairing not found or already deleted') throw err;
       throw new Error('Failed to delete pairing');
     }
   }
@@ -423,6 +426,7 @@ class Pairing {
       }
       return { message: 'Pairing restored successfully' };
     } catch (err) {
+      if (err.message === 'Pairing not found or not deleted') throw err;
       throw new Error('Failed to restore pairing');
     }
   }

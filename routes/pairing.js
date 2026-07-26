@@ -162,8 +162,9 @@ function createPairingRoutes(pairingService, authService, pushNotificationServic
       const { pairingId } = req.params;
       const userId = req.user.id;
 
-      // First check if user is part of this pairing
-      const pairing = await pairingService.getPairingDetails(pairingId);
+      // getPairingDetails returns { message, pairing } — authz uses the inner record.
+      const details = await pairingService.getPairingDetails(pairingId);
+      const pairing = details.pairing || details;
       if (pairing.user1_id !== userId && pairing.user2_id !== userId) {
         return res.status(403).json({ error: 'You are not authorized to delete this pairing' });
       }

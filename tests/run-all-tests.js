@@ -3,6 +3,8 @@ const LoadTestRunner = require('./load-test');
 const AuthTestRunner = require('./auth-test');
 const UserCreationTestRunner = require('./user-creation-test');
 const PairingsEndpointTestRunner = require('./pairings-endpoint-test');
+const PairingLifecycleTestRunner = require('./pairing-lifecycle-test');
+const UserSoftDeleteTestRunner = require('./user-soft-delete-test');
 const UserProfileTestRunner = require('./user-profile-test');
 const RefreshTokenResetTestRunner = require('./refresh-token-reset-test');
 const ProgramsTestRunner = require('./programs-test');
@@ -34,6 +36,8 @@ class TestSuiteRunner {
       runAuth: options.runAuth !== false, // Default true
       runUserCreation: options.runUserCreation !== false, // Default true
       runPairingsEndpoint: options.runPairingsEndpoint !== false, // Default true
+      runPairingLifecycle: options.runPairingLifecycle !== false, // Default true
+      runUserSoftDelete: options.runUserSoftDelete !== false, // Default true
       runUserProfile: options.runUserProfile !== false, // Default true
       runRefreshTokenReset: options.runRefreshTokenReset !== false, // Default true
       runPrograms: options.runPrograms !== false, // Default true
@@ -61,6 +65,8 @@ class TestSuiteRunner {
       auth: null,
       userCreation: null,
       pairingsEndpoint: null,
+      pairingLifecycle: null,
+      userSoftDelete: null,
       userProfile: null,
       refreshTokenReset: null,
       programs: null,
@@ -280,6 +286,82 @@ class TestSuiteRunner {
       this.log(`Pairings endpoint tests failed: ${error.message}`, 'error');
       this.results.pairingsEndpoint = { success: false, error: error.message };
       return this.results.pairingsEndpoint;
+    }
+  }
+
+  async runPairingLifecycleTests() {
+    if (!this.options.runPairingLifecycle) {
+      this.log('Skipping pairing lifecycle tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🔗 Running Pairing Lifecycle Test Suite', 'section');
+
+    try {
+      const runner = new PairingLifecycleTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.pairingLifecycle = {
+        success,
+        skipped: false,
+        details: 'POST reject, DELETE soft-delete, PATCH restore for pairings',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Pairing lifecycle tests completed successfully', 'success');
+      } else {
+        this.log('Pairing lifecycle tests failed', 'error');
+      }
+
+      return this.results.pairingLifecycle;
+    } catch (error) {
+      this.log(`Pairing lifecycle tests failed: ${error.message}`, 'error');
+      this.results.pairingLifecycle = { success: false, error: error.message };
+      return this.results.pairingLifecycle;
+    }
+  }
+
+  async runUserSoftDeleteTests() {
+    if (!this.options.runUserSoftDelete) {
+      this.log('Skipping user soft-delete tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🗑️ Running User Soft-Delete Test Suite', 'section');
+
+    try {
+      const runner = new UserSoftDeleteTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.userSoftDelete = {
+        success,
+        skipped: false,
+        details: 'DELETE /api/users/:id soft-delete + PATCH restore (with pairing cascade)',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('User soft-delete tests completed successfully', 'success');
+      } else {
+        this.log('User soft-delete tests failed', 'error');
+      }
+
+      return this.results.userSoftDelete;
+    } catch (error) {
+      this.log(`User soft-delete tests failed: ${error.message}`, 'error');
+      this.results.userSoftDelete = { success: false, error: error.message };
+      return this.results.userSoftDelete;
     }
   }
 
@@ -951,6 +1033,24 @@ class TestSuiteRunner {
       console.log('');
     }
 
+    // Run pairing lifecycle tests (reject / soft-delete / restore)
+    if (this.options.runPairingLifecycle) {
+      await this.runPairingLifecycleTests();
+      if (this.results.pairingLifecycle && !this.results.pairingLifecycle.success && !this.results.pairingLifecycle.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run user soft-delete / restore tests
+    if (this.options.runUserSoftDelete) {
+      await this.runUserSoftDeleteTests();
+      if (this.results.userSoftDelete && !this.results.userSoftDelete.success && !this.results.userSoftDelete.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
     // Run user profile tests
     if (this.options.runUserProfile) {
       await this.runUserProfileTests();
@@ -1161,6 +1261,28 @@ class TestSuiteRunner {
         this.log(`👫 Pairings Endpoint Tests: PASSED (${this.results.pairingsEndpoint.passed}/${this.results.pairingsEndpoint.total})`, 'success');
       } else {
         this.log(`👫 Pairings Endpoint Tests: FAILED (${this.results.pairingsEndpoint.failed}/${this.results.pairingsEndpoint.total} failures)`, 'error');
+      }
+    }
+
+    // Pairing lifecycle test results
+    if (this.results.pairingLifecycle) {
+      if (this.results.pairingLifecycle.skipped) {
+        this.log('🔗 Pairing Lifecycle Tests: SKIPPED', 'warn');
+      } else if (this.results.pairingLifecycle.success) {
+        this.log(`🔗 Pairing Lifecycle Tests: PASSED (${this.results.pairingLifecycle.passed}/${this.results.pairingLifecycle.total})`, 'success');
+      } else {
+        this.log(`🔗 Pairing Lifecycle Tests: FAILED (${this.results.pairingLifecycle.failed}/${this.results.pairingLifecycle.total} failures)`, 'error');
+      }
+    }
+
+    // User soft-delete test results
+    if (this.results.userSoftDelete) {
+      if (this.results.userSoftDelete.skipped) {
+        this.log('🗑️ User Soft-Delete Tests: SKIPPED', 'warn');
+      } else if (this.results.userSoftDelete.success) {
+        this.log(`🗑️ User Soft-Delete Tests: PASSED (${this.results.userSoftDelete.passed}/${this.results.userSoftDelete.total})`, 'success');
+      } else {
+        this.log(`🗑️ User Soft-Delete Tests: FAILED (${this.results.userSoftDelete.failed}/${this.results.userSoftDelete.total} failures)`, 'error');
       }
     }
 
@@ -1393,7 +1515,9 @@ class TestSuiteRunner {
       },
       summary: {
         totalTests: (this.results.security?.total || 0) +
-                   (this.results.userCreation?.total || 0) + (this.results.pairingsEndpoint?.total || 0) + (this.results.userProfile?.total || 0) +
+                   (this.results.userCreation?.total || 0) + (this.results.pairingsEndpoint?.total || 0) +
+                   (this.results.pairingLifecycle?.total || 0) + (this.results.userSoftDelete?.total || 0) +
+                   (this.results.userProfile?.total || 0) +
                    (this.results.refreshTokenReset?.total || 0) + (this.results.programs?.total || 0) + (this.results.programSteps?.total || 0) +
                    (this.results.messages?.total || 0) + (this.results.therapyTrigger?.total || 0) +
                    (this.results.wwwAuthenticate?.total || 0) + (this.results.subscription?.total || 0) +
@@ -1402,7 +1526,9 @@ class TestSuiteRunner {
                    (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0) +
                    (this.results.pushNotificationService?.total || 0) + (this.results.promptSessions?.total || 0),
         totalPassed: (this.results.security?.passed || 0) +
-                    (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) + (this.results.userProfile?.passed || 0) +
+                    (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) +
+                    (this.results.pairingLifecycle?.passed || 0) + (this.results.userSoftDelete?.passed || 0) +
+                    (this.results.userProfile?.passed || 0) +
                     (this.results.refreshTokenReset?.passed || 0) + (this.results.programs?.passed || 0) + (this.results.programSteps?.passed || 0) +
                     (this.results.messages?.passed || 0) + (this.results.therapyTrigger?.passed || 0) +
                     (this.results.wwwAuthenticate?.passed || 0) + (this.results.subscription?.passed || 0) +
@@ -1411,7 +1537,9 @@ class TestSuiteRunner {
                     (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0) +
                     (this.results.pushNotificationService?.passed || 0) + (this.results.promptSessions?.passed || 0),
         totalFailed: (this.results.security?.failed || 0) +
-                    (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) + (this.results.userProfile?.failed || 0) +
+                    (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) +
+                    (this.results.pairingLifecycle?.failed || 0) + (this.results.userSoftDelete?.failed || 0) +
+                    (this.results.userProfile?.failed || 0) +
                     (this.results.refreshTokenReset?.failed || 0) + (this.results.programs?.failed || 0) + (this.results.programSteps?.failed || 0) +
                     (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0) +
                     (this.results.wwwAuthenticate?.failed || 0) + (this.results.subscription?.failed || 0) +
@@ -1435,6 +1563,8 @@ function parseArgs() {
     if (arg === '--no-auth') options.runAuth = false;
     if (arg === '--no-user-creation') options.runUserCreation = false;
     if (arg === '--no-pairings-endpoint') options.runPairingsEndpoint = false;
+    if (arg === '--no-pairing-lifecycle') options.runPairingLifecycle = false;
+    if (arg === '--no-user-soft-delete') options.runUserSoftDelete = false;
     if (arg === '--no-user-profile') options.runUserProfile = false;
     if (arg === '--no-refresh-token-reset') options.runRefreshTokenReset = false;
     if (arg === '--no-programs') options.runPrograms = false;
