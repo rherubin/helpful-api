@@ -296,6 +296,36 @@ class PairingLifecycleTestRunner {
       );
     }
 
+    // Soft-delete again so outsider-restore can be checked against a deleted row
+    await axios.delete(
+      `${this.baseURL}/api/pairing/${pairingId}`,
+      this.authHeader(user1.token)
+    );
+
+    // Outsider cannot restore a soft-deleted pairing (IDOR guard)
+    try {
+      await axios.patch(
+        `${this.baseURL}/api/pairing/${pairingId}/restore`,
+        {},
+        this.authHeader(outsider.token)
+      );
+      this.assert(false, 'Outsider restore should fail', 'Request succeeded');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 403,
+        'Outsider restore → 403',
+        `status=${error.response?.status}`
+      );
+    }
+
+    // Member can restore after outsider was denied
+    const memberRestore = await axios.patch(
+      `${this.baseURL}/api/pairing/${pairingId}/restore`,
+      {},
+      this.authHeader(user1.token)
+    );
+    this.assert(memberRestore.status === 200, 'Member restore after outsider denial → 200', `status=${memberRestore.status}`);
+
     // Auth required for delete + restore
     try {
       await axios.delete(`${this.baseURL}/api/pairing/${pairingId}`, { timeout: this.timeout });

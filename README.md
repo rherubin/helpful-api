@@ -343,7 +343,7 @@ Auth; **must be self**. Rate-limited. Optional body: `email`, `user_name`, `part
 
 #### DELETE `/api/users/:id` · PATCH `/api/users/:id/restore` · GET `/api/users/deleted/all`
 
-Soft-delete / restore / list deleted. Authenticated (not self-gated on delete/restore today). `GET .../deleted/all` requires an **admin** JWT (`type=admin`); regular user tokens get **403**.
+Soft-delete / restore / list deleted. Delete and restore are **self-gated** (`req.user.id` must match `:id`). `GET .../deleted/all` requires an **admin** JWT (`type=admin`); regular user tokens get **403**.
 
 **Cascade:** soft-deleting a user soft-deletes that user’s pairings and revokes refresh tokens. Restoring the user does **not** automatically restore those pairings — restore pairings separately via `PATCH /api/pairing/:id/restore` if needed.
 
@@ -363,7 +363,7 @@ Soft-delete / restore / list deleted. Authenticated (not self-gated on delete/re
 | GET | `/api/pairing/stats` | `max_pairings`, `current_pairings`, `available_slots`, `pending_requests` |
 | GET | `/api/pairing/:pairingId` | Detail (active only; soft-deleted → not found) |
 | DELETE | `/api/pairing/:pairingId` | Soft-delete (**participant only**); **403** outsider |
-| PATCH | `/api/pairing/:pairingId/restore` | Restore soft-deleted pairing (any authenticated user; not membership-gated today). **400** if restoring would push a member over `max_pairings`, or a member account is deleted |
+| PATCH | `/api/pairing/:pairingId/restore` | Restore soft-deleted pairing (**member only**). **400** if restoring would push a member over `max_pairings`, or a member account is deleted |
 | GET | `/api/pairing/deleted/all` | Soft-deleted list (**admin** JWT only; regular users **403**) |
 
 **Partner codes:** 6 chars, `A–Z` + `0–9`, unique among active pending codes. Accepting a pairing soft-deletes both members’ leftover open partner-code invites and enforces `max_pairings` for the requester as well as the acceptor.

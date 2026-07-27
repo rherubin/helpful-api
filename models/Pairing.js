@@ -450,7 +450,7 @@ class Pairing {
     }
   }
 
-  // Get pairing by ID including soft deleted (for admin purposes)
+  // Get pairing by ID including soft deleted (for restore authz / admin)
   async getPairingByIdIncludingDeleted(pairingId) {
     try {
       // LEFT JOIN user2 so pending invites (user2_id NULL) still resolve.

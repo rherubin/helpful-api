@@ -82,6 +82,37 @@ class UserSoftDeleteTestRunner {
     );
     this.assert(!!delRes.data?.deleted_at, 'Soft-delete response includes deleted_at');
 
+    // Outsider cannot soft-delete another user (IDOR guard)
+    try {
+      await axios.delete(
+        `${this.baseURL}/api/users/${user.id}`,
+        this.authHeader(other.token)
+      );
+      this.assert(false, 'Outsider soft-delete should fail', 'Request succeeded');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 403,
+        'Outsider soft-delete → 403',
+        `status=${error.response?.status}`
+      );
+    }
+
+    // Outsider cannot restore another user (IDOR guard) — even while deleted
+    try {
+      await axios.patch(
+        `${this.baseURL}/api/users/${user.id}/restore`,
+        {},
+        this.authHeader(other.token)
+      );
+      this.assert(false, 'Outsider restore should fail', 'Request succeeded');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 403,
+        'Outsider restore → 403',
+        `status=${error.response?.status}`
+      );
+    }
+
     // GET user → 404 while deleted
     try {
       await axios.get(`${this.baseURL}/api/users/${user.id}`, this.authHeader(other.token));

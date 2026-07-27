@@ -182,14 +182,25 @@ function createPairingRoutes(pairingService, authService, pushNotificationServic
     }
   });
 
-  // Restore a soft deleted pairing
+  // Restore a soft deleted pairing — only a former member may restore
   router.patch('/:pairingId/restore', authenticateToken, async (req, res) => {
     try {
       const { pairingId } = req.params;
-      
-      // Get the pairing model from the service
+      const userId = req.user.id;
+
+      // Active getPairingDetails excludes soft-deleted rows; load including deleted for authz.
       const pairingModel = pairingService.pairingModel;
-      const pairing = await pairingModel.getPairingByIdIncludingDeleted(pairingId);
+      let pairing;
+      try {
+        pairing = await pairingModel.getPairingByIdIncludingDeleted(pairingId);
+      } catch (lookupError) {
+        return res.status(404).json({ error: 'Pairing not found' });
+      }
+
+      if (pairing.user1_id !== userId && pairing.user2_id !== userId) {
+        return res.status(403).json({ error: 'You are not authorized to restore this pairing' });
+      }
+
       if (!pairing.deleted_at) {
         return res.status(404).json({ error: 'Pairing not found or not deleted' });
       }

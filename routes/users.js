@@ -152,14 +152,19 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel, 
   });
 
 
-  // Soft delete user
+  // Soft delete user (self only — mirrors PUT /:id ownership gate)
   router.delete('/:id', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.id;
+
+      if (id !== userId) {
+        return res.status(403).json({ error: 'Not authorized to delete this user' });
+      }
 
       // Revoke refresh sessions via authService's token model (may be null in tests).
       const refreshTokenModel = authService?.refreshTokenModel || null;
-      
+
       const result = await userModel.softDeleteUser(id, pairingModel, refreshTokenModel);
       res.status(200).json(result);
     } catch (error) {
@@ -171,10 +176,16 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel, 
     }
   });
 
-  // Restore soft deleted user
+  // Restore soft deleted user (self only — JWT still valid after soft-delete)
   router.patch('/:id/restore', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.id;
+
+      if (id !== userId) {
+        return res.status(403).json({ error: 'Not authorized to restore this user' });
+      }
+
       const result = await userModel.restoreUser(id);
       res.status(200).json(result);
     } catch (error) {
