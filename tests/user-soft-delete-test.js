@@ -257,7 +257,7 @@ class UserSoftDeleteTestRunner {
       this.assert(error.response?.status === 401, 'Restore without token → 401', `status=${error.response?.status}`);
     }
 
-    // Unknown user id
+    // Unknown user id — ownership gate rejects before existence check (no IDOR leak)
     try {
       await axios.delete(
         `${this.baseURL}/api/users/nonexistent-user-id-xyz`,
@@ -266,8 +266,8 @@ class UserSoftDeleteTestRunner {
       this.assert(false, 'Soft-delete unknown user should fail', 'Request succeeded');
     } catch (error) {
       this.assert(
-        error.response?.status === 404,
-        'Soft-delete unknown user → 404',
+        error.response?.status === 403,
+        'Soft-delete unknown (non-self) user → 403',
         `status=${error.response?.status}`
       );
     }
