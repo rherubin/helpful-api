@@ -601,7 +601,7 @@ Note: raw `CREATE TABLE` may still show an older default of `7` for `steps_requi
 
 ### Device tokens
 
-Includes `last_used_at` (activity + cleanup). UNIQUE `(user_id, device_token)`. Cap 25 per user.
+Includes `last_used_at` (activity + cleanup). UNIQUE `(user_id, device_token)`. Cap 25 per user. Registering a token deletes any other user's row for the same FCM string so a device is owned by at most one account.
 
 ---
 

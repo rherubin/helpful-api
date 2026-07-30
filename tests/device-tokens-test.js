@@ -288,6 +288,64 @@ class DeviceTokenTestRunner {
     } catch (err) {
       this.assert(err.response?.status === 404, "User B cannot delete User A's token (404)", `Status: ${err.response?.status}`);
     }
+
+    // Same FCM token registered by User B must reclaim ownership from User A
+    // (otherwise both accounts receive each other's push payloads).
+    await this.runTokenReclaimTests(userA, userB);
+  }
+
+  // ─────────────────────────────────────────────
+  // Cross-user token reclaim (account switch)
+  // ─────────────────────────────────────────────
+  async runTokenReclaimTests(userA, userB) {
+    this.log('Cross-user token reclaim', 'section');
+
+    const sharedToken = `reclaim-token-${Date.now()}-abcdefghij`;
+
+    let recordA;
+    try {
+      const res = await this.registerToken(userA, sharedToken, 'ios');
+      recordA = res.data.device_token?.id;
+      this.assert(!!recordA, 'User A registers shared FCM token');
+    } catch (err) {
+      this.assert(false, 'User A registers shared FCM token', `Error: ${err.response?.data?.error || err.message}`);
+      return;
+    }
+
+    let recordB;
+    try {
+      const res = await this.registerToken(userB, sharedToken, 'ios');
+      recordB = res.data.device_token?.id;
+      this.assert(!!recordB, 'User B registers same FCM token (account switch)');
+      this.assert([200, 201].includes(res.status), 'User B reclaim registration succeeds', `Status: ${res.status}`);
+    } catch (err) {
+      this.assert(false, 'User B reclaim registration', `Error: ${err.response?.data?.error || err.message}`);
+      return;
+    }
+
+    // User A must no longer own the shared token
+    try {
+      const res = await axios.get(`${this.baseURL}/api/device-tokens`, {
+        headers: { Authorization: `Bearer ${userA.token}` },
+        timeout: this.timeout
+      });
+      const stillOwnedByA = res.data.device_tokens.some(t => t.id === recordA);
+      this.assert(!stillOwnedByA, "After reclaim, User A no longer lists the shared token");
+    } catch (err) {
+      this.assert(false, 'User A GET after reclaim', `Error: ${err.response?.data?.error || err.message}`);
+    }
+
+    // User B must own it
+    try {
+      const res = await axios.get(`${this.baseURL}/api/device-tokens`, {
+        headers: { Authorization: `Bearer ${userB.token}` },
+        timeout: this.timeout
+      });
+      const ownedByB = res.data.device_tokens.some(t => t.id === recordB);
+      this.assert(ownedByB, 'After reclaim, User B lists the shared token');
+    } catch (err) {
+      this.assert(false, 'User B GET after reclaim', `Error: ${err.response?.data?.error || err.message}`);
+    }
   }
 
   // ─────────────────────────────────────────────
