@@ -223,7 +223,10 @@ class Message {
           AND p.deleted_at IS NULL
           AND (
             p.user_id = ?
-            OR (p.pairing_id IS NOT NULL AND pair.status = 'accepted' AND (pair.user1_id = ? OR pair.user2_id = ?))
+            OR (p.pairing_id IS NOT NULL
+                AND pair.status = 'accepted'
+                AND pair.deleted_at IS NULL
+                AND (pair.user1_id = ? OR pair.user2_id = ?))
           )
       `;
 

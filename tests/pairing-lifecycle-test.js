@@ -316,12 +316,89 @@ class PairingLifecycleTestRunner {
     }
   }
 
+  // Soft-deleting a pairing must revoke the partner's access to shared programs.
+  // Owners keep access via programs.user_id; partners only via an active pairing.
+  async runSoftDeleteRevokesProgramAccessTests() {
+    this.log('Soft-delete pairing revokes partner program access', 'section');
+
+    const owner = await this.createUser('pl-prog-owner');
+    const partner = await this.createUser('pl-prog-partner');
+
+    const req = await this.requestPairing(owner);
+    await this.acceptPairing(partner, req.partner_code);
+    const pairingId = req.pairing_id;
+
+    const createRes = await axios.post(
+      `${this.baseURL}/api/programs`,
+      {
+        user_input: 'Soft-delete access regression: improve communication after conflict.',
+        pairing_id: pairingId
+      },
+      this.authHeader(owner.token)
+    );
+    this.assert(createRes.status === 201, 'Create paired program → 201', `status=${createRes.status}`);
+    const programId = createRes.data?.program?.id;
+    this.assert(!!programId, 'Create paired program returns id', `id=${programId}`);
+
+    // Partner can read while pairing is active
+    const partnerGetOk = await axios.get(
+      `${this.baseURL}/api/programs/${programId}`,
+      this.authHeader(partner.token)
+    );
+    this.assert(partnerGetOk.status === 200, 'Partner GET program while paired → 200', `status=${partnerGetOk.status}`);
+
+    const partnerListOk = await axios.get(
+      `${this.baseURL}/api/programs`,
+      this.authHeader(partner.token)
+    );
+    const listedBefore = (partnerListOk.data.programs || []).some(p => p.id === programId);
+    this.assert(listedBefore, 'Partner list includes paired program while pairing active');
+
+    // Soft-delete the pairing
+    const delRes = await axios.delete(
+      `${this.baseURL}/api/pairing/${pairingId}`,
+      this.authHeader(owner.token)
+    );
+    this.assert(delRes.status === 200, 'Soft-delete pairing for program access test → 200', `status=${delRes.status}`);
+
+    // Partner must lose GET-by-id access
+    try {
+      await axios.get(
+        `${this.baseURL}/api/programs/${programId}`,
+        this.authHeader(partner.token)
+      );
+      this.assert(false, 'Partner GET program after pairing soft-delete should fail', 'Request succeeded');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 403,
+        'Partner GET program after pairing soft-delete → 403',
+        `status=${error.response?.status}`
+      );
+    }
+
+    // Partner must no longer see it in list
+    const partnerListAfter = await axios.get(
+      `${this.baseURL}/api/programs`,
+      this.authHeader(partner.token)
+    );
+    const listedAfter = (partnerListAfter.data.programs || []).some(p => p.id === programId);
+    this.assert(!listedAfter, 'Partner list excludes program after pairing soft-delete');
+
+    // Owner still has access via ownership
+    const ownerGet = await axios.get(
+      `${this.baseURL}/api/programs/${programId}`,
+      this.authHeader(owner.token)
+    );
+    this.assert(ownerGet.status === 200, 'Owner GET program after pairing soft-delete → 200', `status=${ownerGet.status}`);
+  }
+
   async runAllTests() {
     this.log('Starting Pairing Lifecycle Test Suite', 'section');
 
     try {
       await this.runRejectTests();
       await this.runSoftDeleteRestoreTests();
+      await this.runSoftDeleteRevokesProgramAccessTests();
     } catch (error) {
       this.log(`Unexpected suite error: ${error.message}`, 'fail');
       this.testResults.failed++;
