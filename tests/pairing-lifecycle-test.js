@@ -324,6 +324,18 @@ class PairingLifecycleTestRunner {
     const owner = await this.createUser('pl-prog-owner');
     const partner = await this.createUser('pl-prog-partner');
 
+    // Program generation requires user_name on the creator profile.
+    await axios.put(
+      `${this.baseURL}/api/users/${owner.id}`,
+      { user_name: 'Owner', partner_name: 'Partner' },
+      this.authHeader(owner.token)
+    );
+    await axios.put(
+      `${this.baseURL}/api/users/${partner.id}`,
+      { user_name: 'Partner', partner_name: 'Owner' },
+      this.authHeader(partner.token)
+    );
+
     const req = await this.requestPairing(owner);
     await this.acceptPairing(partner, req.partner_code);
     const pairingId = req.pairing_id;
