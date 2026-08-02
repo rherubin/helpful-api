@@ -43,13 +43,22 @@
 let firebaseAdmin = null; // Lazy-required only when we actually init real FCM
 
 // FCM error codes that indicate a token is permanently dead and should be
-// purged from device_tokens. Other failures (auth, quota, transient) are
-// logged but tokens are kept so a retry can succeed.
+// purged from device_tokens. Other failures (auth, quota, transient, and
+// server credential / project mismatches) are logged but tokens are kept
+// so a retry can succeed after the underlying issue is fixed.
+//
+// Deliberately NOT included:
+//   - messaging/mismatched-credential — means the Admin SDK credential does
+//     not match the token's Firebase project (or FCM API is misconfigured).
+//     That is a server config problem; pruning would wipe valid tokens for
+//     every user the next time any push is sent.
+//   - Treat messaging/invalid-argument as dead only when the payload itself
+//     is known-good (our _buildMessage coerces types). Per-token invalid
+//     argument from FCM multicast almost always means a bad token string.
 const FCM_DEAD_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
-  'messaging/invalid-argument',
-  'messaging/mismatched-credential'
+  'messaging/invalid-argument'
 ]);
 
 // FCM hard cap for sendEachForMulticast. Larger fan-outs are chunked.

@@ -119,6 +119,13 @@ function transientError() {
   return { code: 'messaging/server-unavailable', message: 'Try again later' };
 }
 
+function mismatchedCredentialError() {
+  return {
+    code: 'messaging/mismatched-credential',
+    message: 'The credential used to authenticate this SDK does not have permission to send messages to the device corresponding to the provided registration token.'
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Runner
 // ─────────────────────────────────────────────────────────────────────────
@@ -284,6 +291,31 @@ class PushNotificationServiceTestRunner {
       'Only dead-token-coded failures are added to invalidTokens',
       `invalidTokens = ${JSON.stringify(result.invalidTokens)}`
     );
+
+    // mismatched-credential is a server/project config failure — must NOT mark
+    // tokens dead, or a bad FIREBASE_SERVICE_ACCOUNT_* deploy wipes device_tokens.
+    {
+      const { service: svc2, messaging: msg2, model: model2 } = this.buildService({
+        'user-miscfg': ['tok-valid-but-wrong-project-xx']
+      });
+      msg2.__queue.push({
+        successCount: 0,
+        failureCount: 1,
+        responses: [
+          { success: false, error: mismatchedCredentialError() }
+        ]
+      });
+      const miscfg = await svc2.sendToUser('user-miscfg', { title: 't', body: 'b' });
+      this.assert(
+        miscfg.invalidTokens.length === 0,
+        'mismatched-credential → not treated as dead token',
+        `invalidTokens = ${JSON.stringify(miscfg.invalidTokens)}`
+      );
+      this.assert(
+        model2.__removedTokens.length === 0,
+        'mismatched-credential → device token NOT pruned'
+      );
+    }
   }
 
   // ───────────────────────────────────────────────────────────────────
