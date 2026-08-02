@@ -10,7 +10,7 @@ function filterUserData(user) {
   return filteredUser;
 }
 
-function createUserRoutes(userModel, authService, pairingService, orgCodeModel) {
+function createUserRoutes(userModel, authService, pairingService, orgCodeModel, pairingModel = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
 
@@ -156,9 +156,7 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
   router.delete('/:id', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
-      
-      // Get the pairing model from the userModel if available
-      const pairingModel = req.app.locals.pairingModel;
+
       // Revoke refresh sessions via authService's token model (may be null in tests).
       const refreshTokenModel = authService?.refreshTokenModel || null;
       

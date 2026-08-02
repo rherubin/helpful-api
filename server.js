@@ -295,14 +295,9 @@ async function initializeApp() {
 }
 
 function setupRoutes() {
-  // Make models available to routes for soft delete cascading
-  if (pairingModel) {
-    app.locals.pairingModel = pairingModel;
-  }
-
   // Setup user routes
   if (userModel && authService && pairingService) {
-    app.use('/api/users', createUserRoutes(userModel, authService, pairingService, orgCodeModel));
+    app.use('/api/users', createUserRoutes(userModel, authService, pairingService, orgCodeModel, pairingModel || null));
   }
 
   // Setup auth routes
