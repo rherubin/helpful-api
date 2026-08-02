@@ -212,7 +212,9 @@ async function initializeApp() {
     const promptSessionModelInstance = new PromptSession(db);
     const stripeSubscriptionModelInstance = new StripeSubscription(db);
     
-    // Initialize database tables
+    // Initialize database tables.
+    // org_codes must precede users (users.org_code_id FK → org_codes.id).
+    await orgCodeModelInstance.initDatabase();
     await userModelInstance.initDatabase();
     await refreshTokenModelInstance.initDatabase();
     await pairingModelInstance.initDatabase();
@@ -221,7 +223,6 @@ async function initializeApp() {
     await messageModelInstance.initDatabase();
     await iosSubscriptionModelInstance.initDatabase();
     await androidSubscriptionModelInstance.initDatabase();
-    await orgCodeModelInstance.initDatabase();
     await adminUserModelInstance.initDatabase();
     await deviceTokenModelInstance.initDatabase();
     await promptSessionModelInstance.initDatabase();

@@ -240,6 +240,73 @@ class UserSoftDeleteTestRunner {
         `status=${error.response?.status}`
       );
     }
+
+    // Non-admin cannot enumerate soft-deleted users (PII)
+    try {
+      await axios.get(`${this.baseURL}/api/users/deleted/all`, this.authHeader(user.token));
+      this.assert(false, 'Non-admin deleted/all should fail', 'Request succeeded');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 403,
+        'Non-admin GET /api/users/deleted/all → 403',
+        `status=${error.response?.status}`
+      );
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  // Login recovers soft-deleted account (no permanent email lockout)
+  // ─────────────────────────────────────────────
+  async runLoginRestoreTests() {
+    this.log('Login restores soft-deleted account', 'section');
+
+    const password = 'SecurePass987!';
+    const email = generateTestEmail('usd-login-restore');
+    const createRes = await axios.post(`${this.baseURL}/api/users`, {
+      email,
+      password
+    }, { timeout: this.timeout });
+    const userId = createRes.data.user.id;
+    const token = createRes.data.access_token;
+
+    await axios.delete(
+      `${this.baseURL}/api/users/${userId}`,
+      this.authHeader(token)
+    );
+
+    // Re-register with same email must still fail (row retained)
+    try {
+      await axios.post(`${this.baseURL}/api/users`, {
+        email,
+        password
+      }, { timeout: this.timeout });
+      this.assert(false, 'Re-register soft-deleted email should fail', 'Request succeeded');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 409,
+        'Re-register soft-deleted email → 409',
+        `status=${error.response?.status}`
+      );
+    }
+
+    // Login with password restores the account
+    const loginRes = await axios.post(`${this.baseURL}/api/login`, {
+      email,
+      password
+    }, { timeout: this.timeout });
+    this.assert(loginRes.status === 200, 'Login soft-deleted user → 200', `status=${loginRes.status}`);
+    this.assert(
+      loginRes.data?.data?.restored === true,
+      'Login response marks restored=true',
+      `restored=${loginRes.data?.data?.restored}`
+    );
+    this.assert(!!loginRes.data?.data?.access_token, 'Login restore returns access_token');
+
+    const getRes = await axios.get(
+      `${this.baseURL}/api/users/${userId}`,
+      this.authHeader(loginRes.data.data.access_token)
+    );
+    this.assert(getRes.status === 200, 'GET user after login-restore → 200', `status=${getRes.status}`);
   }
 
   async runAllTests() {
@@ -249,6 +316,7 @@ class UserSoftDeleteTestRunner {
       await this.runHappyPathTests();
       await this.runCascadePairingTests();
       await this.runAuthTests();
+      await this.runLoginRestoreTests();
     } catch (error) {
       this.log(`Unexpected suite error: ${error.message}`, 'fail');
       this.testResults.failed++;

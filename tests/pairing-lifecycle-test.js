@@ -314,6 +314,97 @@ class PairingLifecycleTestRunner {
     } catch (error) {
       this.assert(error.response?.status === 401, 'Restore without token → 401', `status=${error.response?.status}`);
     }
+
+    // Non-admin cannot enumerate soft-deleted pairings
+    try {
+      await axios.get(`${this.baseURL}/api/pairing/deleted/all`, this.authHeader(user1.token));
+      this.assert(false, 'Non-admin pairing deleted/all should fail', 'Request succeeded');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 403,
+        'Non-admin GET /api/pairing/deleted/all → 403',
+        `status=${error.response?.status}`
+      );
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  // max_pairings cannot be bypassed via leftover pending codes
+  // ─────────────────────────────────────────────
+  async runMaxPairingsGuardTests() {
+    this.log('max_pairings leftover-pending + restore guards', 'section');
+
+    // Signup auto-creates a pending partner code for every user.
+    const alice = await this.createUser('pl-max-alice');
+    const bob = await this.createUser('pl-max-bob');
+    const carol = await this.createUser('pl-max-carol');
+
+    const aliceSignupCode = (await axios.get(
+      `${this.baseURL}/api/pairings`,
+      this.authHeader(alice.token)
+    )).data.pairings.find(p => p.status === 'pending')?.partner_code;
+
+    const bobSignupCode = (await axios.get(
+      `${this.baseURL}/api/pairings`,
+      this.authHeader(bob.token)
+    )).data.pairings.find(p => p.status === 'pending')?.partner_code;
+
+    this.assert(!!aliceSignupCode, 'Alice has signup pending partner code');
+    this.assert(!!bobSignupCode, 'Bob has signup pending partner code');
+
+    // Alice accepts Bob → Alice-Bob paired; Alice's leftover signup code must be invalidated.
+    await this.acceptPairing(alice, bobSignupCode);
+
+    try {
+      await this.acceptPairing(carol, aliceSignupCode);
+      this.assert(false, 'Carol must not redeem Alice leftover pending after Alice is paired', 'Request succeeded');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 404 || error.response?.status === 400,
+        'Leftover pending accept blocked → 404/400',
+        `status=${error.response?.status}`
+      );
+    }
+
+    const aliceAccepted = await axios.get(
+      `${this.baseURL}/api/pairing/accepted`,
+      this.authHeader(alice.token)
+    );
+    this.assert(
+      (aliceAccepted.data.pairings || []).length === 1,
+      'Alice has exactly one accepted pairing',
+      `count=${(aliceAccepted.data.pairings || []).length}`
+    );
+
+    // Restore must not exceed max_pairings after rematch:
+    // soft-delete Alice-Bob, Alice pairs with Carol, restore Alice-Bob → 400.
+    const aliceBobId = aliceAccepted.data.pairings[0].id;
+    await axios.delete(
+      `${this.baseURL}/api/pairing/${aliceBobId}`,
+      this.authHeader(alice.token)
+    );
+
+    const carolCode = (await axios.get(
+      `${this.baseURL}/api/pairings`,
+      this.authHeader(carol.token)
+    )).data.pairings.find(p => p.status === 'pending')?.partner_code;
+    this.assert(!!carolCode, 'Carol still has a pending partner code');
+    await this.acceptPairing(alice, carolCode);
+
+    try {
+      await axios.patch(
+        `${this.baseURL}/api/pairing/${aliceBobId}/restore`,
+        {},
+        this.authHeader(alice.token)
+      );
+      this.assert(false, 'Restore over max_pairings should fail', 'Request succeeded');
+    } catch (error) {
+      this.assert(
+        error.response?.status === 400,
+        'Restore over max_pairings → 400',
+        `status=${error.response?.status}`
+      );
+    }
   }
 
   // Soft-deleting a pairing must revoke the partner's access to shared programs.
@@ -411,6 +502,7 @@ class PairingLifecycleTestRunner {
       await this.runRejectTests();
       await this.runSoftDeleteRestoreTests();
       await this.runSoftDeleteRevokesProgramAccessTests();
+      await this.runMaxPairingsGuardTests();
     } catch (error) {
       this.log(`Unexpected suite error: ${error.message}`, 'fail');
       this.testResults.failed++;

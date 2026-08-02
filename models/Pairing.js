@@ -411,6 +411,25 @@ class Pairing {
     }
   }
 
+  // Soft-delete open partner-code invites created by a user (pending, no user2 yet).
+  // Used after accept so leftover signup/request codes cannot bypass max_pairings.
+  async softDeleteOpenPartnerCodeRequests(userId) {
+    try {
+      const updateQuery = `
+        UPDATE pairings
+        SET deleted_at = NOW(), updated_at = NOW()
+        WHERE user1_id = ?
+          AND status = 'pending'
+          AND user2_id IS NULL
+          AND deleted_at IS NULL
+      `;
+      const result = await this.query(updateQuery, [userId]);
+      return { deleted_count: result.affectedRows };
+    } catch (err) {
+      throw new Error('Failed to delete open partner code requests');
+    }
+  }
+
   // Restore a soft deleted pairing
   async restorePairing(pairingId) {
     try {
@@ -434,13 +453,14 @@ class Pairing {
   // Get pairing by ID including soft deleted (for admin purposes)
   async getPairingByIdIncludingDeleted(pairingId) {
     try {
+      // LEFT JOIN user2 so pending invites (user2_id NULL) still resolve.
       const query = `
         SELECT p.*, 
                u1.user_name as user1_user_name, u1.email as user1_email,
                u2.user_name as user2_user_name, u2.email as user2_email
         FROM pairings p
         JOIN users u1 ON p.user1_id = u1.id
-        JOIN users u2 ON p.user2_id = u2.id
+        LEFT JOIN users u2 ON p.user2_id = u2.id
         WHERE p.id = ?
       `;
 
@@ -451,6 +471,7 @@ class Pairing {
       row.premium = !!row.premium;
       return row;
     } catch (err) {
+      if (err.message === 'Pairing not found') throw err;
       throw new Error('Failed to fetch pairing');
     }
   }
