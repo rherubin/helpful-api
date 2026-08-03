@@ -1,0 +1,168 @@
+class StripeSubscription {
+  constructor(db) {
+    this.db = db;
+  }
+
+  async query(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results;
+  }
+
+  async queryOne(sql, params = []) {
+    const [results] = await this.db.execute(sql, params);
+    return results[0] || null;
+  }
+
+  async initDatabase() {
+    const createTable = `
+      CREATE TABLE IF NOT EXISTS stripe_subscriptions (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) NOT NULL,
+        stripe_subscription_id VARCHAR(255) NOT NULL,
+        stripe_price_id VARCHAR(255) DEFAULT NULL,
+        plan VARCHAR(20) NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        trial_end DATETIME DEFAULT NULL,
+        current_period_end DATETIME DEFAULT NULL,
+        cancel_at_period_end TINYINT(1) NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_stripe_subscription (stripe_subscription_id),
+        INDEX idx_user_id (user_id),
+        INDEX idx_status (status),
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `;
+
+    try {
+      await this.query(createTable);
+      console.log('Stripe subscriptions table initialized successfully.');
+    } catch (err) {
+      console.error('Error creating stripe_subscriptions table:', err.message);
+      throw err;
+    }
+  }
+
+  generateUniqueId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  }
+
+  toMysqlDatetime(value) {
+    if (value == null) return null;
+    const date = value instanceof Date
+      ? value
+      : (typeof value === 'number' ? new Date(value * (value < 1e12 ? 1000 : 1)) : new Date(value));
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString().slice(0, 19).replace('T', ' ');
+  }
+
+  async upsertByStripeSubscriptionId(userId, data) {
+    const {
+      stripe_subscription_id,
+      stripe_price_id = null,
+      plan,
+      status,
+      trial_end = null,
+      current_period_end = null,
+      cancel_at_period_end = false
+    } = data;
+
+    const existing = await this.getByStripeSubscriptionId(stripe_subscription_id);
+    const trialEnd = this.toMysqlDatetime(trial_end);
+    const periodEnd = this.toMysqlDatetime(current_period_end);
+    const cancelFlag = cancel_at_period_end ? 1 : 0;
+
+    if (existing) {
+      await this.query(
+        `UPDATE stripe_subscriptions
+         SET user_id = ?, stripe_price_id = ?, plan = ?, status = ?,
+             trial_end = ?, current_period_end = ?, cancel_at_period_end = ?,
+             updated_at = NOW()
+         WHERE stripe_subscription_id = ?`,
+        [
+          userId,
+          stripe_price_id,
+          plan,
+          status,
+          trialEnd,
+          periodEnd,
+          cancelFlag,
+          stripe_subscription_id
+        ]
+      );
+      return {
+        ...existing,
+        user_id: userId,
+        stripe_price_id,
+        plan,
+        status,
+        trial_end: trialEnd,
+        current_period_end: periodEnd,
+        cancel_at_period_end: !!cancel_at_period_end,
+        updated: true
+      };
+    }
+
+    const id = this.generateUniqueId();
+    await this.query(
+      `INSERT INTO stripe_subscriptions (
+         id, user_id, stripe_subscription_id, stripe_price_id, plan, status,
+         trial_end, current_period_end, cancel_at_period_end, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [
+        id,
+        userId,
+        stripe_subscription_id,
+        stripe_price_id,
+        plan,
+        status,
+        trialEnd,
+        periodEnd,
+        cancelFlag
+      ]
+    );
+
+    return {
+      id,
+      user_id: userId,
+      stripe_subscription_id,
+      stripe_price_id,
+      plan,
+      status,
+      trial_end: trialEnd,
+      current_period_end: periodEnd,
+      cancel_at_period_end: !!cancel_at_period_end,
+      created: true
+    };
+  }
+
+  async getByStripeSubscriptionId(stripeSubscriptionId) {
+    return this.queryOne(
+      'SELECT * FROM stripe_subscriptions WHERE stripe_subscription_id = ?',
+      [stripeSubscriptionId]
+    );
+  }
+
+  async getLatestForUser(userId) {
+    return this.queryOne(
+      `SELECT * FROM stripe_subscriptions
+       WHERE user_id = ?
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+  }
+
+  async getActiveForUser(userId) {
+    return this.queryOne(
+      `SELECT * FROM stripe_subscriptions
+       WHERE user_id = ?
+         AND status IN ('trialing', 'active')
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+  }
+}
+
+module.exports = StripeSubscription;

@@ -1,9 +1,14 @@
 // PromptSession model — "Sit Sessions" (publicly), `prompt_sessions` internally.
 //
-// A prompt session is a structured, time-bounded couples experience anchored to
-// an accepted pairing. Both partners independently complete a structured prep;
-// once both preps are complete the dynamic LLM prompt is built and the
-// Bridge + Session content is generated.
+// A prompt session is a structured, time-bounded experience. It may be:
+//   - Solo (no pairing_id): single-device / unpaired web flow — one user fills prep.
+//   - Paired (pairing_id set): both partners can prep; membership grants access
+//     regardless of pairing status (accepted not required), so prep can start
+//     before or without an accepted pair.
+//
+// When paired, once both preps are complete the dynamic LLM prompt is built and
+// Bridge + Session content is generated. Solo sessions are ready after the
+// creator's prep is complete.
 //
 // NOTE: The generation step (building `generation_prompt`, calling an LLM, and
 // persisting `bridge_content` / `session_content`) is intentionally NOT yet
@@ -54,7 +59,7 @@ class PromptSession {
     const createPromptSessionsTable = `
       CREATE TABLE IF NOT EXISTS prompt_sessions (
         id VARCHAR(50) PRIMARY KEY,
-        pairing_id VARCHAR(50) NOT NULL,
+        pairing_id VARCHAR(50) DEFAULT NULL,
         created_by_user_id VARCHAR(50) NOT NULL,
 
         status ENUM('prep','bridge','in_session','complete','abandoned') DEFAULT 'prep',
@@ -115,9 +120,33 @@ class PromptSession {
       console.log('prompt_sessions table initialized successfully.');
       await this.query(createPrepsTable);
       console.log('prompt_session_preps table initialized successfully.');
+      await this.ensurePairingIdNullable();
     } catch (err) {
       console.error('Error creating prompt_sessions tables:', err.message);
       throw err;
+    }
+  }
+
+  // Existing DBs created pairing_id as NOT NULL. Solo / single-device mode needs
+  // nullable pairing_id so sessions can exist without a pairing.
+  async ensurePairingIdNullable() {
+    try {
+      const colMeta = await this.queryOne(`
+        SELECT IS_NULLABLE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'prompt_sessions'
+          AND COLUMN_NAME = 'pairing_id'
+      `);
+      if (colMeta && colMeta.IS_NULLABLE === 'NO') {
+        await this.query(`
+          ALTER TABLE prompt_sessions
+          MODIFY COLUMN pairing_id VARCHAR(50) DEFAULT NULL
+        `);
+        console.log('Migrated prompt_sessions: pairing_id is now nullable (solo mode).');
+      }
+    } catch (err) {
+      console.warn('Migration warning (prompt_sessions.pairing_id nullable):', err.message);
     }
   }
 
@@ -162,14 +191,14 @@ class PromptSession {
     };
   }
 
-  async createPromptSession({ pairingId, createdByUserId }) {
+  async createPromptSession({ pairingId = null, createdByUserId }) {
     const id = this.generateUniqueId();
     try {
       const insert = `
         INSERT INTO prompt_sessions (id, pairing_id, created_by_user_id, status, created_at, updated_at)
         VALUES (?, ?, ?, 'prep', NOW(), NOW())
       `;
-      await this.query(insert, [id, pairingId, createdByUserId]);
+      await this.query(insert, [id, pairingId || null, createdByUserId]);
       return this.getPromptSessionById(id);
     } catch (err) {
       console.error('Error creating prompt session:', err.message);
@@ -185,18 +214,22 @@ class PromptSession {
     return this.serializeSession(row);
   }
 
-  // All prompt sessions visible to a user via their accepted pairings.
+  // Sessions visible to a user: solo sessions they created, plus any session
+  // on a pairing they belong to (any status; soft-deleted pairings excluded).
   async getPromptSessionsForUser(userId) {
     const query = `
-      SELECT ps.*
+      SELECT DISTINCT ps.*
       FROM prompt_sessions ps
-      JOIN pairings pair ON ps.pairing_id = pair.id
-      WHERE (pair.user1_id = ? OR pair.user2_id = ?)
-        AND pair.status = 'accepted'
-        AND pair.deleted_at IS NULL
+      LEFT JOIN pairings pair ON ps.pairing_id = pair.id AND pair.deleted_at IS NULL
+      WHERE ps.created_by_user_id = ?
+         OR (
+           ps.pairing_id IS NOT NULL
+           AND pair.id IS NOT NULL
+           AND (pair.user1_id = ? OR pair.user2_id = ?)
+         )
       ORDER BY ps.created_at DESC
     `;
-    const rows = await this.query(query, [userId, userId]);
+    const rows = await this.query(query, [userId, userId, userId]);
     return rows.map(row => this.serializeSession(row));
   }
 
@@ -221,17 +254,39 @@ class PromptSession {
     return this.serializeSession(row);
   }
 
-  // Whether a user can access a session (member of the session's accepted pairing).
+  // Most recent non-terminal solo session created by this user (no pairing).
+  async getActiveSoloSessionForUser(userId) {
+    const row = await this.queryOne(
+      `SELECT * FROM prompt_sessions
+       WHERE pairing_id IS NULL
+         AND created_by_user_id = ?
+         AND status IN ('prep','bridge','in_session')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+    return this.serializeSession(row);
+  }
+
+  // Creator always has access. If the session is paired, either pairing member
+  // has access (pairing status need not be accepted; soft-deleted pairings do
+  // not grant partner access, but the creator still can).
   async checkAccess(userId, promptSessionId) {
     const row = await this.queryOne(
       `SELECT COUNT(*) as count
        FROM prompt_sessions ps
-       JOIN pairings pair ON ps.pairing_id = pair.id
+       LEFT JOIN pairings pair
+         ON ps.pairing_id = pair.id AND pair.deleted_at IS NULL
        WHERE ps.id = ?
-         AND pair.status = 'accepted'
-         AND pair.deleted_at IS NULL
-         AND (pair.user1_id = ? OR pair.user2_id = ?)`,
-      [promptSessionId, userId, userId]
+         AND (
+           ps.created_by_user_id = ?
+           OR (
+             ps.pairing_id IS NOT NULL
+             AND pair.id IS NOT NULL
+             AND (pair.user1_id = ? OR pair.user2_id = ?)
+           )
+         )`,
+      [promptSessionId, userId, userId, userId]
     );
     return (row?.count || 0) > 0;
   }
@@ -315,14 +370,23 @@ class PromptSession {
     return this.getPrep(promptSessionId, userId);
   }
 
-  // True once at least two participants have a completed prep.
+  // True when prep requirements for this session are met:
+  //   - Paired sessions: at least two completed preps
+  //   - Solo sessions (no pairing_id): at least one completed prep
   async bothPrepsComplete(promptSessionId) {
+    const session = await this.queryOne(
+      `SELECT pairing_id FROM prompt_sessions WHERE id = ?`,
+      [promptSessionId]
+    );
+    if (!session) return false;
+
+    const required = session.pairing_id ? 2 : 1;
     const row = await this.queryOne(
       `SELECT COUNT(*) as count FROM prompt_session_preps
        WHERE prompt_session_id = ? AND completed_at IS NOT NULL`,
       [promptSessionId]
     );
-    return (row?.count || 0) >= 2;
+    return (row?.count || 0) >= required;
   }
 
   async updateStatus(promptSessionId, status) {

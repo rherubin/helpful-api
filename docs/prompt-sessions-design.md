@@ -24,23 +24,28 @@
 
 Public-facing language can remain "Sit Session" / "Sit Together". Internal code and schema use `prompt_sessions`.
 
-The `pairing_id` is required when creating a new one via `POST /api/prompt-sessions`.
+`pairing_id` is **optional** on `POST /api/prompt-sessions` (solo / single-device web mode). When omitted, the session is owned by the creator only. When provided, the caller must be a pairing member; pairing status need **not** be `accepted`.
 
 ## Core Concept
 
-A **Prompt Session** (publicly called a "Sit Session") is a structured, time-bounded couples experience that is more intentional and potentially more synchronous than the existing 14-day Programs.
+A **Prompt Session** (publicly called a "Sit Session") is a structured, time-bounded experience. It supports:
 
-High-level flow:
-1. One partner initiates a Prompt Session for an accepted pairing.
+- **Solo / single-device**: no pairing required — one user creates a session and fills prep (web unpaired flow).
+- **Paired**: optional `pairing_id` links the session to a couple so both members can prep and later generate shared content.
+
+High-level flow (paired):
+1. One partner initiates a Prompt Session (with or without an accepted pairing).
 2. Both partners independently complete **Prep** (six questions + optional focus area).
 3. Once both preps are complete → system generates the dynamic prompt → produces the Bridge + Session content.
 4. The couple moves through "The Bridge" (transition / synthesis of prep) → "The Session" (the guided experience itself).
 5. The Prompt Session has a clear completion state.
 
+Solo flow: create without `pairing_id` → complete own prep → prep is considered ready (one completed prep).
+
 Key differences from Programs:
-- Prep is structured and required from *both* partners before content generation.
+- Prep is structured; for paired sessions both partners complete prep before content generation.
 - The generation is heavily conditioned on the *specific answers* given in prep.
-- Stronger sense of "we are doing this together right now" (even if done async).
+- Stronger sense of "we are doing this together right now" when paired (even if done async).
 
 ## Data Model
 
@@ -49,7 +54,7 @@ Key differences from Programs:
 ```sql
 CREATE TABLE prompt_sessions (
   id VARCHAR(50) PRIMARY KEY,
-  pairing_id VARCHAR(50) NOT NULL,
+  pairing_id VARCHAR(50) DEFAULT NULL,   -- optional: null = solo / single-device
   created_by_user_id VARCHAR(50) NOT NULL,
 
   status ENUM('prep','bridge','in_session','complete','abandoned') DEFAULT 'prep',
@@ -80,7 +85,7 @@ CREATE TABLE prompt_sessions (
 ```
 
 **Notes**:
-- `pairing_id` is **required** at creation time.
+- `pairing_id` is **optional** (null for solo / single-device). When set, membership grants access; `accepted` status is not required for create or prep.
 - We deliberately store `generation_prompt` (following the existing pattern in the `programs` table).
 - `current_phase` gives the client a clear signal for what UI to show.
 
@@ -130,18 +135,18 @@ POST /api/prompt-sessions
 Authorization: Bearer <token>
 
 {
+  // optional — omit for solo / single-device
   "pairing_id": "pair_abc123"
   // optional future fields: "mode": "live" | "async"
 }
 ```
 
 **Validation** (must happen in the handler):
-- `pairing_id` is required and valid.
-- Caller is a member of the pairing.
-- Pairing status must be `'accepted'`.
-- (Policy decision) No other non-terminal prompt session exists for this pairing.
+- `pairing_id` is optional. If omitted → solo session owned by the caller.
+- If `pairing_id` is provided: it must exist and the caller must be a member. Status need **not** be `'accepted'`.
+- Policy: only one non-terminal session per pairing; only one non-terminal solo session per user.
 
-Response (201):
+Response (201) — paired:
 ```json
 {
   "message": "Prompt session created",
@@ -155,21 +160,27 @@ Response (201):
 }
 ```
 
-### Other likely endpoints
+Response (201) — solo (`pairing_id` omitted): same shape with `"pairing_id": null`.
 
-- `GET /api/pairings/:pairingId/prompt-sessions` — list for a pairing (convenience)
+**Prep readiness (`both_preps_complete`):**
+- Solo (`pairing_id` null): true when **one** completed prep exists.
+- Paired: true when **two** completed preps exist.
+
+### Implemented endpoints
+
+- `GET /api/prompt-sessions` — list for the caller (optional `?pairing_id=`)
 - `GET /api/prompt-sessions/:id`
 - `POST /api/prompt-sessions/:id/prep` — submit or update my prep answers
-- `GET /api/prompt-sessions/:id/prep` — my prep + partner completion status (and full answers once both done, per policy)
-- `POST /api/prompt-sessions/:id/generate` (or automatic on second prep completion) — triggers the dynamic prompt construction + LLM call
-- Phase advancement endpoints (or a single `PATCH /api/prompt-sessions/:id` with `current_phase`)
+- `GET /api/prompt-sessions/:id/prep` — my prep + partner completion status (full partner answers once both done); solo returns `partner_prep: null`
+- `POST /api/prompt-sessions/:id/generate` — **501** until LLM wiring lands (**409** if prep not ready)
+- `PATCH /api/prompt-sessions/:id` — `status` and/or `current_phase`
 
 Push notifications will be important (e.g., "Your partner finished prep", "Your Sit Session is ready").
 
 ## Relationship to Existing Features
 
-- **Pairings**: The anchor. Every prompt session belongs to exactly one accepted pairing.
-- **Programs**: Sibling concept, not child. A couple can have many Programs and many Sit Sessions over time. No forced hierarchy.
+- **Pairings**: Optional anchor. Paired sessions link to a pairing (any membership status for access); solo sessions have no pairing.
+- **Programs**: Sibling concept, not child. Users/couples can have many Programs and many Sit Sessions over time. No forced hierarchy.
 - **PushNotificationService**: Reuse heavily for "partner completed prep", "session ready", etc.
 - **LLM services** (`HopefulPromptService` / `HelpfulPromptService`): Will be called with a carefully constructed prompt built from both preps.
 
@@ -178,7 +189,7 @@ Push notifications will be important (e.g., "Your partner finished prep", "Your 
 1. **Exact six questions** — final wording and whether any are scales vs free text.
 2. **Prep visibility policy** — when exactly does Partner A see Partner B's raw answers?
 3. **Generation trigger** — automatic when the second prep is submitted, or explicit "Generate" button?
-4. **One active session per pairing?** — should we prevent creating a second while one is still in `prep`/`bridge`/`in_session`?
+4. **One active session per pairing?** — **Yes (implemented):** one active per pairing; one active solo per user.
 5. **Real-time needs** — do we need presence ("partner is currently filling prep") or is the existing push + polling model sufficient?
 6. **Archival / history** — how long do we keep completed Sit Sessions and their generated prompts?
 

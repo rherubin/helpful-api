@@ -187,6 +187,27 @@ class User {
       } catch (migrationErr) {
         console.warn('Migration warning for bypass_password column:', migrationErr.message);
       }
+
+      // Migration: Add stripe_customer_id for Stripe Billing
+      try {
+        const stripeCustomerExists = await this.queryOne(`
+          SELECT COLUMN_NAME
+          FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'users'
+            AND COLUMN_NAME = 'stripe_customer_id'
+        `);
+
+        if (!stripeCustomerExists) {
+          await this.query('ALTER TABLE users ADD COLUMN stripe_customer_id VARCHAR(255) DEFAULT NULL');
+          await this.query('ALTER TABLE users ADD UNIQUE INDEX unique_stripe_customer_id (stripe_customer_id)');
+          console.log('Migrated users table: added stripe_customer_id column');
+        } else {
+          console.log('Users table already has stripe_customer_id column');
+        }
+      } catch (migrationErr) {
+        console.warn('Migration warning for stripe_customer_id column:', migrationErr.message);
+      }
     } catch (err) {
       console.error('Error creating users table:', err.message);
       throw err;
@@ -329,9 +350,21 @@ class User {
     }
   }
 
+  async getUserByStripeCustomerId(stripeCustomerId) {
+    if (!stripeCustomerId) return null;
+    return this.queryOne(
+      'SELECT * FROM users WHERE stripe_customer_id = ? AND deleted_at IS NULL',
+      [stripeCustomerId]
+    );
+  }
+
   // Update user
   async updateUser(id, updateData) {
-    const { email, max_pairings, user_name, partner_name, children, org_code_id, org_name, org_city, org_state, is_premium, bypass_password } = updateData;
+    const {
+      email, max_pairings, user_name, partner_name, children,
+      org_code_id, org_name, org_city, org_state, is_premium,
+      bypass_password, stripe_customer_id
+    } = updateData;
 
     // Build update query dynamically
     const updateFields = [];
@@ -384,6 +417,10 @@ class User {
     if (bypass_password !== undefined) {
       updateFields.push('bypass_password = ?');
       updateValues.push(bypass_password ? 1 : 0);
+    }
+    if (stripe_customer_id !== undefined) {
+      updateFields.push('stripe_customer_id = ?');
+      updateValues.push(stripe_customer_id);
     }
 
     // Check if at least one field is being updated

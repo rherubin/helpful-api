@@ -15,6 +15,7 @@ const WWWAuthenticateTestRunner = require('./www-authenticate-test');
 const SubscriptionTestRunner = require('./subscription-test');
 const UserOrgCodeTestRunner = require('./user-org-code-test');
 const DeviceTokenTestRunner = require('./device-tokens-test');
+const StripeBillingTestRunner = require('./stripe-billing-test');
 const HelpfulPromptServiceTestRunner = require('./helpful-prompt-service-test');
 const HopefulPromptServiceTestRunner = require('./hopeful-prompt-service-test');
 const ProgramOrgContextTestRunner = require('./program-org-context-test');
@@ -48,6 +49,7 @@ class TestSuiteRunner {
       runSubscription: options.runSubscription !== false, // Default true
       runUserOrgCode: options.runUserOrgCode !== false, // Default true
       runDeviceTokens: options.runDeviceTokens !== false, // Default true
+      runStripeBilling: options.runStripeBilling !== false, // Default true
       runHelpfulPromptService: options.runHelpfulPromptService !== false, // Default true
       runHopefulPromptService: options.runHopefulPromptService !== false, // Default true
       runProgramOrgContext: options.runProgramOrgContext !== false, // Default true
@@ -77,6 +79,7 @@ class TestSuiteRunner {
       subscription: null,
       userOrgCode: null,
       deviceTokens: null,
+      stripeBilling: null,
       helpfulPromptService: null,
       hopefulPromptService: null,
       programOrgContext: null,
@@ -893,7 +896,7 @@ class TestSuiteRunner {
       this.results.promptSessions = {
         success,
         skipped: false,
-        details: '/api/prompt-sessions CRUD, prep flow, visibility policy, and generation stub',
+        details: '/api/prompt-sessions solo + paired CRUD, pending pairing, prep visibility, generation stub',
         passed: runner.testResults.passed,
         failed: runner.testResults.failed,
         total: runner.testResults.total
@@ -951,6 +954,44 @@ class TestSuiteRunner {
     }
   }
 
+  async runStripeBillingTests() {
+    if (!this.options.runStripeBilling) {
+      this.log('Skipping Stripe billing tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('💳 Running Stripe Billing Test Suite', 'section');
+
+    try {
+      const runner = new StripeBillingTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.stripeBilling = {
+        success,
+        skipped: false,
+        details: 'POST/GET /api/billing checkout, portal, status, webhook (mock Stripe)',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Stripe billing tests completed successfully', 'success');
+      } else {
+        this.log('Stripe billing tests failed', 'error');
+      }
+
+      return this.results.stripeBilling;
+    } catch (error) {
+      this.log(`Stripe billing tests failed: ${error.message}`, 'error');
+      this.results.stripeBilling = { success: false, error: error.message };
+      return this.results.stripeBilling;
+    }
+  }
+
   // Run all test suites
   async runAllTests() {
     this.log('🎯 Starting Comprehensive Test Suite', 'section');
@@ -972,6 +1013,7 @@ class TestSuiteRunner {
     this.log(`  Subscription Tests: ${this.options.runSubscription ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  User Org Code Tests: ${this.options.runUserOrgCode ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Device Tokens Tests: ${this.options.runDeviceTokens ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Stripe Billing Tests: ${this.options.runStripeBilling ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HelpfulPromptService Unit Tests: ${this.options.runHelpfulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HopefulPromptService Unit Tests: ${this.options.runHopefulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Program Org Context Tests: ${this.options.runProgramOrgContext ? 'Enabled' : 'Disabled'}`, 'info');
@@ -1136,6 +1178,15 @@ class TestSuiteRunner {
     if (this.options.runDeviceTokens) {
       await this.runDeviceTokenTests();
       if (this.results.deviceTokens && !this.results.deviceTokens.success && !this.results.deviceTokens.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run Stripe billing tests
+    if (this.options.runStripeBilling) {
+      await this.runStripeBillingTests();
+      if (this.results.stripeBilling && !this.results.stripeBilling.success && !this.results.stripeBilling.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -1544,6 +1595,7 @@ class TestSuiteRunner {
                     (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0) +
                     (this.results.wwwAuthenticate?.failed || 0) + (this.results.subscription?.failed || 0) +
                     (this.results.userOrgCode?.failed || 0) + (this.results.deviceTokens?.failed || 0) +
+                    (this.results.stripeBilling?.failed || 0) +
                     (this.results.helpfulPromptService?.failed || 0) +
                     (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0) +
                     (this.results.pushNotificationService?.failed || 0) + (this.results.promptSessions?.failed || 0)
@@ -1575,6 +1627,7 @@ function parseArgs() {
     if (arg === '--no-subscription') options.runSubscription = false;
     if (arg === '--no-user-org-code') options.runUserOrgCode = false;
     if (arg === '--no-device-tokens') options.runDeviceTokens = false;
+    if (arg === '--no-stripe-billing') options.runStripeBilling = false;
     if (arg === '--no-helpful-prompt-service') options.runHelpfulPromptService = false;
     if (arg === '--no-hopeful-prompt-service') options.runHopefulPromptService = false;
     if (arg === '--no-program-org-context') options.runProgramOrgContext = false;

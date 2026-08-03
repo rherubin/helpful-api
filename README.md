@@ -1,6 +1,6 @@
 # Helpful API
 
-Node.js / Express REST API with MySQL for couples therapy programs: user accounts, JWT auth, partner pairing, AI-generated multi-day programs (Helpful vs Hopeful tracks), step messaging with optional therapy responses, org-code premium, iOS/Android subscriptions, FCM push registration, admin tooling, and Sit Sessions (prompt sessions).
+Node.js / Express REST API with MySQL for couples therapy programs: user accounts, JWT auth, partner pairing, AI-generated multi-day programs (Helpful vs Hopeful tracks), step messaging with optional therapy responses, org-code premium, iOS/Android subscriptions, **Stripe web billing**, FCM push registration, admin tooling, and Sit Sessions (prompt sessions).
 
 **Stack:** Node ≥16, Express 4, MySQL 8, JWT + bcrypt, OpenAI Chat Completions (via `BasePromptService`), optional Firebase Admin (FCM).
 
@@ -17,11 +17,12 @@ Node.js / Express REST API with MySQL for couples therapy programs: user account
   - **Helpful** (default) — secular EFT/Gottman-style
   - **Hopeful** — faith-based when the user has a linked org code or custom `org_name` / `org_city` / `org_state`
 - **Program steps + messages** — day steps, user messages, contributions tracking, unlock progress
-- **Sit Sessions** (`/api/prompt-sessions`) — paired prep flow; **content generation not implemented** (`POST .../generate` → **501**)
+- **Sit Sessions** (`/api/prompt-sessions`) — solo (single-device) or paired prep flow; **content generation not implemented** (`POST .../generate` → **501**)
 
 ### Premium & orgs
 - **Pairing premium** — active iOS/Android subscription on either partner sets `pairings.premium`
 - **Org premium** — valid `org_code` (or full custom org name/city/state) sets `users.is_premium`
+- **Stripe web billing** — Checkout + Customer Portal + webhooks; persists `stripe_subscriptions` and sets `users.is_premium` when status is `trialing`/`active` (see [`docs/stripe-billing.md`](./docs/stripe-billing.md))
 - **Computed `premium`** on profile / GET-PUT user: `hasPremiumPairing || is_premium`  
   **Note:** login response `premium` currently reflects **pairing premium only** (does not OR `is_premium`)
 
@@ -171,6 +172,7 @@ npm run dev        # nodemon
 | Programs | `POST/GET/DELETE /api/programs…`, next, therapy_response, metrics |
 | Steps | `/api/programs/:id/programSteps`, `/api/programSteps/...` |
 | Subscriptions | `POST/GET /api/subscription`, `GET .../receipts` |
+| Stripe billing | `POST /api/billing/checkout`, `POST /api/billing/portal`, `GET /api/billing/status`, `POST /api/billing/webhook` |
 | Org codes | `/api/org-codes` (admin for mutations) |
 | Admin | `/api/admin/auth/*`, `POST /api/admin/push-test` |
 | Push devices | `/api/device-tokens` |
@@ -520,21 +522,32 @@ Max **25** tokens per user. Raw FCM token never returned after register (only re
 
 ### Prompt sessions (“Sit Sessions”)
 
-Anchored to an **accepted** pairing. Internal name `prompt_sessions`; product name Sit Session. Design notes: `docs/prompt-sessions-design.md`.
+Internal name `prompt_sessions`; product name Sit Session. Design notes: [`docs/prompt-sessions-design.md`](./docs/prompt-sessions-design.md).
+
+**Modes**
+
+| Mode | How | Access | Prep “ready” (`both_preps_complete`) |
+|------|-----|--------|--------------------------------------|
+| **Solo / single-device** | `POST` with no `pairing_id` | Creator only | **1** completed prep |
+| **Paired** | `POST` with `{ "pairing_id" }` | Creator or pairing member | **2** completed preps |
+
+Pairing status need **not** be `accepted` to create a session or submit prep. If `pairing_id` is sent, the caller must still be a **member** of that pairing (pending is fine). Soft-deleted pairings do not grant partner access.
+
+**Policies:** one active (non-terminal) session **per pairing**; one active **solo** session **per user**.
 
 | Method | Path | Notes |
 |--------|------|--------|
-| POST | `/api/prompt-sessions` | Body `{ "pairing_id" }` · **201** · **409** if active session exists |
-| GET | `/api/prompt-sessions` | Optional `?pairing_id=` |
-| GET | `/api/prompt-sessions/:id` | Member only |
-| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields |
-| GET | `/api/prompt-sessions/:id/prep` | Own prep + partner status; full partner answers only when both complete |
+| POST | `/api/prompt-sessions` | Body optional `{ "pairing_id" }` · **201** · **409** if an active session already exists |
+| GET | `/api/prompt-sessions` | Optional `?pairing_id=` · list includes solo sessions the user created |
+| GET | `/api/prompt-sessions/:id` | Creator or pairing member |
+| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields (works without pairing) |
+| GET | `/api/prompt-sessions/:id/prep` | Own prep; when paired, partner status (full partner answers only when both complete). Solo: `partner_prep: null` |
 | PATCH | `/api/prompt-sessions/:id` | `status` and/or `current_phase` |
-| POST | `/api/prompt-sessions/:id/generate` | **409** preps incomplete · **501** not implemented |
+| POST | `/api/prompt-sessions/:id/generate` | **409** if prep not ready · **501** not implemented |
 
 **Prep fields (six required for complete):** `bringing_text`, `energy_level`, `intention`, `curiosity`, `boundary`, `gratitude`. Optional: `optional_focus`.  
 Statuses: `prep` \| `bridge` \| `in_session` \| `complete` \| `abandoned`.  
-`generation_prompt` never exposed to clients. Both-prep-complete triggers a **stub** only (log), not LLM.
+`generation_prompt` is never exposed to clients. Prep-ready triggers a **stub** only (log), not LLM.
 
 ### Message stats
 
@@ -561,7 +574,7 @@ Created/migrated on startup. Core tables:
 
 | Table | Purpose |
 |-------|---------|
-| `users` | Accounts, org fields, `is_premium`, `bypass_password`, soft delete |
+| `users` | Accounts, org fields, `is_premium`, `bypass_password`, `stripe_customer_id`, soft delete |
 | `user_org_code_audit_logs` | Org link/unlink audit |
 | `refresh_tokens` | App + admin refresh (`user_type` ENUM) |
 | `pairings` | Partner codes, status, `premium`, soft delete |
@@ -570,10 +583,11 @@ Created/migrated on startup. Core tables:
 | `program_step_user_contribution` | First contribution per user per step |
 | `messages` | step messages + metadata |
 | `ios_subscriptions` / `android_subscriptions` | Store receipts |
+| `stripe_subscriptions` | Web Stripe subscriptions (plan, status, period ends) |
 | `org_codes` | Codes, address, prompt overrides, duration, expires |
 | `admin_users` | Admin accounts |
 | `device_tokens` | FCM tokens, platform, `last_used_at` |
-| `prompt_sessions` / `prompt_session_preps` | Sit Sessions |
+| `prompt_sessions` / `prompt_session_preps` | Sit Sessions (`pairing_id` nullable for solo) |
 
 ### Users (representative)
 
@@ -582,7 +596,7 @@ Created/migrated on startup. Core tables:
 id, email UNIQUE, password_hash,
 user_name, partner_name, children, max_pairings,
 org_code_id, org_name, org_city, org_state,
-is_premium, bypass_password,
+is_premium, bypass_password, stripe_customer_id,
 deleted_at, created_at, updated_at
 ```
 
@@ -602,6 +616,22 @@ Note: raw `CREATE TABLE` may still show an older default of `7` for `steps_requi
 ### Device tokens
 
 Includes `last_used_at` (activity + cleanup). UNIQUE `(user_id, device_token)`. Cap 25 per user.
+
+### Prompt sessions (representative)
+
+```sql
+-- prompt_sessions
+id, pairing_id NULL, created_by_user_id,
+status ENUM('prep','bridge','in_session','complete','abandoned'),
+current_phase, generation_prompt, bridge_content, session_content, …
+
+-- prompt_session_preps (one row per user per session)
+id, prompt_session_id, user_id,
+bringing_text, energy_level, intention, curiosity, boundary, gratitude, optional_focus,
+completed_at, …
+```
+
+`pairing_id` is nullable (solo / single-device). Startup migrates older NOT NULL columns.
 
 ---
 
@@ -680,6 +710,32 @@ curl -s -X POST http://localhost:9000/api/login \
   -d '{"email":"user@example.com","password":"Pass123!"}'
 ```
 
+### Sit Session (solo / single-device)
+
+```bash
+# Create without pairing
+curl -s -X POST http://localhost:9000/api/prompt-sessions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Submit prep (all six required fields to mark complete)
+curl -s -X POST http://localhost:9000/api/prompt-sessions/$SESSION_ID/prep \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bringing_text":"…","energy_level":"medium","intention":"…",
+    "curiosity":"…","boundary":"…","gratitude":"…"
+  }'
+# → both_preps_complete: true after one complete prep (solo)
+
+# Optional: attach to a pairing you belong to (status need not be accepted)
+curl -s -X POST http://localhost:9000/api/prompt-sessions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"pairing_id":"PAIRING_ID"}'
+```
+
 ---
 
 ## Testing
@@ -712,7 +768,7 @@ Test emails use **`@example.com`** so `npm run test:cleanup` can remove them saf
 | `npm run test:user-soft-delete` | User soft-delete / restore + pairing cascade |
 | `npm run test:push` | `PushNotificationService` unit tests (mocked FCM) |
 | `npm run test:admin-push` | `POST /api/admin/push-test` integration |
-| `npm run test:prompt-sessions` | Sit Sessions end-to-end |
+| `npm run test:prompt-sessions` | Sit Sessions: solo + paired + pending pairing, prep, generate stub |
 | `npm run test:cleanup` | Delete `@example.com` test rows |
 
 Useful flags on the main runner: `--no-load`, `--no-security`, `--no-pairing-lifecycle`, `--no-user-soft-delete`, `--url=…`, `--timeout=…`, `--skip-server-check`.
@@ -735,8 +791,9 @@ What the default suite exercises vs thinner / standalone areas:
 | Therapy auto-trigger / chime-in / welcome | Yes | `therapy-trigger-test` |
 | Helpful vs Hopeful routing + prompt unit tests | Yes | `program-org-context-test`, `helpful-prompt-service-test`, `hopeful-prompt-service-test` |
 | Subscriptions + pairing premium | Yes | `subscription-test` |
+| Stripe billing (Checkout/Portal/webhook mock) | Yes | `stripe-billing-test` |
 | Device tokens | Yes | `device-tokens-test` |
-| Sit Sessions | Yes | `prompt-sessions-test` |
+| Sit Sessions (solo, paired, pending pairing; prep visibility; generate stub) | Yes | `prompt-sessions-test` |
 | Push unit + admin push-test | Yes | `push-notification-service-test`, `admin-push-test-test` |
 | Security (prompt injection helpers) | Yes | `security-test` |
 | Load | Yes (skip with `test:quick`) | `load-test` |

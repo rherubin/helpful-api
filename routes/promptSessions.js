@@ -6,9 +6,12 @@ const PromptSession = require('../models/PromptSession');
 //
 // Dependencies are injected via this factory (see service-injection-convention):
 //   - promptSessionModel:       required
-//   - pairingModel:             required (membership / access checks)
+//   - pairingModel:             required (membership / access checks when paired)
 //   - authService:              for token refresh in auth middleware
 //   - pushNotificationService:  optional (partner notifications)
+//
+// Solo / single-device mode: POST without pairing_id creates a session owned by
+// the caller. Prep and other member endpoints work without an accepted pairing.
 //
 // NOTE: Content generation (building the dynamic prompt + LLM call) is NOT yet
 // implemented. The `/generate` endpoint and the auto-trigger on second prep
@@ -28,50 +31,55 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
     return pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
   }
 
-  // STUB: invoked when both preps are complete. Real implementation will build
-  // the dynamic prompt from both preps, call the LLM, and persist content via
+  // STUB: invoked when prep requirements are met. Real implementation will build
+  // the dynamic prompt from prep(s), call the LLM, and persist content via
   // promptSessionModel.saveGeneratedContent / updateGenerationError.
   function triggerGenerationStub(promptSessionId) {
-    console.log(`[prompt_sessions] TODO: generation not implemented — both preps complete for session ${promptSessionId}.`);
+    console.log(`[prompt_sessions] TODO: generation not implemented — prep ready for session ${promptSessionId}.`);
   }
 
-  // Create a prompt session for an accepted pairing.
+  // Create a prompt session. pairing_id is optional (solo / single-device mode).
+  // When provided, caller must be a pairing member; status need not be accepted.
   router.post('/', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
       const { pairing_id } = req.body;
 
-      if (!pairing_id) {
-        return res.status(400).json({ error: 'Field pairing_id is required' });
-      }
+      let pairing = null;
 
-      let pairing;
-      try {
-        pairing = await loadPairing(pairing_id);
-      } catch (err) {
-        return res.status(404).json({ error: 'Pairing not found' });
-      }
+      if (pairing_id) {
+        try {
+          pairing = await loadPairing(pairing_id);
+        } catch (err) {
+          return res.status(404).json({ error: 'Pairing not found' });
+        }
 
-      const isMember = pairing.user1_id === userId || pairing.user2_id === userId;
-      if (!isMember) {
-        return res.status(403).json({ error: 'Not authorized to create a prompt session for this pairing' });
-      }
+        const isMember = pairing.user1_id === userId || pairing.user2_id === userId;
+        if (!isMember) {
+          return res.status(403).json({ error: 'Not authorized to create a prompt session for this pairing' });
+        }
 
-      if (pairing.status !== 'accepted') {
-        return res.status(400).json({ error: 'Pairing must be accepted before starting a prompt session' });
-      }
-
-      // Policy: only one non-terminal prompt session per pairing at a time.
-      const active = await promptSessionModel.getActiveSessionForPairing(pairing_id);
-      if (active) {
-        return res.status(409).json({
-          error: 'An active prompt session already exists for this pairing',
-          prompt_session: active
-        });
+        // Policy: only one non-terminal prompt session per pairing at a time.
+        const active = await promptSessionModel.getActiveSessionForPairing(pairing_id);
+        if (active) {
+          return res.status(409).json({
+            error: 'An active prompt session already exists for this pairing',
+            prompt_session: active
+          });
+        }
+      } else {
+        // Solo: only one active unpaired session per user.
+        const activeSolo = await promptSessionModel.getActiveSoloSessionForUser(userId);
+        if (activeSolo) {
+          return res.status(409).json({
+            error: 'An active solo prompt session already exists',
+            prompt_session: activeSolo
+          });
+        }
       }
 
       const session = await promptSessionModel.createPromptSession({
-        pairingId: pairing_id,
+        pairingId: pairing_id || null,
         createdByUserId: userId
       });
 
@@ -80,7 +88,7 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
         prompt_session: session
       });
 
-      // Notify the partner that a session was started.
+      // Notify the partner when a paired session is started (if they exist).
       const partnerId = partnerIdFor(pairing, userId);
       if (pushNotificationService && partnerId) {
         pushNotificationService.sendToUser(partnerId, {
@@ -183,12 +191,14 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
         both_preps_complete: bothComplete
       });
 
-      // Resolve pairing for notifications / partner id.
+      // Resolve pairing for notifications / partner id (optional).
       const session = await promptSessionModel.getPromptSessionById(id);
       let pairing = null;
-      try {
-        pairing = await loadPairing(session.pairing_id);
-      } catch { /* non-fatal */ }
+      if (session.pairing_id) {
+        try {
+          pairing = await loadPairing(session.pairing_id);
+        } catch { /* non-fatal */ }
+      }
       const partnerId = partnerIdFor(pairing, userId);
 
       if (bothComplete) {
@@ -213,6 +223,7 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
 
   // Get the caller's prep plus the partner's completion status. Partner's raw
   // answers are only revealed once BOTH preps are complete (visibility policy).
+  // Solo sessions have no partner_prep.
   router.get('/:id/prep', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
@@ -229,9 +240,11 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
       const bothComplete = await promptSessionModel.bothPrepsComplete(id);
 
       let pairing = null;
-      try {
-        pairing = await loadPairing(session.pairing_id);
-      } catch { /* non-fatal */ }
+      if (session.pairing_id) {
+        try {
+          pairing = await loadPairing(session.pairing_id);
+        } catch { /* non-fatal */ }
+      }
       const partnerId = partnerIdFor(pairing, userId);
 
       let partnerPrep = null;
@@ -308,7 +321,7 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
     try {
       const { id } = req.params;
 
-      await promptSessionModel.getPromptSessionById(id);
+      const session = await promptSessionModel.getPromptSessionById(id);
       const hasAccess = await promptSessionModel.checkAccess(req.user.id, id);
       if (!hasAccess) {
         return res.status(403).json({ error: 'Not authorized to access this prompt session' });
@@ -316,9 +329,10 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
 
       const bothComplete = await promptSessionModel.bothPrepsComplete(id);
       if (!bothComplete) {
-        return res.status(409).json({
-          error: 'Both partners must complete prep before generating'
-        });
+        const message = session.pairing_id
+          ? 'Both partners must complete prep before generating'
+          : 'Prep must be complete before generating';
+        return res.status(409).json({ error: message });
       }
 
       // TODO: implement prompt construction + LLM call, then persist via

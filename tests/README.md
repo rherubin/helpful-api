@@ -48,7 +48,7 @@ Orchestrator: `run-all-tests.js` (order roughly: security → load → auth → 
 | `program-org-context-test.js` | Helpful/Hopeful routing by org context |
 | `push-notification-service-test.js` | Push service unit tests (no real FCM) |
 | `admin-push-test-test.js` | `POST /api/admin/push-test` |
-| `prompt-sessions-test.js` | Sit Sessions end-to-end |
+| `prompt-sessions-test.js` | Sit Sessions: solo (no pairing), paired (accepted), pending pairing create/prep, visibility, generate stub |
 
 Skip categories with flags, e.g. `--no-load`, `--no-pairing-lifecycle`, `--no-user-soft-delete`, `--skip-server-check`.
 
@@ -70,7 +70,7 @@ Skip categories with flags, e.g. `--no-load`, `--no-pairing-lifecycle`, `--no-us
 | `npm run test:user-soft-delete` | `user-soft-delete-test.js` |
 | `npm run test:push` | `push-notification-service-test.js` |
 | `npm run test:admin-push` | `admin-push-test-test.js` |
-| `npm run test:prompt-sessions` | `prompt-sessions-test.js` |
+| `npm run test:prompt-sessions` | `prompt-sessions-test.js` (solo + paired + pending) |
 | `npm run test:cleanup` | `cleanup-test-data.js` |
 
 ---
@@ -93,7 +93,7 @@ Run with `node tests/<file>.js` when needed.
 
 ## Coverage notes
 
-**Strong (default suite):** auth, users (create/profile/update/soft-delete), pairing lifecycle (request/accept/reject/delete/restore), org premium, programs/steps/messages/therapy, subscriptions, device tokens, Sit Sessions, Helpful/Hopeful prompts, push unit + admin push-test.
+**Strong (default suite):** auth, users (create/profile/update/soft-delete), pairing lifecycle (request/accept/reject/delete/restore), org premium, programs/steps/messages/therapy, subscriptions, device tokens, Sit Sessions (solo + paired + prep without accepted pairing), Helpful/Hopeful prompts, push unit + admin push-test.
 
 **Thin / untested product edges:**
 - Admin auth profile / refresh / logout as a dedicated suite (login/register used as setup elsewhere)

@@ -18,11 +18,13 @@ const OrgCode = require('./models/OrgCode');
 const AdminUser = require('./models/AdminUser');
 const DeviceToken = require('./models/DeviceToken');
 const PromptSession = require('./models/PromptSession');
+const StripeSubscription = require('./models/StripeSubscription');
 const AuthService = require('./services/AuthService');
 const PairingService = require('./services/PairingService');
 const HopefulPromptService = require('./services/HopefulPromptService');
 const HelpfulPromptService = require('./services/HelpfulPromptService');
 const { SubscriptionService } = require('./services/SubscriptionService');
+const { StripeBillingService } = require('./services/StripeBillingService');
 const AdminAuthService = require('./services/AdminAuthService');
 const PushNotificationService = require('./services/PushNotificationService');
 
@@ -38,6 +40,7 @@ const createAdminAuthRoutes = require('./routes/admin-auth');
 const createAdminRoutes = require('./routes/admin');
 const createDeviceTokenRoutes = require('./routes/device-tokens');
 const createPromptSessionRoutes = require('./routes/promptSessions');
+const { createBillingRoutes, createBillingWebhookHandler } = require('./routes/billing');
 
 const app = express();
 
@@ -157,6 +160,17 @@ function startDeviceTokenCleanupJob(deviceTokenModel) {
 // Middleware
 app.use(cors());
 app.use(securityHeaders); // Apply security headers to all responses
+
+// Stripe webhooks need the raw body for signature verification. Register before
+// express.json() and before the general API rate limiter.
+let billingWebhookHandler = null;
+app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), (req, res, next) => {
+  if (!billingWebhookHandler) {
+    return res.status(503).json({ error: 'Billing webhook not ready' });
+  }
+  return billingWebhookHandler(req, res, next);
+});
+
 app.use(express.json());
 app.use(apiLimiter); // Apply rate limiting to all API endpoints
 
@@ -179,7 +193,7 @@ async function setupDatabase() {
 setupDatabase();
 
 // Initialize models and services
-let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, deviceTokenModel, promptSessionModel, authService, pairingService, hopefulPromptService, helpfulPromptService, subscriptionService, adminAuthService, pushNotificationService;
+let userModel, refreshTokenModel, pairingModel, programModel, programStepModel, messageModel, iosSubscriptionModel, androidSubscriptionModel, orgCodeModel, adminUserModel, deviceTokenModel, promptSessionModel, stripeSubscriptionModel, authService, pairingService, hopefulPromptService, helpfulPromptService, subscriptionService, stripeBillingService, adminAuthService, pushNotificationService;
 
 async function initializeApp() {
   try {
@@ -196,6 +210,7 @@ async function initializeApp() {
     const adminUserModelInstance = new AdminUser(db);
     const deviceTokenModelInstance = new DeviceToken(db);
     const promptSessionModelInstance = new PromptSession(db);
+    const stripeSubscriptionModelInstance = new StripeSubscription(db);
     
     // Initialize database tables
     await userModelInstance.initDatabase();
@@ -210,6 +225,7 @@ async function initializeApp() {
     await adminUserModelInstance.initDatabase();
     await deviceTokenModelInstance.initDatabase();
     await promptSessionModelInstance.initDatabase();
+    await stripeSubscriptionModelInstance.initDatabase();
     
     // Assign to global variables after successful initialization
     userModel = userModelInstance;
@@ -224,6 +240,7 @@ async function initializeApp() {
     adminUserModel = adminUserModelInstance;
     deviceTokenModel = deviceTokenModelInstance;
     promptSessionModel = promptSessionModelInstance;
+    stripeSubscriptionModel = stripeSubscriptionModelInstance;
 
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel, pairingModel);
@@ -239,6 +256,10 @@ async function initializeApp() {
       androidSubscriptionModel,
       userModel,
       pairingModel
+    );
+    stripeBillingService = new StripeBillingService(
+      userModel,
+      stripeSubscriptionModel
     );
     // Push notifications (FCM via firebase-admin). Fails soft when no Firebase
     // credentials are present so local/dev/CI environments stay healthy; sends
@@ -306,6 +327,13 @@ function setupRoutes() {
   // Setup subscription routes
   if (subscriptionService && authService) {
     app.use('/api/subscription', createSubscriptionRoutes(subscriptionService, authService));
+  }
+
+  // Setup Stripe billing routes (checkout / portal / status). Webhook is registered
+  // earlier with a raw-body parser before express.json().
+  if (stripeBillingService && authService) {
+    app.use('/api/billing', createBillingRoutes(stripeBillingService, authService));
+    billingWebhookHandler = createBillingWebhookHandler(stripeBillingService);
   }
 
   // Setup device token routes for push notifications (authenticated)
