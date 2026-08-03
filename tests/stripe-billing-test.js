@@ -312,13 +312,16 @@ class StripeBillingTestRunner {
         'users.is_premium remains true after Stripe cancel when org-entitled'
       );
 
+      // GET /api/users/:id returns the user object at the top level (not nested).
       const profileRes = await axios.get(`${this.baseURL}/api/users/${user.id}`, {
         headers: { Authorization: `Bearer ${user.token}` },
         timeout: this.timeout
       });
+      this.assert(profileRes.status === 200, 'User profile returns 200 after Stripe cancel');
       this.assert(
-        profileRes.data.user.premium === true,
-        'User profile still reports premium after Stripe cancel'
+        profileRes.data.premium === true,
+        'User profile still reports premium after Stripe cancel',
+        `premium=${profileRes.data.premium}`
       );
     } catch (error) {
       this.assert(false, 'Org premium survives Stripe cancel', error.response?.data?.error || error.message);
