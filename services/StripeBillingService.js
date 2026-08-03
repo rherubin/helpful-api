@@ -308,9 +308,22 @@ class StripeBillingService {
     };
   }
 
+  // Mirror routes/users.js: org_code_id OR complete custom org fields grant premium
+  // independently of Stripe. Must not be wiped when a Stripe sub lapses.
+  premiumEntitledFromOrg(user) {
+    if (!user) return false;
+    if (user.org_code_id) return true;
+    const hasNonEmptyText = (value) =>
+      typeof value === 'string' && value.trim().length > 0;
+    return hasNonEmptyText(user.org_name)
+      && hasNonEmptyText(user.org_city)
+      && hasNonEmptyText(user.org_state);
+  }
+
   async syncPremiumForUser(userId) {
     const active = await this.stripeSubscriptionModel.getActiveForUser(userId);
-    const shouldBePremium = !!active;
+    const user = await this.userModel.getUserById(userId);
+    const shouldBePremium = !!active || this.premiumEntitledFromOrg(user);
     await this.userModel.updateUser(userId, { is_premium: shouldBePremium });
     return shouldBePremium;
   }
@@ -411,6 +424,16 @@ class StripeBillingService {
   }
 
   constructEvent(rawBody, signature) {
+    // Mock Stripe (used when STRIPE_SECRET_KEY is unset) does not verify signatures.
+    // Only allow that insecure path when tests explicitly opt in via TEST_MOCK_STRIPE.
+    // Otherwise a publicly reachable API without Stripe keys would accept forged
+    // webhooks and grant arbitrary users premium.
+    if (!process.env.STRIPE_SECRET_KEY && process.env.TEST_MOCK_STRIPE !== 'true') {
+      throw new StripeBillingError(
+        'Stripe webhooks disabled: configure STRIPE_SECRET_KEY (or TEST_MOCK_STRIPE=true for tests)',
+        { status: 503 }
+      );
+    }
     if (!this.webhookSecret && process.env.TEST_MOCK_STRIPE !== 'true' && process.env.STRIPE_SECRET_KEY) {
       throw new StripeBillingError('STRIPE_WEBHOOK_SECRET is not configured', { status: 503 });
     }
