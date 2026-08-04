@@ -328,6 +328,46 @@ class StripeBillingTestRunner {
     }
   }
 
+  /**
+   * Incomplete custom-org profile updates must not wipe Stripe-granted premium.
+   * Trigger: Stripe trialing user PUTs only org_name → previously forced is_premium=false.
+   */
+  async testStripePremiumSurvivesIncompleteCustomOrg(user) {
+    this.log('Testing Stripe premium survives incomplete custom org update', 'section');
+    try {
+      const updateRes = await axios.put(
+        `${this.baseURL}/api/users/${user.id}`,
+        { org_name: 'Stripe Survivor Org' },
+        {
+          headers: { Authorization: `Bearer ${user.token}` },
+          timeout: this.timeout
+        }
+      );
+      this.assert(updateRes.status === 200, 'Incomplete custom org update returns 200');
+      this.assert(
+        updateRes.data.user.premium === true,
+        'Profile premium remains true after incomplete custom org',
+        `premium=${updateRes.data.user.premium}`
+      );
+
+      const statusRes = await axios.get(`${this.baseURL}/api/billing/status`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(
+        statusRes.data.premium === true,
+        'Billing status still premium after incomplete custom org',
+        `premium=${statusRes.data.premium}`
+      );
+    } catch (error) {
+      this.assert(
+        false,
+        'Stripe premium survives incomplete custom org',
+        error.response?.data?.error || error.message
+      );
+    }
+  }
+
   async runAllTests() {
     this.log('Starting Stripe Billing tests', 'section');
 
@@ -346,6 +386,7 @@ class StripeBillingTestRunner {
     await this.testStatusAfterWebhook(user);
     await this.testPortalSession(user);
     await this.testRejectedReturnOrigin(user);
+    await this.testStripePremiumSurvivesIncompleteCustomOrg(user);
     await this.testOrgPremiumSurvivesStripeCancel();
 
     this.log(`Results: ${this.testResults.passed}/${this.testResults.total} passed`, 'info');

@@ -10,9 +10,23 @@ function filterUserData(user) {
   return filteredUser;
 }
 
-function createUserRoutes(userModel, authService, pairingService, orgCodeModel, pairingModel = null) {
+function createUserRoutes(userModel, authService, pairingService, orgCodeModel, pairingModel = null, stripeSubscriptionModel = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
+
+  // Keep Stripe-granted premium when org entitlement is removed or incomplete.
+  // Mirrors StripeBillingService.syncPremiumForUser (org OR Stripe), inverted:
+  // profile updates must not stomp an active Stripe subscription's is_premium.
+  async function hasActiveStripePremium(userId) {
+    if (!stripeSubscriptionModel) return false;
+    try {
+      const active = await stripeSubscriptionModel.getActiveForUser(userId);
+      return !!active;
+    } catch (err) {
+      console.warn('Failed to check active Stripe subscription for premium recompute:', err.message);
+      return false;
+    }
+  }
 
   // Create user
   router.post('/', async (req, res) => {
@@ -237,7 +251,8 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel, 
           updateData.org_name = null;
           updateData.org_city = null;
           updateData.org_state = null;
-          updateData.is_premium = false;
+          // Do not wipe Stripe-granted premium when detaching org.
+          updateData.is_premium = await hasActiveStripePremium(id);
         } else {
           if (typeof org_code !== 'string') {
             return res.status(400).json({ error: 'Invalid org code' });
@@ -280,7 +295,8 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel, 
           hasNonEmptyText(nextOrgCity) &&
           hasNonEmptyText(nextOrgState);
 
-        updateData.is_premium = hasCompleteCustomOrg;
+        // Incomplete custom org must not revoke an active Stripe subscription.
+        updateData.is_premium = hasCompleteCustomOrg || await hasActiveStripePremium(id);
       }
 
       const updatedUser = await userModel.updateUser(id, updateData);
