@@ -45,4 +45,4 @@ router.post('/accept', authenticateToken, async (req, res) => {
 
 ## Known follow-up
 
-`routes/users.js` still reads `req.app.locals.pairingModel` at line ~161. This is inherited from before this convention existed. Any PR that touches `routes/users.js` should opportunistically convert it: thread `pairingModel` through `createUserRoutes(...)` in `server.js` and drop the `app.locals.pairingModel = pairingModel;` assignment.
+`routes/users.js` previously read `req.app.locals.pairingModel` for soft-delete cascade. That was converted: `pairingModel` is now threaded through `createUserRoutes(...)` in `server.js`. Do not reintroduce `app.locals.pairingModel`.

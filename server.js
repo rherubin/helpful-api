@@ -295,6 +295,9 @@ async function initializeApp() {
 }
 
 function setupRoutes() {
+  // Soft-delete cascade for users injects pairingModel via createUserRoutes(...).
+  // Do not park it on app.locals (service-locator anti-pattern).
+
   // Setup user routes
   if (userModel && authService && pairingService) {
     app.use('/api/users', createUserRoutes(userModel, authService, pairingService, orgCodeModel, pairingModel || null));
