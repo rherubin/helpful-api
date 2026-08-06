@@ -331,7 +331,7 @@ Also sets `Authorization: Bearer …` response header.
 
 #### GET `/api/users/:id`
 
-Auth required. Returns flat user + computed `premium` + org summary fields. **Not** restricted to self in code.
+Auth required; **must be self** (`req.user.id` must match `:id`). Returns flat user + computed `premium` + org summary fields. Outsiders get **403**.
 
 #### PUT `/api/users/:id`
 
@@ -361,7 +361,7 @@ Soft-delete / restore / list deleted. Delete and restore are **self-gated** (`re
 | GET | `/api/pairing/pending` | Pending only |
 | GET | `/api/pairing/accepted` | Accepted only |
 | GET | `/api/pairing/stats` | `max_pairings`, `current_pairings`, `available_slots`, `pending_requests` |
-| GET | `/api/pairing/:pairingId` | Detail (active only; soft-deleted → not found) |
+| GET | `/api/pairing/:pairingId` | Detail (**participant only**; soft-deleted → not found; **403** outsider) |
 | DELETE | `/api/pairing/:pairingId` | Soft-delete (**participant only**); **403** outsider |
 | PATCH | `/api/pairing/:pairingId/restore` | Restore soft-deleted pairing (**member only**). **400** if restoring would push a member over `max_pairings`, or a member account is deleted |
 | GET | `/api/pairing/deleted/all` | Soft-deleted list (**admin** JWT only; regular users **403**) |
@@ -555,7 +555,7 @@ Statuses: `prep` \| `bridge` \| `in_session` \| `complete` \| `abandoned`.
 
 #### GET `/api/messages-stats?date={epoch_seconds}&programId={id}`
 
-Auth required. `date` is Unix time in **seconds** (not ms).  
+Auth required; caller must have program access (`checkProgramAccess`) or **403**. `date` is Unix time in **seconds** (not ms).  
 Returns map: `{ "<step_id>": { "messageCount": N }, ... }`.
 
 ---
