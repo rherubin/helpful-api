@@ -1,5 +1,4 @@
 const jwt = require('jsonwebtoken');
-const { v4: uuidv4 } = require('uuid');
 
 class AdminAuthService {
   constructor(adminUserModel, refreshTokenModel) {
@@ -67,28 +66,20 @@ class AdminAuthService {
         throw new Error('Invalid token type');
       }
 
-      // Check if refresh token exists and is valid in database
-      const storedToken = await this.refreshTokenModel.getTokenByUserId(decodedRefresh.id, 'admin');
-      if (!storedToken) {
-        throw new Error('Refresh token not found');
-      }
+      // Confirm the presented refresh token is persisted for this admin.
+      // Use the scan/verify helper (not getTokenByUserId) so a match is found
+      // even if multiple admin refresh rows exist for the same user_id.
+      await this.refreshTokenModel.getRefreshToken(refreshToken, decodedRefresh.id);
 
-      // Verify the provided refresh token matches the stored hash
-      const isValidRefreshToken = await this.refreshTokenModel.verifyToken(refreshToken, storedToken.token);
-      if (!isValidRefreshToken) {
-        throw new Error('Invalid refresh token');
-      }
-
-      // Get the admin user
       const user = await this.adminUserModel.getAdminUserById(decodedRefresh.id);
 
-      // Generate new tokens
-      const newTokens = await this.issueTokensForAdminUser(user);
-
-      // Delete old refresh token
-      await this.refreshTokenModel.deleteTokenByUserId(decodedRefresh.id);
-
-      return newTokens;
+      // Rotate: revoke existing admin refresh tokens BEFORE issuing replacements.
+      // Previously this called the nonexistent deleteTokenByUserId() AFTER
+      // issueTokensForAdminUser(), which always failed refresh and orphaned the
+      // newly inserted token. Even with the correct method name, deleting after
+      // issue would wipe the just-created token too.
+      await this.refreshTokenModel.deleteRefreshTokensByUserId(decodedRefresh.id, 'admin');
+      return await this.issueTokensForAdminUser(user);
     } catch (error) {
       throw new Error('Token refresh failed');
     }
@@ -103,6 +94,15 @@ class AdminAuthService {
     const isValidPassword = await this.adminUserModel.verifyPassword(user, password);
     if (!isValidPassword) {
       throw new Error('Invalid email or password');
+    }
+
+    // Invalidate any prior admin refresh sessions (mirrors AuthService.login).
+    // Without this, getTokenByUserId / multi-row state could leave stale tokens
+    // and make subsequent refreshes nondeterministic.
+    try {
+      await this.refreshTokenModel.deleteRefreshTokensByUserId(user.id, 'admin');
+    } catch (error) {
+      console.log('No existing admin refresh tokens to delete for user:', user.id);
     }
 
     // Issue tokens
