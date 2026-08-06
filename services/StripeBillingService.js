@@ -238,6 +238,17 @@ class StripeBillingService {
     const normalizedPlan = this.normalizePlan(plan);
     const { successUrl, cancelUrl } = this.resolveCheckoutUrls({ success_url, cancel_url });
     const user = await this.userModel.getUserById(userId);
+
+    // Block a second Checkout while trialing/active — otherwise the client can
+    // open another paid subscription and double-charge. Manage plan changes via Portal.
+    const existingActive = await this.stripeSubscriptionModel.getActiveForUser(userId);
+    if (existingActive) {
+      throw new StripeBillingError(
+        'An active Stripe subscription already exists. Use the billing portal to manage it.',
+        { status: 409, code: 'subscription_already_active' }
+      );
+    }
+
     const customerId = await this.ensureStripeCustomer(user);
     const priceId = this.priceIdForPlan(normalizedPlan);
 

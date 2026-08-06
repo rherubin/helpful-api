@@ -207,17 +207,7 @@ class StripeBillingTestRunner {
   async testPortalSession(user) {
     this.log('Testing customer portal session', 'section');
     try {
-      // Portal requires a stripe_customer_id — checkout should have created one.
-      // If webhook path didn't attach a customer, create checkout first to ensure one.
-      await axios.post(`${this.baseURL}/api/billing/checkout`, {
-        plan: 'monthly',
-        success_url: 'http://localhost:3000/get-started?billing=success',
-        cancel_url: 'http://localhost:3000/get-started?billing=cancel'
-      }, {
-        headers: { Authorization: `Bearer ${user.token}` },
-        timeout: this.timeout
-      });
-
+      // Portal requires stripe_customer_id — created by the earlier checkout session.
       const res = await axios.post(`${this.baseURL}/api/billing/portal`, {
         return_url: 'http://localhost:3000/get-started?flow=subscription'
       }, {
@@ -368,6 +358,31 @@ class StripeBillingTestRunner {
     }
   }
 
+  // Active/trialing subscribers must not open another Checkout (double-charge).
+  async testCheckoutBlockedWhenSubscriptionActive(user) {
+    this.log('Testing checkout blocked while subscription active', 'section');
+    try {
+      const res = await axios.post(`${this.baseURL}/api/billing/checkout`, {
+        plan: 'monthly',
+        success_url: 'http://localhost:3000/get-started?billing=success',
+        cancel_url: 'http://localhost:3000/get-started?billing=cancel'
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout,
+        validateStatus: () => true
+      });
+      this.assert(res.status === 409, 'Active subscription blocks checkout with 409',
+        `status=${res.status} error=${res.data?.error}`);
+      this.assert(
+        typeof res.data?.error === 'string' && /billing portal/i.test(res.data.error),
+        'Error points user to billing portal',
+        res.data?.error
+      );
+    } catch (error) {
+      this.assert(false, 'Checkout blocked when active', error.message);
+    }
+  }
+
   async runAllTests() {
     this.log('Starting Stripe Billing tests', 'section');
 
@@ -380,12 +395,14 @@ class StripeBillingTestRunner {
     }
 
     await this.testCheckoutValidation(user);
+    // Reject bad return URLs before any subscription exists (otherwise 409 masks 400).
+    await this.testRejectedReturnOrigin(user);
     await this.testCheckoutCreatesSession(user);
     await this.testStatusBeforeWebhook(user);
     await this.testWebhookCheckoutCompleted(user);
     await this.testStatusAfterWebhook(user);
+    await this.testCheckoutBlockedWhenSubscriptionActive(user);
     await this.testPortalSession(user);
-    await this.testRejectedReturnOrigin(user);
     await this.testStripePremiumSurvivesIncompleteCustomOrg(user);
     await this.testOrgPremiumSurvivesStripeCancel();
 

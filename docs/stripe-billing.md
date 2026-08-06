@@ -15,7 +15,7 @@ Sit Together web checkout uses **Stripe Checkout** (hosted) + **Customer Portal*
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| POST | `/api/billing/checkout` | Bearer | Body `{ plan: 'monthly'\|'yearly', success_url?, cancel_url? }` → `{ url, session_id, plan }` |
+| POST | `/api/billing/checkout` | Bearer | Body `{ plan: 'monthly'\|'yearly', success_url?, cancel_url? }` → `{ url, session_id, plan }`. **409** if the user already has a `trialing`/`active` Stripe subscription (use Portal instead). |
 | POST | `/api/billing/portal` | Bearer | Body `{ return_url? }` → `{ url }` |
 | GET | `/api/billing/status` | Bearer | Premium + latest subscription row |
 | POST | `/api/billing/webhook` | Stripe signature | Raw body; updates DB |
