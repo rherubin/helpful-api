@@ -12,7 +12,7 @@ const { generateTestEmail } = require('./test-helpers');
  *   POST /api/billing/webhook
  *
  * Run with: node tests/stripe-billing-test.js
- * Server should be started with TEST_MOCK_STRIPE=true (or without STRIPE_SECRET_KEY).
+ * Server should be started with TEST_MOCK_STRIPE=true (required for mock webhooks).
  */
 class StripeBillingTestRunner {
   constructor(options = {}) {
@@ -129,8 +129,41 @@ class StripeBillingTestRunner {
     }
   }
 
+  async postWebhook(event) {
+    return axios.post(
+      `${this.baseURL}/api/billing/webhook`,
+      JSON.stringify(event),
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'stripe-signature': 't=mock,v1=mock'
+        },
+        timeout: this.timeout,
+        transformRequest: [(data) => data],
+        validateStatus: () => true
+      }
+    );
+  }
+
+  buildSubscriptionObject(user, { id, status = 'trialing', plan = 'yearly' } = {}) {
+    const subId = id || `sub_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    return {
+      id: subId,
+      status,
+      items: {
+        data: [{ price: { id: process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly' } }]
+      },
+      trial_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
+      current_period_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
+      cancel_at_period_end: status === 'canceled',
+      metadata: { user_id: user.id, plan },
+      customer: 'cus_test_webhook'
+    };
+  }
+
   async testWebhookCheckoutCompleted(user) {
     this.log('Testing checkout.session.completed webhook', 'section');
+    this.lastSubscriptionId = `sub_test_${Date.now()}`;
     const event = {
       id: `evt_test_${Date.now()}`,
       type: 'checkout.session.completed',
@@ -141,35 +174,13 @@ class StripeBillingTestRunner {
           client_reference_id: user.id,
           customer: null,
           metadata: { user_id: user.id, plan: 'yearly' },
-          subscription: {
-            id: `sub_test_${Date.now()}`,
-            status: 'trialing',
-            items: {
-              data: [{ price: { id: process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly' } }]
-            },
-            trial_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
-            current_period_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
-            cancel_at_period_end: false,
-            metadata: { user_id: user.id, plan: 'yearly' },
-            customer: 'cus_test_webhook'
-          }
+          subscription: this.buildSubscriptionObject(user, { id: this.lastSubscriptionId })
         }
       }
     };
 
     try {
-      const res = await axios.post(
-        `${this.baseURL}/api/billing/webhook`,
-        JSON.stringify(event),
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'stripe-signature': 't=mock,v1=mock'
-          },
-          timeout: this.timeout,
-          transformRequest: [(data) => data]
-        }
-      );
+      const res = await this.postWebhook(event);
       this.assert(res.status === 200, 'Webhook returns 200', JSON.stringify(res.data));
     } catch (error) {
       this.assert(false, 'Webhook checkout.session.completed', error.response?.data?.error || error.message);
@@ -238,6 +249,85 @@ class StripeBillingTestRunner {
     }
   }
 
+  // Org / custom-org premium must survive Stripe cancel — syncPremiumForUser used to
+  // set is_premium solely from Stripe and wipe org-granted premium.
+  async testOrgPremiumSurvivesStripeCancel() {
+    this.log('Testing org premium survives Stripe subscription cancel', 'section');
+    const user = await this.createTestUser('stripe-billing-org-premium');
+    if (!user) {
+      this.assert(false, 'Create org-premium billing test user');
+      return;
+    }
+
+    try {
+      const orgRes = await axios.put(`${this.baseURL}/api/users/${user.id}`, {
+        org_name: 'Stripe Test Church',
+        org_city: 'Springfield',
+        org_state: 'IL'
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(orgRes.status === 200, 'Custom org update returns 200');
+      this.assert(orgRes.data.user.premium === true, 'Custom org grants premium before Stripe');
+
+      const subId = `sub_org_preserve_${Date.now()}`;
+      const activate = await this.postWebhook({
+        id: `evt_org_act_${Date.now()}`,
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: `cs_org_${Date.now()}`,
+            mode: 'subscription',
+            client_reference_id: user.id,
+            customer: null,
+            metadata: { user_id: user.id, plan: 'yearly' },
+            subscription: this.buildSubscriptionObject(user, { id: subId, status: 'trialing' })
+          }
+        }
+      });
+      this.assert(activate.status === 200, 'Activate webhook returns 200');
+
+      const cancel = await this.postWebhook({
+        id: `evt_org_cancel_${Date.now()}`,
+        type: 'customer.subscription.deleted',
+        data: {
+          object: this.buildSubscriptionObject(user, { id: subId, status: 'canceled' })
+        }
+      });
+      this.assert(cancel.status === 200, 'Cancel webhook returns 200');
+
+      const statusRes = await axios.get(`${this.baseURL}/api/billing/status`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(statusRes.status === 200, 'Billing status after cancel returns 200');
+      this.assert(
+        statusRes.data.premium === true,
+        'Org premium preserved after Stripe cancel',
+        `premium=${statusRes.data.premium} is_premium=${statusRes.data.is_premium} sub=${statusRes.data.subscription?.status}`
+      );
+      this.assert(
+        statusRes.data.is_premium === true,
+        'users.is_premium remains true after Stripe cancel when org-entitled'
+      );
+
+      // GET /api/users/:id returns the user object at the top level (not nested).
+      const profileRes = await axios.get(`${this.baseURL}/api/users/${user.id}`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(profileRes.status === 200, 'User profile returns 200 after Stripe cancel');
+      this.assert(
+        profileRes.data.premium === true,
+        'User profile still reports premium after Stripe cancel',
+        `premium=${profileRes.data.premium}`
+      );
+    } catch (error) {
+      this.assert(false, 'Org premium survives Stripe cancel', error.response?.data?.error || error.message);
+    }
+  }
+
   async runAllTests() {
     this.log('Starting Stripe Billing tests', 'section');
 
@@ -256,6 +346,7 @@ class StripeBillingTestRunner {
     await this.testStatusAfterWebhook(user);
     await this.testPortalSession(user);
     await this.testRejectedReturnOrigin(user);
+    await this.testOrgPremiumSurvivesStripeCancel();
 
     this.log(`Results: ${this.testResults.passed}/${this.testResults.total} passed`, 'info');
     return this.testResults.failed === 0;

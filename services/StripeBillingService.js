@@ -308,9 +308,22 @@ class StripeBillingService {
     };
   }
 
+  // Mirror routes/users.js: org_code_id OR complete custom org fields grant premium
+  // independently of Stripe. Must not be wiped when a Stripe sub lapses.
+  premiumEntitledFromOrg(user) {
+    if (!user) return false;
+    if (user.org_code_id) return true;
+    const hasNonEmptyText = (value) =>
+      typeof value === 'string' && value.trim().length > 0;
+    return hasNonEmptyText(user.org_name)
+      && hasNonEmptyText(user.org_city)
+      && hasNonEmptyText(user.org_state);
+  }
+
   async syncPremiumForUser(userId) {
     const active = await this.stripeSubscriptionModel.getActiveForUser(userId);
-    const shouldBePremium = !!active;
+    const user = await this.userModel.getUserById(userId);
+    const shouldBePremium = !!active || this.premiumEntitledFromOrg(user);
     await this.userModel.updateUser(userId, { is_premium: shouldBePremium });
     return shouldBePremium;
   }
