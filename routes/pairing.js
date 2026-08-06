@@ -182,17 +182,46 @@ function createPairingRoutes(pairingService, authService, pushNotificationServic
     }
   });
 
-  // Restore a soft deleted pairing (admin endpoint - could be restricted further)
+  // Restore a soft deleted pairing
   router.patch('/:pairingId/restore', authenticateToken, async (req, res) => {
     try {
       const { pairingId } = req.params;
       
       // Get the pairing model from the service
       const pairingModel = pairingService.pairingModel;
+      const pairing = await pairingModel.getPairingByIdIncludingDeleted(pairingId);
+      if (!pairing.deleted_at) {
+        return res.status(404).json({ error: 'Pairing not found or not deleted' });
+      }
+
+      // Restoring an accepted pairing must not push either member over max_pairings
+      // (e.g. after cascade soft-delete freed a slot and they rematched).
+      if (pairing.status === 'accepted' && userModel) {
+        for (const memberId of [pairing.user1_id, pairing.user2_id].filter(Boolean)) {
+          let member;
+          try {
+            member = await userModel.getUserById(memberId);
+          } catch (memberError) {
+            if (memberError.message === 'User not found') {
+              return res.status(400).json({
+                error: 'Cannot restore pairing: a member account is deleted'
+              });
+            }
+            throw memberError;
+          }
+          const acceptedCount = await pairingModel.countAcceptedPairings(memberId);
+          if (acceptedCount >= member.max_pairings) {
+            return res.status(400).json({
+              error: 'Cannot restore pairing: a member has reached their maximum number of pairings'
+            });
+          }
+        }
+      }
+
       const result = await pairingModel.restorePairing(pairingId);
       res.status(200).json(result);
     } catch (error) {
-      if (error.message === 'Pairing not found or not deleted') {
+      if (error.message === 'Pairing not found' || error.message === 'Pairing not found or not deleted') {
         return res.status(404).json({ error: error.message });
       } else {
         return res.status(500).json({ error: 'Failed to restore pairing' });
@@ -200,9 +229,12 @@ function createPairingRoutes(pairingService, authService, pushNotificationServic
     }
   });
 
-  // Get deleted pairings (admin endpoint)
+  // Get deleted pairings (admin-only — regular user JWTs never carry type=admin)
   router.get('/deleted/all', authenticateToken, async (req, res) => {
     try {
+      if (req.user?.type !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
       // Get the pairing model from the service
       const pairingModel = pairingService.pairingModel;
       const deletedPairings = await pairingModel.getDeletedPairings();

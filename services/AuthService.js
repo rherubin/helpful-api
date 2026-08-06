@@ -154,8 +154,21 @@ class AuthService {
   // Login user
   async login(email, password) {
     try {
-      // Get user by email
-      const user = await this.userModel.getUserByEmail(email);
+      // Resolve user; soft-deleted accounts remain login-recoverable so the UNIQUE
+      // email is not permanently locked after access tokens expire.
+      let user;
+      let restoredFromSoftDelete = false;
+      try {
+        user = await this.userModel.getUserByEmail(email);
+      } catch (error) {
+        if (error.message !== 'User not found') {
+          throw error;
+        }
+        user = await this.userModel.getUserByEmailIncludingDeleted(email);
+        if (!user.deleted_at) {
+          throw new Error('User not found');
+        }
+      }
       
       // Verify password (skipped when bypass_password is enabled for the user)
       if (!user.bypass_password) {
@@ -163,6 +176,14 @@ class AuthService {
         if (!isPasswordValid) {
           throw new Error('Invalid email or password');
         }
+      }
+
+      // Successful password proof restores a soft-deleted account (pairings stay
+      // cascade-deleted until explicitly restored — matches existing restore semantics).
+      if (user.deleted_at) {
+        await this.userModel.restoreUser(user.id);
+        user = await this.userModel.getUserById(user.id);
+        restoredFromSoftDelete = true;
       }
 
       // Generate tokens
@@ -196,7 +217,9 @@ class AuthService {
       }
       
       return {
-        message: 'Login successful',
+        message: restoredFromSoftDelete
+          ? 'Login successful; soft-deleted account restored'
+          : 'Login successful',
         data: {
           user: {
             ...userData,
@@ -205,7 +228,8 @@ class AuthService {
           access_token: accessToken,
           refresh_token: refreshToken,
           expires_in: this.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
-          refresh_expires_in: this.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS
+          refresh_expires_in: this.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
+          restored: restoredFromSoftDelete
         }
       };
     } catch (error) {

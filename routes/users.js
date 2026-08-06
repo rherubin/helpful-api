@@ -10,7 +10,7 @@ function filterUserData(user) {
   return filteredUser;
 }
 
-function createUserRoutes(userModel, authService, pairingService, orgCodeModel) {
+function createUserRoutes(userModel, authService, pairingService, orgCodeModel, pairingModel = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
 
@@ -156,11 +156,11 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
   router.delete('/:id', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
+
+      // Revoke refresh sessions via authService's token model (may be null in tests).
+      const refreshTokenModel = authService?.refreshTokenModel || null;
       
-      // Get the pairing model from the userModel if available
-      const pairingModel = req.app.locals.pairingModel;
-      
-      const result = await userModel.softDeleteUser(id, pairingModel);
+      const result = await userModel.softDeleteUser(id, pairingModel, refreshTokenModel);
       res.status(200).json(result);
     } catch (error) {
       if (error.message === 'User not found or already deleted') {
@@ -339,9 +339,12 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel) 
     }
   });
 
-  // Get deleted users (admin endpoint)
+  // Get deleted users (admin-only — regular user JWTs never carry type=admin)
   router.get('/deleted/all', authenticateToken, async (req, res) => {
     try {
+      if (req.user?.type !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
       const deletedUsers = await userModel.getDeletedUsers();
       res.json(deletedUsers.map(filterUserData));
     } catch (error) {

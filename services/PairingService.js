@@ -124,6 +124,15 @@ class PairingService {
         throw new Error('You have reached your maximum number of pairings');
       }
 
+      // Also enforce the requester's cap. Signup auto-creates a pending partner
+      // code; if the requester later accepts someone else's code, their leftover
+      // pending invite must not still be redeemable past max_pairings.
+      const requester = await this.userModel.getUserById(pairing.user1_id);
+      const requesterPairings = await this.pairingModel.countAcceptedPairings(pairing.user1_id);
+      if (requesterPairings >= requester.max_pairings) {
+        throw new Error('The pairing requester has reached their maximum number of pairings');
+      }
+
       // Check if they're already paired
       const existingPairing = await this.pairingModel.checkExistingPairing(pairing.user1_id, userId);
       if (existingPairing && existingPairing.id !== pairing.id) {
@@ -132,6 +141,15 @@ class PairingService {
 
       // Accept the pairing by partner code
       await this.pairingModel.acceptPairingByPartnerCode(partnerCode, userId);
+
+      // Invalidate leftover open partner-code invites for both members so a
+      // second accept cannot push either side over max_pairings.
+      try {
+        await this.pairingModel.softDeleteOpenPartnerCodeRequests(userId);
+        await this.pairingModel.softDeleteOpenPartnerCodeRequests(pairing.user1_id);
+      } catch (cleanupError) {
+        console.warn('Warning: Failed to clear leftover partner codes after accept:', cleanupError.message);
+      }
       
       return {
         message: 'Pairing accepted successfully',

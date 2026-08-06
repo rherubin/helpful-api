@@ -19,12 +19,12 @@
     "test:messages": "node tests/messages-test.js",
     "test:therapy-trigger": "node tests/therapy-trigger-test.js",
     "test:push": "node tests/push-notification-service-test.js",
+    "test:admin-auth-refresh": "node tests/admin-auth-refresh-test.js",
     "test:admin-push": "node tests/admin-push-test-test.js",
     "test:stripe-billing": "node tests/stripe-billing-test.js",
     "test:prompt-sessions": "node tests/prompt-sessions-test.js",
     "test:pairing-lifecycle": "node tests/pairing-lifecycle-test.js",
-    "test:user-soft-delete": "node tests/user-soft-delete-test.js",
-    "test:admin-auth-refresh": "node tests/admin-auth-refresh-test.js"
+    "test:user-soft-delete": "node tests/user-soft-delete-test.js"
   },
   "keywords": [
     "api",

@@ -358,6 +358,22 @@ class User {
     );
   }
 
+  // Get user by email including soft-deleted rows (login/restore recovery)
+  async getUserByEmailIncludingDeleted(email) {
+    try {
+      const row = await this.queryOne('SELECT * FROM users WHERE email = ?', [email]);
+      if (!row) {
+        throw new Error('User not found');
+      }
+      return row;
+    } catch (err) {
+      if (err.message === 'User not found') {
+        throw err;
+      }
+      throw new Error('Failed to fetch user');
+    }
+  }
+
   // Update user
   async updateUser(id, updateData) {
     const {
@@ -529,8 +545,9 @@ class User {
     });
   }
 
-  // Soft delete a user and cascade delete their pairings
-  async softDeleteUser(id, pairingModel = null) {
+  // Soft delete a user and cascade delete their pairings.
+  // Optional refreshTokenModel revokes sessions so deleted accounts cannot refresh.
+  async softDeleteUser(id, pairingModel = null, refreshTokenModel = null) {
     try {
       // First, soft delete the user
       const updateUserQuery = `
@@ -542,6 +559,16 @@ class User {
       const result = await this.query(updateUserQuery, [id]);
       if (result.affectedRows === 0) {
         throw new Error('User not found or already deleted');
+      }
+
+      // Revoke refresh tokens so the account cannot mint new access tokens while deleted.
+      // Access tokens remain cryptographically valid until expiry; login restores the account.
+      if (refreshTokenModel) {
+        try {
+          await refreshTokenModel.deleteRefreshTokensByUserId(id, 'user');
+        } catch (tokenError) {
+          console.warn('Warning: Failed to revoke refresh tokens on user soft-delete:', tokenError.message);
+        }
       }
 
       // Then, cascade soft delete their pairings if pairingModel is provided

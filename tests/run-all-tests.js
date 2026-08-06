@@ -20,6 +20,7 @@ const HelpfulPromptServiceTestRunner = require('./helpful-prompt-service-test');
 const HopefulPromptServiceTestRunner = require('./hopeful-prompt-service-test');
 const ProgramOrgContextTestRunner = require('./program-org-context-test');
 const PushNotificationServiceTestRunner = require('./push-notification-service-test');
+const AdminAuthRefreshTestRunner = require('./admin-auth-refresh-test');
 const AdminPushTestRunner = require('./admin-push-test-test');
 const PromptSessionsTestRunner = require('./prompt-sessions-test');
 
@@ -54,6 +55,7 @@ class TestSuiteRunner {
       runHopefulPromptService: options.runHopefulPromptService !== false, // Default true
       runProgramOrgContext: options.runProgramOrgContext !== false, // Default true
       runPushNotificationService: options.runPushNotificationService !== false, // Default true
+      runAdminAuthRefresh: options.runAdminAuthRefresh !== false, // Default true
       runAdminPushTest: options.runAdminPushTest !== false, // Default true
       runPromptSessions: options.runPromptSessions !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
@@ -84,6 +86,7 @@ class TestSuiteRunner {
       hopefulPromptService: null,
       programOrgContext: null,
       pushNotificationService: null,
+      adminAuthRefresh: null,
       adminPushTest: null,
       promptSessions: null,
       startTime: Date.now(),
@@ -840,6 +843,41 @@ class TestSuiteRunner {
     }
   }
 
+  async runAdminAuthRefreshTests() {
+    if (!this.options.runAdminAuthRefresh) {
+      this.log('Skipping AdminAuthService refresh unit tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🔑 Running AdminAuthService Refresh Unit Tests', 'section');
+
+    try {
+      const runner = new AdminAuthRefreshTestRunner();
+      const success = await runner.runAllTests();
+
+      this.results.adminAuthRefresh = {
+        success,
+        skipped: false,
+        details: 'Admin refresh token rotation + login revoke — pure unit stubs',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('AdminAuthService refresh unit tests completed successfully', 'success');
+      } else {
+        this.log('AdminAuthService refresh unit tests failed', 'error');
+      }
+
+      return this.results.adminAuthRefresh;
+    } catch (error) {
+      this.log(`AdminAuthService refresh unit tests failed: ${error.message}`, 'error');
+      this.results.adminAuthRefresh = { success: false, error: error.message };
+      return this.results.adminAuthRefresh;
+    }
+  }
+
   async runAdminPushTestTests() {
     if (!this.options.runAdminPushTest) {
       this.log('Skipping admin push-test endpoint tests', 'warn');
@@ -1228,6 +1266,15 @@ class TestSuiteRunner {
       console.log('');
     }
 
+    // Run AdminAuthService refresh unit tests (no server / DB)
+    if (this.options.runAdminAuthRefresh) {
+      await this.runAdminAuthRefreshTests();
+      if (this.results.adminAuthRefresh && !this.results.adminAuthRefresh.success && !this.results.adminAuthRefresh.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
     // Run admin push-test endpoint integration tests
     if (this.options.runAdminPushTest) {
       await this.runAdminPushTestTests();
@@ -1562,6 +1609,8 @@ class TestSuiteRunner {
         hopefulPromptService: this.results.hopefulPromptService,
         programOrgContext: this.results.programOrgContext,
         pushNotificationService: this.results.pushNotificationService,
+        adminAuthRefresh: this.results.adminAuthRefresh,
+        adminPushTest: this.results.adminPushTest,
         promptSessions: this.results.promptSessions
       },
       summary: {
@@ -1632,6 +1681,7 @@ function parseArgs() {
     if (arg === '--no-hopeful-prompt-service') options.runHopefulPromptService = false;
     if (arg === '--no-program-org-context') options.runProgramOrgContext = false;
     if (arg === '--no-push-notification-service') options.runPushNotificationService = false;
+    if (arg === '--no-admin-auth-refresh') options.runAdminAuthRefresh = false;
     if (arg === '--no-admin-push-test') options.runAdminPushTest = false;
     if (arg === '--no-prompt-sessions') options.runPromptSessions = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
