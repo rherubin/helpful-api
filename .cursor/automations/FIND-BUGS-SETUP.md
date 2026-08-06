@@ -18,7 +18,7 @@ Also complete **Cloud Agents → Start Setup** and connect GitHub + Slack before
 |-------|--------|
 | Name | Find Bugs — helpful-api |
 | Repo | `rherubin/helpful-api` |
-| Branch | `main` |
+| Branch | `develop` |
 | Slack | `C0BKT9831C5` (API bug reports) |
 | Instructions | Copy the `prompt` string from `find-bugs-helpful-api.json` |
 
@@ -28,7 +28,7 @@ Also complete **Cloud Agents → Start Setup** and connect GitHub + Slack before
 |-------|--------|
 | Name | Find Bugs — helpful-web |
 | Repo | `rherubin/helpful-web` |
-| Branch | `main` |
+| Branch | `develop` |
 | Slack | `C0BKQA8T6R1` (web bug reports) |
 | Instructions | Copy the `prompt` string from `../helpful-web/.cursor/automations/find-bugs-helpful-web.json` (or the sibling file in that repo) |
 

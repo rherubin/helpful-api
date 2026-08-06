@@ -28,7 +28,7 @@
     "memoryEnabled": true,
     "gitConfig": {
       "repo": "rherubin/helpful-api",
-      "branch": "main"
+      "branch": "develop"
     }
   }
 }
