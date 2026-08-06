@@ -141,11 +141,16 @@ function createPairingRoutes(pairingService, authService, pushNotificationServic
     }
   });
 
-  // Get pairing details
+  // Get pairing details — members only (leaks partner_code + emails otherwise)
   router.get('/:pairingId', authenticateToken, async (req, res) => {
     try {
       const { pairingId } = req.params;
+      const userId = req.user.id;
       const result = await pairingService.getPairingDetails(pairingId);
+      const pairing = result.pairing || result;
+      if (pairing.user1_id !== userId && pairing.user2_id !== userId) {
+        return res.status(403).json({ error: 'You are not authorized to view this pairing' });
+      }
       res.status(200).json(result);
     } catch (error) {
       if (error.message === 'Pairing not found') {

@@ -70,10 +70,43 @@ function createAdminAuthRoutes(adminAuthService, adminUserModel) {
     }
   });
 
-  // Admin registration endpoint
+  // Admin registration endpoint.
+  // Open registration is an auth bypass in production — only allowed when:
+  //   1) ALLOW_ADMIN_REGISTRATION=true (explicit opt-in for tests/dev), OR
+  //   2) ADMIN_REGISTRATION_SECRET matches header/body, OR
+  //   3) No active admins exist yet (one-time bootstrap).
   router.post('/register', async (req, res) => {
     try {
-      const { email, password } = req.body;
+      const { email, password, registration_secret } = req.body;
+
+      // Explicit opt-in, or common test-harness flags (never set on production).
+      const allowOpen =
+        process.env.ALLOW_ADMIN_REGISTRATION === 'true' ||
+        process.env.TEST_MOCK_LLM === 'true' ||
+        process.env.TEST_MOCK_STRIPE === 'true';
+      const configuredSecret = process.env.ADMIN_REGISTRATION_SECRET || '';
+      const providedSecret =
+        req.get('x-admin-registration-secret') || registration_secret || '';
+      const secretOk =
+        configuredSecret.length > 0 &&
+        providedSecret.length > 0 &&
+        providedSecret === configuredSecret;
+
+      if (!allowOpen && !secretOk) {
+        let activeAdminCount = 0;
+        try {
+          activeAdminCount = await adminUserModel.countActiveAdminUsers();
+        } catch (countError) {
+          console.error('Admin registration gate count failed:', countError.message);
+          return res.status(503).json({ error: 'Admin registration unavailable' });
+        }
+        if (activeAdminCount > 0) {
+          return res.status(403).json({
+            error: 'Admin registration is disabled. Set ALLOW_ADMIN_REGISTRATION=true or provide ADMIN_REGISTRATION_SECRET.'
+          });
+        }
+        // activeAdminCount === 0 → allow bootstrap of the first admin.
+      }
 
       // Validation
       if (!email || !password) {

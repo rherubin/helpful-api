@@ -215,6 +215,17 @@ class SubscriptionService {
   }
 
   async processReceipt(userId, payload) {
+    // Client-supplied expiration_date / jws_receipt are trusted only when tests
+    // explicitly opt in. Without App Store / Play verification, any authenticated
+    // caller could POST a far-future expiration and mark their pairings premium.
+    // Mirror StripeBillingService.constructEvent's TEST_MOCK_STRIPE gate.
+    if (process.env.TEST_MOCK_IAP !== 'true') {
+      throw new SubscriptionError(
+        'In-app purchase receipt verification is not configured. Set TEST_MOCK_IAP=true for tests only.',
+        503
+      );
+    }
+
     const platform = this.normalizePlatform(payload.platform);
     let subscriptionResult;
 

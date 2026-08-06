@@ -113,14 +113,14 @@ class UserSoftDeleteTestRunner {
       );
     }
 
-    // GET user → 404 while deleted
+    // GET user by outsider → 403 (self-only ownership gate; no deleted-user oracle)
     try {
       await axios.get(`${this.baseURL}/api/users/${user.id}`, this.authHeader(other.token));
-      this.assert(false, 'GET soft-deleted user should fail', 'Request succeeded');
+      this.assert(false, 'GET other user should fail', 'Request succeeded');
     } catch (error) {
       this.assert(
-        error.response?.status === 404,
-        'GET soft-deleted user → 404',
+        error.response?.status === 403,
+        'GET other user → 403',
         `status=${error.response?.status}`
       );
     }
