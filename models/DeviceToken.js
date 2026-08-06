@@ -108,6 +108,11 @@ class DeviceToken {
    * Register or update a device token for a user.
    * Uses INSERT ... ON DUPLICATE KEY UPDATE to avoid SELECT→INSERT races.
    * Enforces a per-user cap of MAX_TOKENS_PER_USER before inserting new rows.
+   *
+   * FCM tokens identify a device/app install, not an account. Before upserting,
+   * any rows for the same token owned by *other* users are deleted so an
+   * account switch on the same phone cannot leave the token subscribed to
+   * multiple users (which would leak push payloads across accounts).
    */
   async registerDeviceToken(userId, deviceToken, platform) {
     const validPlatforms = ['ios', 'android', 'web'];
@@ -120,6 +125,12 @@ class DeviceToken {
     }
 
     try {
+      // Reclaim token from any other account first (UNIQUE is per-user today).
+      await this.query(
+        'DELETE FROM device_tokens WHERE device_token = ? AND user_id <> ?',
+        [deviceToken, userId]
+      );
+
       // Check per-user cap only when this would be a new token (not an update to existing)
       const existing = await this.queryOne(
         'SELECT id FROM device_tokens WHERE user_id = ? AND device_token = ?',
