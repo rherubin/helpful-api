@@ -1,0 +1,22 @@
+name: Mark agent PRs ready
+
+# Cursor Automations open their PRs as drafts, and that state is not
+# configurable from the automation definition. Draft PRs are skipped by
+# Bugbot's automatic review and do not fire the "Pull request opened"
+# automation trigger, so agent fixes would silently bypass review.
+on:
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  mark-ready:
+    if: github.event.pull_request.draft && startsWith(github.head_ref, 'cursor/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark pull request ready for review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr ready ${{ github.event.pull_request.number }} --repo ${{ github.repository }}
