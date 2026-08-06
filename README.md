@@ -437,7 +437,7 @@ Message types: `user_message`, `system`, legacy `openai_response`.
 
 #### POST `/api/subscription`
 
-Auth. Platform-specific body:
+Auth. Platform-specific body. Receipt fields are trusted only when `TEST_MOCK_IAP=true` (no App Store / Play verification is implemented yet); otherwise the endpoint returns **503**.
 
 **iOS:** `platform: "ios"`, `product_id`, `transaction_id`, `original_transaction_id`, `jws_receipt`, `environment` (`Production`|`Sandbox`), `purchase_date`, `expiration_date` (epoch **ms**).
 
