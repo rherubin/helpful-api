@@ -40,6 +40,8 @@ See [`.env.example`](../.env.example):
 - `TEST_MOCK_STRIPE=true` — in-process mock client (no real Stripe calls)
 
 Without `STRIPE_SECRET_KEY`, the API uses the mock client so local/CI stay healthy.
+Webhook handling stays disabled in that mode unless `TEST_MOCK_STRIPE=true` is set
+explicitly — otherwise forged `stripe-signature` headers could grant premium.
 
 ## Stripe Dashboard setup
 

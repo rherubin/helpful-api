@@ -411,6 +411,16 @@ class StripeBillingService {
   }
 
   constructEvent(rawBody, signature) {
+    // Mock Stripe (used when STRIPE_SECRET_KEY is unset) does not verify signatures.
+    // Only allow that insecure path when tests explicitly opt in via TEST_MOCK_STRIPE.
+    // Otherwise a publicly reachable API without Stripe keys would accept forged
+    // webhooks and grant arbitrary users premium.
+    if (!process.env.STRIPE_SECRET_KEY && process.env.TEST_MOCK_STRIPE !== 'true') {
+      throw new StripeBillingError(
+        'Stripe webhooks disabled: configure STRIPE_SECRET_KEY (or TEST_MOCK_STRIPE=true for tests)',
+        { status: 503 }
+      );
+    }
     if (!this.webhookSecret && process.env.TEST_MOCK_STRIPE !== 'true' && process.env.STRIPE_SECRET_KEY) {
       throw new StripeBillingError('STRIPE_WEBHOOK_SECRET is not configured', { status: 503 });
     }
