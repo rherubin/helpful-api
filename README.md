@@ -499,7 +499,7 @@ Separate from app users (`admin_users` table). Same JWT secrets; access payload 
 | Method | Path | Auth | Notes |
 |--------|------|------|--------|
 | POST | `/api/admin/auth/login` | none | Body email/password; login limiter + lockout |
-| POST | `/api/admin/auth/register` | none | Creates admin — **protect/disable in production** |
+| POST | `/api/admin/auth/register` | gated | Creates admin — allowed only when `ALLOW_ADMIN_REGISTRATION=true`, or `ADMIN_REGISTRATION_SECRET` matches, or no admins exist yet (bootstrap) |
 | GET | `/api/admin/auth/profile` | admin | |
 | PUT | `/api/admin/auth/profile` | admin | email, names, children |
 | POST | `/api/admin/auth/refresh` | none | Body `refresh_token` |

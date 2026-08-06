@@ -115,10 +115,16 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel, 
     }
   });
 
-  // Get user by ID
+  // Get user by ID (self only — mirrors PUT/DELETE ownership gate)
   router.get('/:id', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.id;
+
+      if (id !== userId) {
+        return res.status(403).json({ error: 'Not authorized to view this user' });
+      }
+
       const user = await userModel.getUserById(id);
 
       // Check if user has premium access via pairings or direct org_code assignment
