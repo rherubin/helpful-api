@@ -426,6 +426,25 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
         });
       }
 
+      // When pairing_id is supplied, require an existing non-deleted pairing that
+      // the caller belongs to. Without this check any authenticated user could
+      // attach a program to another couple's pairing and inject it into their feed.
+      let pairingForCreate = null;
+      if (pairing_id) {
+        if (!pairingModel) {
+          return res.status(500).json({ error: 'Pairing validation unavailable' });
+        }
+        try {
+          pairingForCreate = await pairingModel.getPairingById(pairing_id);
+        } catch (err) {
+          return res.status(404).json({ error: 'Pairing not found' });
+        }
+        const isMember = pairingForCreate.user1_id === userId || pairingForCreate.user2_id === userId;
+        if (!isMember) {
+          return res.status(403).json({ error: 'Not authorized to create a program for this pairing' });
+        }
+      }
+
       // Get user names for the prompt
       let userName = null;
       let partnerName = null;
@@ -437,10 +456,9 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
           partnerName = user.partner_name || null;
 
           // If pairing exists and partner_name is not set, try to get partner's user_name
-          if (pairing_id && pairingModel && !user.partner_name) {
+          if (pairingForCreate && !user.partner_name) {
             try {
-              const pairing = await pairingModel.getPairingById(pairing_id);
-              const partnerId = pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
+              const partnerId = pairingForCreate.user1_id === userId ? pairingForCreate.user2_id : pairingForCreate.user1_id;
               if (partnerId) {
                 const partner = await userModel.getUserById(partnerId);
                 partnerName = partner.user_name || partnerName;

@@ -227,6 +227,106 @@ class ProgramsTestRunner {
   }
 
   /**
+   * Outsiders must not attach programs to another couple's pairing_id.
+   */
+  async testCreateProgramPairingMembership() {
+    this.log('Testing POST /api/programs pairing_id membership checks', 'section');
+
+    try {
+      // Create a third user and accept user1's partner code so we have a real pairing.
+      const user3Email = generateTestEmail('programs-test-3');
+      const user3Response = await axios.post(`${this.baseURL}/api/users`, {
+        email: user3Email,
+        password: 'SecurePass987!'
+      }, { timeout: this.timeout });
+      const user3 = {
+        id: user3Response.data.user.id,
+        token: user3Response.data.access_token
+      };
+      await axios.put(`${this.baseURL}/api/users/${user3.id}`, {
+        user_name: 'Carol',
+        partner_name: 'Alice'
+      }, {
+        headers: { Authorization: `Bearer ${user3.token}` },
+        timeout: this.timeout
+      });
+
+      const requestRes = await axios.post(`${this.baseURL}/api/pairing/request`, {}, {
+        headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+        timeout: this.timeout
+      });
+      const partnerCode = requestRes.data.partner_code;
+      const pairingId = requestRes.data.pairing_id;
+      this.assert(!!partnerCode && !!pairingId, 'Pairing request returns code and id',
+        `code=${partnerCode}, id=${pairingId}`);
+
+      await axios.post(`${this.baseURL}/api/pairing/accept`, {
+        partner_code: partnerCode
+      }, {
+        headers: { Authorization: `Bearer ${user3.token}` },
+        timeout: this.timeout
+      });
+
+      // Outsider (user2) must be rejected.
+      try {
+        await axios.post(`${this.baseURL}/api/programs`, {
+          user_input: 'Injected into another couple',
+          pairing_id: pairingId
+        }, {
+          headers: { Authorization: `Bearer ${this.testData.user2.token}` },
+          timeout: this.timeout
+        });
+        this.assert(false, 'Outsider create with foreign pairing_id returns 403', 'Expected 403');
+      } catch (error) {
+        this.assert(
+          error.response?.status === 403,
+          'Outsider create with foreign pairing_id returns 403',
+          `Status: ${error.response?.status}, Error: ${error.response?.data?.error}`
+        );
+      }
+
+      // Nonexistent pairing_id → 404
+      try {
+        await axios.post(`${this.baseURL}/api/programs`, {
+          user_input: 'Missing pairing',
+          pairing_id: 'does-not-exist-pairing-xyz'
+        }, {
+          headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+          timeout: this.timeout
+        });
+        this.assert(false, 'Create with missing pairing_id returns 404', 'Expected 404');
+      } catch (error) {
+        this.assert(
+          error.response?.status === 404,
+          'Create with missing pairing_id returns 404',
+          `Status: ${error.response?.status}`
+        );
+      }
+
+      // Member can create with their pairing_id.
+      const memberRes = await axios.post(`${this.baseURL}/api/programs`, {
+        user_input: 'Legitimate paired program about communication',
+        pairing_id: pairingId
+      }, {
+        headers: { Authorization: `Bearer ${this.testData.user1.token}` },
+        timeout: this.timeout
+      });
+      this.assert(memberRes.status === 201, 'Member create with own pairing_id returns 201');
+      this.assert(
+        memberRes.data.program?.pairing_id === pairingId,
+        'Member program stores pairing_id',
+        `pairing_id=${memberRes.data.program?.pairing_id}`
+      );
+    } catch (error) {
+      this.assert(
+        false,
+        'Pairing membership create-program checks',
+        error.response?.data?.error || error.message
+      );
+    }
+  }
+
+  /**
    * Test GET /api/programs - List programs
    */
   async testListPrograms() {
@@ -726,6 +826,7 @@ class ProgramsTestRunner {
     }
 
     await this.testCreateProgram();
+    await this.testCreateProgramPairingMembership();
     await this.testListPrograms();
     await this.testGetProgramById();
     await this.testManualTherapyResponse();
