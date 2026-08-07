@@ -4,11 +4,15 @@ const { createAuthenticateToken } = require('../middleware/auth');
 function createOrgCodeRoutes(orgCodeModel, userModel, authService, adminAuthService) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
-  const stripPromptFields = (orgCode) => {
+  // App clients may list org directory metadata, but must never receive the
+  // redeemable `org_code` secret (PUT /users/:id with that string sets is_premium).
+  // Prompt fields stay admin-only as well.
+  const stripSensitiveOrgCodeFields = (orgCode) => {
     const {
       initial_program_prompt,
       next_program_prompt,
       therapy_response_prompt,
+      org_code,
       ...safeFields
     } = orgCode;
     return safeFields;
@@ -61,7 +65,7 @@ function createOrgCodeRoutes(orgCodeModel, userModel, authService, adminAuthServ
     try {
       const orgCodes = await orgCodeModel.getAllOrgCodes();
       const isAdmin = req.user && req.user.type === 'admin';
-      const responseOrgCodes = isAdmin ? orgCodes : orgCodes.map(stripPromptFields);
+      const responseOrgCodes = isAdmin ? orgCodes : orgCodes.map(stripSensitiveOrgCodeFields);
 
       res.status(200).json({
         message: 'Org codes retrieved successfully',

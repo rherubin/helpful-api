@@ -1181,7 +1181,7 @@ class UserOrgCodeTestRunner {
   /**
    * GET /api/org-codes with regular (non-admin) user auth.
    * Verifies the endpoint is open to authenticated users, returns an array,
-   * and exposes address fields while hiding prompt fields.
+   * exposes address fields, and hides prompt fields + redeemable org_code secrets.
    */
   async testGetOrgCodesListWithRegularAuth() {
     this.log('Testing GET /api/org-codes with regular user auth...', 'section');
@@ -1204,6 +1204,18 @@ class UserOrgCodeTestRunner {
         this.assert(orgCode.initial_program_prompt === undefined, 'GET /api/org-codes - excludes initial_program_prompt');
         this.assert(orgCode.next_program_prompt === undefined, 'GET /api/org-codes - excludes next_program_prompt');
         this.assert(orgCode.therapy_response_prompt === undefined, 'GET /api/org-codes - excludes therapy_response_prompt');
+        this.assert(
+          orgCode.org_code === undefined,
+          'GET /api/org-codes - excludes redeemable org_code secret for non-admins'
+        );
+      }
+
+      // Privilege escalation guard: listed metadata must not unlock premium.
+      if (this.testData.activeOrgCode?.org_code) {
+        const leaked = (listResponse.data.org_codes || []).some(
+          (row) => row.org_code === this.testData.activeOrgCode.org_code
+        );
+        this.assert(!leaked, 'GET /api/org-codes - active redeemable code not present in app listing');
       }
     } catch (error) {
       this.assert(false, 'GET /api/org-codes with regular auth', `Error: ${error.response?.data?.error || error.message}`);

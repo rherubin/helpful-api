@@ -351,7 +351,139 @@ class Pairing {
       }
       return { message: 'Pairing accepted successfully' };
     } catch (err) {
+      if (err.message === 'Pairing not found or already processed') throw err;
       throw new Error('Failed to accept pairing');
+    }
+  }
+
+  /**
+   * Atomically accept a partner-code invite under a transaction.
+   * Locks both member user rows before re-checking max_pairings so concurrent
+   * accepts cannot race past the cap (check-then-act TOCTOU).
+   */
+  async acceptPairingByPartnerCodeAtomic(partnerCode, acceptingUserId) {
+    const conn = await this.db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [pairingRows] = await conn.execute(
+        `SELECT p.*,
+                u1.user_name as user1_user_name, u1.email as user1_email
+         FROM pairings p
+         JOIN users u1 ON p.user1_id = u1.id AND u1.deleted_at IS NULL
+         WHERE p.partner_code = ?
+           AND p.status = 'pending'
+           AND p.deleted_at IS NULL
+           AND p.user2_id IS NULL
+         FOR UPDATE`,
+        [partnerCode]
+      );
+      const pairing = pairingRows[0];
+      if (!pairing) {
+        throw new Error('No pending pairing found for this partner code');
+      }
+      if (pairing.user1_id === acceptingUserId) {
+        throw new Error('You cannot accept your own pairing request');
+      }
+
+      // Serialize concurrent accepts that touch either member.
+      const [userRows] = await conn.execute(
+        `SELECT id, max_pairings FROM users
+         WHERE id IN (?, ?) AND deleted_at IS NULL
+         FOR UPDATE`,
+        [acceptingUserId, pairing.user1_id]
+      );
+      const acceptingUser = userRows.find((u) => u.id === acceptingUserId);
+      const requester = userRows.find((u) => u.id === pairing.user1_id);
+      if (!acceptingUser || !requester) {
+        throw new Error('User not found');
+      }
+
+      const countAccepted = async (userId) => {
+        const [rows] = await conn.execute(
+          `SELECT COUNT(*) AS count FROM pairings
+           WHERE (user1_id = ? OR user2_id = ?)
+             AND status = 'accepted'
+             AND deleted_at IS NULL`,
+          [userId, userId]
+        );
+        return rows[0].count;
+      };
+
+      if ((await countAccepted(acceptingUserId)) >= acceptingUser.max_pairings) {
+        throw new Error('You have reached your maximum number of pairings');
+      }
+      if ((await countAccepted(pairing.user1_id)) >= requester.max_pairings) {
+        throw new Error('The pairing requester has reached their maximum number of pairings');
+      }
+
+      const [existingRows] = await conn.execute(
+        `SELECT id FROM pairings
+         WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))
+           AND deleted_at IS NULL
+         FOR UPDATE`,
+        [pairing.user1_id, acceptingUserId, acceptingUserId, pairing.user1_id]
+      );
+      if (existingRows.some((row) => row.id !== pairing.id)) {
+        throw new Error('You are already paired with this user');
+      }
+
+      const [updateResult] = await conn.execute(
+        `UPDATE pairings
+         SET user2_id = ?, status = 'accepted', updated_at = NOW()
+         WHERE id = ?
+           AND status = 'pending'
+           AND user2_id IS NULL
+           AND deleted_at IS NULL`,
+        [acceptingUserId, pairing.id]
+      );
+      if (updateResult.affectedRows === 0) {
+        throw new Error('No pending pairing found for this partner code');
+      }
+
+      // Invalidate leftover open partner-code invites for both members.
+      await conn.execute(
+        `UPDATE pairings
+         SET deleted_at = NOW(), updated_at = NOW()
+         WHERE user1_id = ?
+           AND status = 'pending'
+           AND user2_id IS NULL
+           AND deleted_at IS NULL`,
+        [acceptingUserId]
+      );
+      await conn.execute(
+        `UPDATE pairings
+         SET deleted_at = NOW(), updated_at = NOW()
+         WHERE user1_id = ?
+           AND status = 'pending'
+           AND user2_id IS NULL
+           AND deleted_at IS NULL`,
+        [pairing.user1_id]
+      );
+
+      await conn.commit();
+
+      return {
+        message: 'Pairing accepted successfully',
+        pairing: {
+          id: pairing.id,
+          partner_code: partnerCode,
+          requester: {
+            id: pairing.user1_id,
+            user_name: pairing.user1_user_name,
+            email: pairing.user1_email
+          }
+        }
+      };
+    } catch (err) {
+      try {
+        await conn.rollback();
+      } catch (_) {
+        /* ignore rollback errors */
+      }
+      throw err;
+    } finally {
+      conn.release();
     }
   }
 
@@ -447,6 +579,89 @@ class Pairing {
     } catch (err) {
       if (err.message === 'Pairing not found or not deleted') throw err;
       throw new Error('Failed to restore pairing');
+    }
+  }
+
+  /**
+   * Atomically restore a soft-deleted pairing, re-checking max_pairings for
+   * accepted memberships under row locks so concurrent restores cannot exceed caps.
+   */
+  async restorePairingAtomic(pairingId, { requireMemberUserId = null } = {}) {
+    const conn = await this.db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [pairingRows] = await conn.execute(
+        `SELECT * FROM pairings WHERE id = ? FOR UPDATE`,
+        [pairingId]
+      );
+      const pairing = pairingRows[0];
+      if (!pairing) {
+        throw new Error('Pairing not found');
+      }
+      if (!pairing.deleted_at) {
+        throw new Error('Pairing not found or not deleted');
+      }
+      if (
+        requireMemberUserId &&
+        pairing.user1_id !== requireMemberUserId &&
+        pairing.user2_id !== requireMemberUserId
+      ) {
+        throw new Error('You are not authorized to restore this pairing');
+      }
+
+      if (pairing.status === 'accepted') {
+        const memberIds = [pairing.user1_id, pairing.user2_id].filter(Boolean);
+        if (memberIds.length === 0) {
+          throw new Error('Cannot restore pairing: a member account is deleted');
+        }
+
+        const placeholders = memberIds.map(() => '?').join(',');
+        const [userRows] = await conn.execute(
+          `SELECT id, max_pairings FROM users
+           WHERE id IN (${placeholders}) AND deleted_at IS NULL
+           FOR UPDATE`,
+          memberIds
+        );
+        if (userRows.length !== memberIds.length) {
+          throw new Error('Cannot restore pairing: a member account is deleted');
+        }
+
+        for (const member of userRows) {
+          const [countRows] = await conn.execute(
+            `SELECT COUNT(*) AS count FROM pairings
+             WHERE (user1_id = ? OR user2_id = ?)
+               AND status = 'accepted'
+               AND deleted_at IS NULL`,
+            [member.id, member.id]
+          );
+          if (countRows[0].count >= member.max_pairings) {
+            throw new Error('Cannot restore pairing: a member has reached their maximum number of pairings');
+          }
+        }
+      }
+
+      const [result] = await conn.execute(
+        `UPDATE pairings
+         SET deleted_at = NULL, updated_at = NOW()
+         WHERE id = ? AND deleted_at IS NOT NULL`,
+        [pairingId]
+      );
+      if (result.affectedRows === 0) {
+        throw new Error('Pairing not found or not deleted');
+      }
+
+      await conn.commit();
+      return { message: 'Pairing restored successfully' };
+    } catch (err) {
+      try {
+        await conn.rollback();
+      } catch (_) {
+        /* ignore */
+      }
+      throw err;
+    } finally {
+      conn.release();
     }
   }
 
