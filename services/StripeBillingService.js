@@ -15,6 +15,9 @@ const PREMIUM_STATUSES = new Set(['trialing', 'active']);
 function createMockStripe() {
   const customers = new Map();
   const sessionsById = new Map();
+  // Include a process-unique prefix so restarts do not collide with leftover
+  // users.unique_stripe_customer_id rows from earlier mock runs (cus_mock_1…).
+  const runId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   let customerSeq = 0;
   let sessionSeq = 0;
   let subSeq = 0;
@@ -23,7 +26,7 @@ function createMockStripe() {
     customers: {
       create: async ({ email, metadata }) => {
         customerSeq += 1;
-        const id = `cus_mock_${customerSeq}`;
+        const id = `cus_mock_${runId}_${customerSeq}`;
         const customer = { id, email, metadata: metadata || {} };
         customers.set(id, customer);
         return customer;
@@ -44,13 +47,13 @@ function createMockStripe() {
           sessionSeq += 1;
           subSeq += 1;
           const session = {
-            id: `cs_mock_${sessionSeq}`,
-            url: `https://checkout.stripe.com/c/pay/cs_mock_${sessionSeq}`,
+            id: `cs_mock_${runId}_${sessionSeq}`,
+            url: `https://checkout.stripe.com/c/pay/cs_mock_${runId}_${sessionSeq}`,
             mode: params.mode,
             status: 'open',
             client_reference_id: params.client_reference_id || null,
             metadata: params.metadata || {},
-            subscription: `sub_mock_${subSeq}`,
+            subscription: `sub_mock_${runId}_${subSeq}`,
             customer: params.customer
           };
           sessionsById.set(session.id, session);
@@ -87,13 +90,13 @@ function createMockStripe() {
             status: 'open',
             client_reference_id: null,
             metadata: {},
-            customer: 'cus_mock_1'
+            customer: `cus_mock_${runId}_fallback`
           };
           return {
             ...base,
             subscription: typeof opts.expand?.[0] === 'string'
               ? {
-                  id: typeof base.subscription === 'string' ? base.subscription : `sub_mock_${subSeq || 1}`,
+                  id: typeof base.subscription === 'string' ? base.subscription : `sub_mock_${runId}_${subSeq || 1}`,
                   status: 'trialing',
                   items: {
                     data: [{ price: { id: process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly' } }]
@@ -103,7 +106,7 @@ function createMockStripe() {
                   cancel_at_period_end: false,
                   metadata: base.metadata || {}
                 }
-              : (base.subscription || `sub_mock_${subSeq || 1}`)
+              : (base.subscription || `sub_mock_${runId}_${subSeq || 1}`)
           };
         }
       }
@@ -127,7 +130,7 @@ function createMockStripe() {
         current_period_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
         cancel_at_period_end: false,
         metadata: {},
-        customer: 'cus_mock_1'
+        customer: `cus_mock_${runId}_fallback`
       })
     },
     webhooks: {
