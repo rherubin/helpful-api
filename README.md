@@ -479,7 +479,7 @@ Conflict if receipt belongs to another user (**409** via `SubscriptionError`).
 ### Organization codes
 
 Admin JWT (`type: "admin"`) required for create / get-by-id / update / delete / audit.  
-**GET list** allows any authenticated app or admin JWT; non-admins get LLM prompt fields stripped (`initial_program_prompt`, `next_program_prompt`, `therapy_response_prompt`).
+**GET list** allows any authenticated app or admin JWT; non-admins get LLM prompt fields **and the redeemable `org_code` secret** stripped (`initial_program_prompt`, `next_program_prompt`, `therapy_response_prompt`, `org_code`).
 
 | Method | Path | Auth |
 |--------|------|------|
