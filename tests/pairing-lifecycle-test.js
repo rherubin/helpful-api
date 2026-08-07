@@ -437,6 +437,64 @@ class PairingLifecycleTestRunner {
     }
   }
 
+  // Concurrent accepts of two different partner codes by the same user must not
+  // exceed max_pairings=1 (TOCTOU race on count-then-accept).
+  async runConcurrentAcceptCapTests() {
+    this.log('Concurrent accept max_pairings race guard', 'section');
+
+    const acceptor = await this.createUser('pl-race-acceptor');
+    const requesterA = await this.createUser('pl-race-req-a');
+    const requesterB = await this.createUser('pl-race-req-b');
+
+    const codeA = (await axios.get(
+      `${this.baseURL}/api/pairings`,
+      this.authHeader(requesterA.token)
+    )).data.pairings.find(p => p.status === 'pending')?.partner_code;
+    const codeB = (await axios.get(
+      `${this.baseURL}/api/pairings`,
+      this.authHeader(requesterB.token)
+    )).data.pairings.find(p => p.status === 'pending')?.partner_code;
+
+    this.assert(!!codeA && !!codeB, 'Two distinct pending partner codes available for race');
+
+    const results = await Promise.allSettled([
+      this.acceptPairing(acceptor, codeA),
+      this.acceptPairing(acceptor, codeB)
+    ]);
+
+    const fulfilled = results.filter(r => r.status === 'fulfilled');
+    const rejected = results.filter(r => r.status === 'rejected');
+    this.assert(
+      fulfilled.length === 1,
+      'Exactly one concurrent accept succeeds',
+      `fulfilled=${fulfilled.length}`
+    );
+    this.assert(
+      rejected.length === 1,
+      'Exactly one concurrent accept fails',
+      `rejected=${rejected.length}`
+    );
+
+    if (rejected[0]) {
+      const status = rejected[0].reason?.response?.status;
+      this.assert(
+        status === 400 || status === 404 || status === 409,
+        'Failed concurrent accept → 400/404/409',
+        `status=${status}`
+      );
+    }
+
+    const accepted = await axios.get(
+      `${this.baseURL}/api/pairing/accepted`,
+      this.authHeader(acceptor.token)
+    );
+    this.assert(
+      (accepted.data.pairings || []).length === 1,
+      'Acceptor has exactly one accepted pairing after race',
+      `count=${(accepted.data.pairings || []).length}`
+    );
+  }
+
   // Soft-deleting a pairing must revoke the partner's access to shared programs.
   // Owners keep access via programs.user_id; partners only via an active pairing.
   async runSoftDeleteRevokesProgramAccessTests() {
@@ -533,6 +591,7 @@ class PairingLifecycleTestRunner {
       await this.runSoftDeleteRestoreTests();
       await this.runSoftDeleteRevokesProgramAccessTests();
       await this.runMaxPairingsGuardTests();
+      await this.runConcurrentAcceptCapTests();
     } catch (error) {
       this.log(`Unexpected suite error: ${error.message}`, 'fail');
       this.testResults.failed++;
