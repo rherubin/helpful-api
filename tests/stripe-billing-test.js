@@ -383,6 +383,60 @@ class StripeBillingTestRunner {
     }
   }
 
+  // Second Checkout before webhook must 409 — local stripe_subscriptions is still
+  // empty, but an open Checkout session already exists for the customer.
+  async testCheckoutBlockedWhileSessionOpen(user) {
+    this.log('Testing checkout blocked while prior Checkout session still open', 'section');
+    try {
+      const res = await axios.post(`${this.baseURL}/api/billing/checkout`, {
+        plan: 'monthly',
+        success_url: 'http://localhost:3000/get-started?billing=success',
+        cancel_url: 'http://localhost:3000/get-started?billing=cancel'
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout,
+        validateStatus: () => true
+      });
+      this.assert(res.status === 409, 'Open checkout session blocks second checkout with 409',
+        `status=${res.status} error=${res.data?.error}`);
+      this.assert(
+        typeof res.data?.error === 'string' && /already open/i.test(res.data.error),
+        'Error mentions open checkout session',
+        res.data?.error
+      );
+    } catch (error) {
+      this.assert(false, 'Checkout blocked while session open', error.message);
+    }
+  }
+
+  // Login must report premium for Stripe/org entitlement (users.is_premium), not
+  // only pairing.premium — otherwise web subscribers look free after login.
+  async testLoginReportsStripePremium(user) {
+    this.log('Testing login reports Stripe premium', 'section');
+    try {
+      const loginRes = await axios.post(`${this.baseURL}/api/login`, {
+        email: user.email,
+        password: 'SecurePass987!'
+      }, { timeout: this.timeout });
+      this.assert(loginRes.status === 200, 'Login returns 200 after Stripe premium');
+      this.assert(
+        loginRes.data?.data?.user?.premium === true,
+        'Login premium is true for Stripe subscriber',
+        `premium=${loginRes.data?.data?.user?.premium}`
+      );
+      this.assert(
+        loginRes.data?.data?.user?.bypass_password === undefined,
+        'Login does not leak bypass_password'
+      );
+      this.assert(
+        loginRes.data?.data?.user?.is_premium === undefined,
+        'Login does not expose raw is_premium column'
+      );
+    } catch (error) {
+      this.assert(false, 'Login reports Stripe premium', error.response?.data?.error || error.message);
+    }
+  }
+
   async runAllTests() {
     this.log('Starting Stripe Billing tests', 'section');
 
@@ -398,10 +452,12 @@ class StripeBillingTestRunner {
     // Reject bad return URLs before any subscription exists (otherwise 409 masks 400).
     await this.testRejectedReturnOrigin(user);
     await this.testCheckoutCreatesSession(user);
+    await this.testCheckoutBlockedWhileSessionOpen(user);
     await this.testStatusBeforeWebhook(user);
     await this.testWebhookCheckoutCompleted(user);
     await this.testStatusAfterWebhook(user);
     await this.testCheckoutBlockedWhenSubscriptionActive(user);
+    await this.testLoginReportsStripePremium(user);
     await this.testPortalSession(user);
     await this.testStripePremiumSurvivesIncompleteCustomOrg(user);
     await this.testOrgPremiumSurvivesStripeCancel();
