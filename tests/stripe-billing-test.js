@@ -145,7 +145,7 @@ class StripeBillingTestRunner {
     );
   }
 
-  buildSubscriptionObject(user, { id, status = 'trialing', plan = 'yearly' } = {}) {
+  buildSubscriptionObject(user, { id, status = 'trialing', plan = 'yearly', customer } = {}) {
     const subId = id || `sub_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     return {
       id: subId,
@@ -157,7 +157,7 @@ class StripeBillingTestRunner {
       current_period_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
       cancel_at_period_end: status === 'canceled',
       metadata: { user_id: user.id, plan },
-      customer: 'cus_test_webhook'
+      customer: customer || `cus_test_${user.id}`
     };
   }
 
@@ -398,6 +398,7 @@ class StripeBillingTestRunner {
 
     try {
       const subId = `sub_softdelete_${Date.now()}`;
+      const customerId = `cus_sd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const activate = await this.postWebhook({
         id: `evt_sd_act_${Date.now()}`,
         type: 'checkout.session.completed',
@@ -406,13 +407,21 @@ class StripeBillingTestRunner {
             id: `cs_sd_${Date.now()}`,
             mode: 'subscription',
             client_reference_id: user.id,
-            customer: 'cus_sd_test',
+            customer: customerId,
             metadata: { user_id: user.id, plan: 'yearly' },
-            subscription: this.buildSubscriptionObject(user, { id: subId, status: 'trialing' })
+            subscription: this.buildSubscriptionObject(user, {
+              id: subId,
+              status: 'trialing',
+              customer: customerId
+            })
           }
         }
       });
-      this.assert(activate.status === 200, 'Activate webhook before soft-delete returns 200');
+      this.assert(
+        activate.status === 200,
+        'Activate webhook before soft-delete returns 200',
+        `status=${activate.status} body=${JSON.stringify(activate.data)}`
+      );
 
       const preStatus = await axios.get(`${this.baseURL}/api/billing/status`, {
         headers: { Authorization: `Bearer ${user.token}` },

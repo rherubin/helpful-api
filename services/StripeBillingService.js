@@ -14,15 +14,22 @@ const PREMIUM_STATUSES = new Set(['trialing', 'active']);
 
 function createMockStripe() {
   const customers = new Map();
+  // Include a per-process nonce so IDs stay unique across restarts even when
+  // soft-deleted users retain prior stripe_customer_id values in MySQL.
+  const runId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   let customerSeq = 0;
   let sessionSeq = 0;
   let subSeq = 0;
+  const defaultCustomerId = () => {
+    const first = customers.keys().next();
+    return first.done ? `cus_mock_${runId}_0` : first.value;
+  };
 
   return {
     customers: {
       create: async ({ email, metadata }) => {
         customerSeq += 1;
-        const id = `cus_mock_${customerSeq}`;
+        const id = `cus_mock_${runId}_${customerSeq}`;
         const customer = { id, email, metadata: metadata || {} };
         customers.set(id, customer);
         return customer;
@@ -43,12 +50,12 @@ function createMockStripe() {
           sessionSeq += 1;
           subSeq += 1;
           return {
-            id: `cs_mock_${sessionSeq}`,
-            url: `https://checkout.stripe.com/c/pay/cs_mock_${sessionSeq}`,
+            id: `cs_mock_${runId}_${sessionSeq}`,
+            url: `https://checkout.stripe.com/c/pay/cs_mock_${runId}_${sessionSeq}`,
             mode: params.mode,
             client_reference_id: params.client_reference_id || null,
             metadata: params.metadata || {},
-            subscription: `sub_mock_${subSeq}`,
+            subscription: `sub_mock_${runId}_${subSeq}`,
             customer: params.customer
           };
         },
@@ -59,7 +66,7 @@ function createMockStripe() {
           metadata: {},
           subscription: typeof opts.expand?.[0] === 'string'
             ? {
-                id: `sub_mock_${subSeq || 1}`,
+                id: `sub_mock_${runId}_${subSeq || 1}`,
                 status: 'trialing',
                 items: {
                   data: [{ price: { id: process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly' } }]
@@ -69,8 +76,8 @@ function createMockStripe() {
                 cancel_at_period_end: false,
                 metadata: {}
               }
-            : `sub_mock_${subSeq || 1}`,
-          customer: 'cus_mock_1'
+            : `sub_mock_${runId}_${subSeq || 1}`,
+          customer: defaultCustomerId()
         })
       }
     },
@@ -93,7 +100,7 @@ function createMockStripe() {
         current_period_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
         cancel_at_period_end: false,
         metadata: {},
-        customer: 'cus_mock_1'
+        customer: defaultCustomerId()
       }),
       cancel: async (id) => ({
         id,
@@ -105,7 +112,7 @@ function createMockStripe() {
         current_period_end: Math.floor(Date.now() / 1000),
         cancel_at_period_end: false,
         metadata: {},
-        customer: 'cus_mock_1'
+        customer: defaultCustomerId()
       }),
       update: async (id, params = {}) => ({
         id,
@@ -117,7 +124,7 @@ function createMockStripe() {
         current_period_end: Math.floor(Date.now() / 1000) + 30 * 24 * 3600,
         cancel_at_period_end: !!params.cancel_at_period_end,
         metadata: {},
-        customer: 'cus_mock_1'
+        customer: defaultCustomerId()
       })
     },
     webhooks: {
