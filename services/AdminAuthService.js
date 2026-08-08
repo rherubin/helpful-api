@@ -7,9 +7,17 @@ class AdminAuthService {
     this.jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
     this.jwtRefreshSecret = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
 
-    // JWT expiry times
-    this.accessTokenExpiry = process.env.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS || 86400; // 24 hours
-    this.refreshTokenExpiry = process.env.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS || 1209600; // 14 days
+    // JWT expiry times (seconds). process.env values are strings — coerce to
+    // Number so jsonwebtoken treats them as seconds. A bare string like "86400"
+    // is interpreted as milliseconds (~86s) and silently breaks admin sessions.
+    this.accessTokenExpiry = Number(process.env.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS || 86400); // 24 hours
+    this.refreshTokenExpiry = Number(process.env.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS || 1209600); // 14 days
+    if (!Number.isFinite(this.accessTokenExpiry) || this.accessTokenExpiry <= 0) {
+      this.accessTokenExpiry = 86400;
+    }
+    if (!Number.isFinite(this.refreshTokenExpiry) || this.refreshTokenExpiry <= 0) {
+      this.refreshTokenExpiry = 1209600;
+    }
   }
 
   // Generate access token for admin user

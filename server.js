@@ -300,7 +300,15 @@ function setupRoutes() {
 
   // Setup user routes
   if (userModel && authService && pairingService) {
-    app.use('/api/users', createUserRoutes(userModel, authService, pairingService, orgCodeModel, pairingModel || null, stripeSubscriptionModel || null));
+    app.use('/api/users', createUserRoutes(
+      userModel,
+      authService,
+      pairingService,
+      orgCodeModel,
+      pairingModel || null,
+      stripeSubscriptionModel || null,
+      stripeBillingService || null
+    ));
   }
 
   // Setup auth routes
