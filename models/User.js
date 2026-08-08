@@ -358,6 +358,29 @@ class User {
     );
   }
 
+  // Soft-deleted accounts still receive Stripe webhooks (cancel/renew). Look up by
+  // customer id including deleted rows so premium can be reconciled while deleted.
+  async getUserByStripeCustomerIdIncludingDeleted(stripeCustomerId) {
+    if (!stripeCustomerId) return null;
+    return this.queryOne(
+      'SELECT * FROM users WHERE stripe_customer_id = ?',
+      [stripeCustomerId]
+    );
+  }
+
+  // Write is_premium without requiring the user to be non-deleted (webhook sync
+  // during soft-delete) and without the getUserById round-trip in updateUser.
+  async setIsPremium(userId, isPremium) {
+    const result = await this.query(
+      'UPDATE users SET is_premium = ?, updated_at = NOW() WHERE id = ?',
+      [isPremium ? 1 : 0, userId]
+    );
+    if (result.affectedRows === 0) {
+      throw new Error('User not found');
+    }
+    return { id: userId, is_premium: !!isPremium };
+  }
+
   // Get user by email including soft-deleted rows (login/restore recovery)
   async getUserByEmailIncludingDeleted(email) {
     try {

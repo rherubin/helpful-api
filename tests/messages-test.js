@@ -169,6 +169,9 @@ class MessagesTestRunner {
       
       if (pollResult.found && pollResult.steps.length > 0) {
         this.testData.stepId = pollResult.steps[0].id;
+        if (pollResult.steps.length > 1) {
+          this.testData.secondStepId = pollResult.steps[1].id;
+        }
         this.log(`Using step ID: ${this.testData.stepId}`, 'info');
       } else if (pollResult.skipped) {
         this.log('OpenAI mocked - attempting to get steps anyway...', 'warn');
@@ -183,6 +186,9 @@ class MessagesTestRunner {
           );
           if (stepsResponse.data.program_steps?.length > 0) {
             this.testData.stepId = stepsResponse.data.program_steps[0].id;
+            if (stepsResponse.data.program_steps.length > 1) {
+              this.testData.secondStepId = stepsResponse.data.program_steps[1].id;
+            }
             this.log(`Found step ID: ${this.testData.stepId}`, 'info');
           }
         } catch (e) {
@@ -631,6 +637,30 @@ class MessagesTestRunner {
         'Update message in nonexistent step returns 404',
         `Status: ${error.response?.status}`
       );
+    }
+
+    // Test 6: step_id must match message.step_id (parent/child bind).
+    // Access to a different step owned by the same user must not authorize
+    // editing a message that lives on another step.
+    if (this.testData.secondStepId) {
+      try {
+        const mismatched = await axios.put(
+          `${this.baseURL}/api/programSteps/${this.testData.secondStepId}/messages/${this.testData.messageId}`,
+          { content: 'Cross-step update should fail' },
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: this.timeout,
+            validateStatus: () => true
+          }
+        );
+        this.assert(
+          mismatched.status === 404,
+          'Update message with mismatched stepId returns 404',
+          `Status: ${mismatched.status}`
+        );
+      } catch (error) {
+        this.assert(false, 'Update message with mismatched stepId', error.message);
+      }
     }
 
     // Test 6: No authentication (401)

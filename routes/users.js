@@ -10,7 +10,15 @@ function filterUserData(user) {
   return filteredUser;
 }
 
-function createUserRoutes(userModel, authService, pairingService, orgCodeModel, pairingModel = null, stripeSubscriptionModel = null) {
+function createUserRoutes(
+  userModel,
+  authService,
+  pairingService,
+  orgCodeModel,
+  pairingModel = null,
+  stripeSubscriptionModel = null,
+  stripeBillingService = null
+) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
 
@@ -176,11 +184,29 @@ function createUserRoutes(userModel, authService, pairingService, orgCodeModel, 
         return res.status(403).json({ error: 'Not authorized to delete this user' });
       }
 
+      // Cancel Stripe subscriptions before soft-delete so the account is not left
+      // billed after access is revoked. Best-effort: soft-delete still proceeds if
+      // Stripe cancel fails (webhook/sync hardening covers later events).
+      let canceledStripeSubscriptions = [];
+      if (stripeBillingService) {
+        try {
+          canceledStripeSubscriptions = await stripeBillingService.cancelActiveSubscriptionsForUser(id);
+        } catch (billingError) {
+          console.warn(
+            'Warning: Failed to cancel Stripe subscriptions on user soft-delete:',
+            billingError.message
+          );
+        }
+      }
+
       // Revoke refresh sessions via authService's token model (may be null in tests).
       const refreshTokenModel = authService?.refreshTokenModel || null;
 
       const result = await userModel.softDeleteUser(id, pairingModel, refreshTokenModel);
-      res.status(200).json(result);
+      res.status(200).json({
+        ...result,
+        canceled_stripe_subscriptions: canceledStripeSubscriptions
+      });
     } catch (error) {
       if (error.message === 'User not found or already deleted') {
         return res.status(404).json({ error: error.message });

@@ -163,6 +163,16 @@ class StripeSubscription {
       [userId]
     );
   }
+
+  async getAllActiveForUser(userId) {
+    return this.query(
+      `SELECT * FROM stripe_subscriptions
+       WHERE user_id = ?
+         AND status IN ('trialing', 'active')
+       ORDER BY updated_at DESC`,
+      [userId]
+    );
+  }
 }
 
 module.exports = StripeSubscription;

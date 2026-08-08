@@ -493,8 +493,13 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
         return res.status(403).json({ error: 'Not authorized to access this program step' });
       }
 
-      // Get the message to check ownership
+      // Get the message to check ownership AND that it belongs to this step.
+      // Without the step_id bind, a caller with access to step A could edit their
+      // own message that lives on step B (including after losing access to B).
       const message = await messageModel.getMessageById(messageId);
+      if (message.step_id !== stepId) {
+        return res.status(404).json({ error: 'Message not found' });
+      }
       if (message.sender_id !== userId) {
         return res.status(403).json({ error: 'Not authorized to edit this message' });
       }
