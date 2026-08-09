@@ -89,6 +89,30 @@ CREATE TABLE prompt_sessions (
 - We deliberately store `generation_prompt` (following the existing pattern in the `programs` table).
 - `current_phase` gives the client a clear signal for what UI to show.
 
+### `generation_status` — first-class generation job state
+
+`status` (`prep`/`bridge`/…) is the **product** lifecycle and does not tell clients whether an LLM call is currently running. `generation_status` is a second, orthogonal state machine dedicated to that:
+
+```
+idle -> running -> succeeded
+              \--> failed -> running -> succeeded | failed   (retry)
+```
+
+- `generation_started_at` / `generation_finished_at` are stamped on each `running` transition and each terminal outcome, respectively.
+- The `idle`/`failed` → `running` transition is a compare-and-swap `UPDATE ... WHERE generation_status IN ('idle','pending','failed') AND bridge_content IS NULL AND session_content IS NULL` (`PromptSession.beginGeneration`), so an explicit `POST .../generate` racing the auto-generate background trigger can never both reach the LLM — the loser gets a `GENERATION_RUNNING` error, surfaced as **409** by the route.
+- `succeeded` never restarts: once content exists, `POST .../generate` is a pure read (idempotent).
+- `failed` is retryable: a subsequent `POST .../generate` clears `generation_error` and re-enters `running`.
+- **`running` must never be terminal.** Because only `idle`/`pending`/`failed` are claimable, a row that reaches `running` and never leaves would 409 forever with no API path back — so the lock is designed to always be releasable:
+  - Everything after the compare-and-swap in `runGeneration()` lives inside the try/catch that calls `updateGenerationError`, so no throw can escape while holding the lock without either recording failure *for this claim* or detecting that another worker already finished.
+  - `beginGeneration()` returns an opaque `generation_claim_id` (or `null` if lost). `saveGeneratedContent()` / `updateGenerationError()` CAS on `generation_status = 'running'` + content null + that claim id, so a worker whose lease was reclaimed cannot fail or overwrite the new owner's row (a timestamp is not unique enough: MySQL `DATETIME` is second-precision).
+  - `resetStaleRunningGenerations()` runs at startup and only marks **expired** leases (`generation_started_at` older than the lease, or null) as `failed`. A blanket sweep of every `running` row would kill live work owned by peer instances during multi-instance boot / rolling deploy; in-lease rows are left for lease reclaim.
+  - The CAS also accepts a `running` row whose `generation_started_at` is older than `PROMPT_SESSION_GENERATION_LEASE_MS` (default 10 min), covering a process that is alive but wedged. The default is deliberately generous: stealing the lock from a worker that is still going would double the LLM spend the CAS exists to prevent.
+  - If a late writer loses the lease but another worker already persisted content, `runGeneration()` returns that session as success instead of 500 `GENERATION_FAILED`.
+  - The route deliberately does **not** pre-check `generation_status === 'running'` before calling `runGeneration()`; only the CAS knows whether a lease is still live, and a pre-check would shadow reclaim and make abandoned sessions permanently un-retryable.
+- Both 409s from the generate route carry a machine-readable `code` (`GENERATION_RUNNING` vs `PREP_NOT_READY`) because they call for opposite client behaviour: poll, versus collect more prep.
+- `serializeSession()` never exposes raw `generation_status`/`generation_started_at`/`generation_finished_at` derivation logic to clients directly — it also attaches a computed, non-persisted `generation` object (`{ status, error, started_at, finished_at, ready }`) so app/web don't reinvent the "is this actually ready" rule from `bridge_content`/`session_content` null-checks.
+- Full client-facing contract (state table, polling guidance, status codes): see the [README "Generation state"](../README.md#generation-state-generation_status) section — that is the canonical, single source of truth; this note is implementation background only.
+
 ### `prompt_session_preps`
 
 One row per partner per prompt session. This is the "six questions + optional focus".

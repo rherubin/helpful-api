@@ -48,7 +48,7 @@ Orchestrator: `run-all-tests.js` (order roughly: security → load → auth → 
 | `program-org-context-test.js` | Helpful/Hopeful routing by org context |
 | `push-notification-service-test.js` | Push service unit tests (no real FCM) |
 | `admin-push-test-test.js` | `POST /api/admin/push-test` |
-| `prompt-sessions-test.js` | Sit Sessions: solo (no pairing), paired (accepted), pending pairing create/prep, visibility, generate stub |
+| `prompt-sessions-test.js` | Sit Sessions: solo (no pairing), paired (accepted), pending pairing create/prep, visibility, generate + `generation_status` state machine (idle/running/succeeded/failed, retry, concurrency) |
 
 Skip categories with flags, e.g. `--no-load`, `--no-pairing-lifecycle`, `--no-user-soft-delete`, `--skip-server-check`.
 
@@ -70,7 +70,8 @@ Skip categories with flags, e.g. `--no-load`, `--no-pairing-lifecycle`, `--no-us
 | `npm run test:user-soft-delete` | `user-soft-delete-test.js` |
 | `npm run test:push` | `push-notification-service-test.js` |
 | `npm run test:admin-push` | `admin-push-test-test.js` |
-| `npm run test:prompt-sessions` | `prompt-sessions-test.js` (solo + paired + pending) |
+| `npm run test:prompt-sessions` | `prompt-sessions-test.js` (solo + paired + pending + `generation_status`) |
+| — | For the strict concurrency assertion (exactly one winner), start the server with `TEST_MOCK_LLM_DELAY_MS=1500` so a generation is observable mid-flight; without it that one assertion is skipped |
 | `npm run test:cleanup` | `cleanup-test-data.js` |
 
 ---
@@ -83,6 +84,7 @@ Skip categories with flags, e.g. `--no-load`, `--no-pairing-lifecycle`, `--no-us
 | `openai-load-benchmark.js` | Real OpenAI load — burns tokens |
 | `generation-prompt-helpful-test.js` | DB assert on `generation_prompt` (Helpful path) |
 | `generation-prompt-hopeful-test.js` | DB assert on `generation_prompt` (Hopeful/org path) |
+| `prompt-session-generate-demo.js` | Manual walkthrough of the Sit Session `generation_status` state machine (idle → running → succeeded/failed), printed at each step |
 | `llm-used-test.js` | DB assert on `llm_used` column |
 | `test-refresh-token-hashing.js` | Local hashing unit check |
 | `mysql-load-test.js` | Heavier MySQL/auth load |
