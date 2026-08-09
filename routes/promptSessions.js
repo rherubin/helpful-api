@@ -52,9 +52,11 @@ function createPromptSessionRoutes(
     return fallback;
   }
 
-  // True when Bridge/Session content has already been persisted.
+  // True when Bridge *and* Session content are present — same completeness
+  // bar as generation.ready (minus the status check). Either-field alone is
+  // partial and must not short-circuit generate as "already done".
   function hasGeneratedContent(session) {
-    return !!(session && (session.bridge_content || session.session_content));
+    return !!(session && session.bridge_content && session.session_content);
   }
 
   // Build partners[] for HelpfulPromptService from session + completed preps.
@@ -127,7 +129,8 @@ function createPromptSessionRoutes(
   // (promptSessionModel.beginGeneration), so only one caller can ever be
   // mid-flight for a given session — a second caller gets a
   // GENERATION_RUNNING error (mapped to 409 by the route) instead of also
-  // calling the LLM.
+  // calling the LLM. The claim token from beginGeneration is threaded into
+  // success/failure writes so a reclaimed lease cannot corrupt the new owner.
   async function runGeneration(promptSessionId) {
     if (!helpfulPromptService || !helpfulPromptService.isConfigured()) {
       const err = new Error('LLM service is not configured - set OPENAI_API_KEY');
@@ -149,8 +152,8 @@ function createPromptSessionRoutes(
       throw err;
     }
 
-    const wonRace = await promptSessionModel.beginGeneration(promptSessionId);
-    if (!wonRace) {
+    const claimId = await promptSessionModel.beginGeneration(promptSessionId);
+    if (!claimId) {
       // Someone else is already running, or finished between our read above
       // and now — re-read and decide which of those it was.
       session = await promptSessionModel.getPromptSessionById(promptSessionId);
@@ -166,12 +169,26 @@ function createPromptSessionRoutes(
     }
 
     // Everything below runs while we hold the 'running' lock, so every exit
-    // path must land on a terminal status. Anything that throws in here —
-    // including buildPartnersForGeneration's DB reads — has to go through
-    // updateGenerationError, or the row stays 'running' forever and
-    // beginGeneration will refuse every future retry.
+    // path must land on a terminal status *for this claim*. Anything that
+    // throws in here — including buildPartnersForGeneration's DB reads —
+    // has to go through updateGenerationError with claimId, or the
+    // row can stay 'running' until the lease expires.
     const startedAt = Date.now();
     let generationPrompt = null;
+
+    // If another worker already finished, return that session as success
+    // instead of recording failure / throwing 500 GENERATION_FAILED.
+    async function sessionIfAlreadySucceeded() {
+      try {
+        const current = await promptSessionModel.getPromptSessionById(promptSessionId);
+        if (hasGeneratedContent(current) || current?.generation?.status === 'succeeded') {
+          return current;
+        }
+      } catch {
+        // Fall through — caller will surface the original error.
+      }
+      return null;
+    }
 
     try {
       const partners = await buildPartnersForGeneration(session);
@@ -185,7 +202,8 @@ function createPromptSessionRoutes(
         generationPrompt,
         llmUsed: helpfulPromptService.model || null,
         secondsToGenerate,
-        status: 'bridge'
+        status: 'bridge',
+        claimId
       });
 
       return promptSessionModel.getPromptSessionById(promptSessionId);
@@ -193,15 +211,42 @@ function createPromptSessionRoutes(
       if (error && error.__prompt) {
         generationPrompt = error.__prompt;
       }
+
+      const alreadyDone = await sessionIfAlreadySucceeded();
+      if (alreadyDone) {
+        return alreadyDone;
+      }
+
+      // Lost-lease without content: do not mark failed (that would belong to
+      // the new owner). Surface GENERATION_RUNNING so the client polls.
+      if (error && error.code === 'GENERATION_LEASE_LOST') {
+        session = await promptSessionModel.getPromptSessionById(promptSessionId);
+        if (hasGeneratedContent(session) || session?.generation?.status === 'succeeded') {
+          return session;
+        }
+        const runningErr = new Error('Generation already in progress');
+        runningErr.code = 'GENERATION_RUNNING';
+        runningErr.promptSession = session;
+        throw runningErr;
+      }
+
       try {
         await promptSessionModel.updateGenerationError(
           promptSessionId,
           error.message || 'Failed to generate Sit Session content',
-          generationPrompt
+          generationPrompt,
+          claimId
         );
       } catch (persistErr) {
         console.warn('[prompt_sessions] Failed to persist generation_error:', persistErr.message);
       }
+
+      // Another worker may have succeeded while we were writing the error.
+      const racedSuccess = await sessionIfAlreadySucceeded();
+      if (racedSuccess) {
+        return racedSuccess;
+      }
+
       throw error;
     }
   }

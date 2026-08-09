@@ -561,8 +561,8 @@ Every `prompt_session` carries an explicit **generation job state**, separate fr
 
 `running` is never a dead end. Because it means "a server process is working on this", the backend recovers it two ways so an interrupted job can't leave a session permanently un-retryable:
 
-- **On startup**, any row still `running` belongs to a process that no longer exists (deploy, crash), so it is swept to `failed` with an explanatory `generation.error` and can be retried immediately.
-- **While running**, the lock is a *lease*: a `running` row whose `started_at` is older than `PROMPT_SESSION_GENERATION_LEASE_MS` (default 10 minutes) can be reclaimed by the next `POST .../generate`. This covers a process that is alive but wedged.
+- **On startup**, only **expired** `running` leases are swept to `failed` with an explanatory `generation.error` (same lease window as reclaim). Fresh leases are left alone so multi-instance / rolling deploys do not fail a peer's still-live generation. In-lease abandoned work becomes reclaimable once the lease expires.
+- **While running**, the lock is a *lease*: a `running` row whose `started_at` is older than `PROMPT_SESSION_GENERATION_LEASE_MS` (default 10 minutes) can be reclaimed by the next `POST .../generate`. Success and failure writes are bound to an opaque `generation_claim_id` stamped on claim, so a late first worker cannot overwrite or fail the reclaimer.
 
 Clients don't need to special-case either: keep polling while `running`, and if you hit your own timeout, `POST .../generate` again.
 
@@ -878,6 +878,7 @@ Two startup behaviours are worth knowing about:
 | `status` | `ENUM('prep','bridge','in_session','complete','abandoned')` | Product lifecycle; unaffected by generation failures |
 | `generation_status` | `ENUM('idle','pending','running','succeeded','failed')` DEFAULT `'idle'` | Generation job state — see [Generation state](#generation-state-generation_status). Exposed to clients as `generation.status`, not as a top-level field |
 | `generation_started_at` / `generation_finished_at` | `DATETIME NULL` | Stamped by `beginGeneration()` / `saveGeneratedContent()` / `updateGenerationError()`. `generation_started_at` also doubles as the lease clock for reclaiming an abandoned `running` row |
+| `generation_claim_id` | `VARCHAR(50) NULL` | Opaque lease token set by `beginGeneration()`; success/failure CAS must match it. **Never** exposed to clients |
 | `generation_error` | `TEXT NULL` | Set on failure; cleared on the next successful or retried attempt |
 | `bridge_content` / `session_content` | `LONGTEXT NULL` (JSON) | Present once `generation_status = 'succeeded'` |
 | `generation_prompt` | `LONGTEXT NULL` | Server audit only — **never** in API responses |

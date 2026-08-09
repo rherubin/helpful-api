@@ -86,6 +86,10 @@ class PromptSession {
         generation_status ENUM('idle','pending','running','succeeded','failed') DEFAULT 'idle',
         generation_started_at DATETIME DEFAULT NULL,
         generation_finished_at DATETIME DEFAULT NULL,
+        -- Opaque claim token stamped by beginGeneration; success/failure writes
+        -- must match it so a reclaimed lease cannot corrupt the new owner.
+        -- Never exposed to clients.
+        generation_claim_id VARCHAR(50) DEFAULT NULL,
         seconds_to_generate DECIMAL(8,4) DEFAULT NULL,
 
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -175,7 +179,12 @@ class PromptSession {
       FROM INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE()
         AND TABLE_NAME = 'prompt_sessions'
-        AND COLUMN_NAME IN ('generation_status', 'generation_started_at', 'generation_finished_at')
+        AND COLUMN_NAME IN (
+          'generation_status',
+          'generation_started_at',
+          'generation_finished_at',
+          'generation_claim_id'
+        )
     `;
     const existingColumns = await this.query(checkColumns);
     const columnNames = existingColumns.map(col => col.COLUMN_NAME);
@@ -205,6 +214,15 @@ class PromptSession {
         AFTER generation_started_at
       `);
       console.log('Added generation_finished_at column to prompt_sessions table.');
+    }
+
+    if (!columnNames.includes('generation_claim_id')) {
+      await this.query(`
+        ALTER TABLE prompt_sessions
+        ADD COLUMN generation_claim_id VARCHAR(50) DEFAULT NULL
+        AFTER generation_finished_at
+      `);
+      console.log('Added generation_claim_id column to prompt_sessions table.');
     }
 
     await this.backfillGenerationStatus();
@@ -248,24 +266,31 @@ class PromptSession {
     }
   }
 
-  // A row is only 'running' while a process holds it, so any 'running' row at
-  // startup belongs to a process that no longer exists (deploy, crash, OOM).
-  // Without this sweep those rows are unrecoverable: beginGeneration refuses to
-  // restart a 'running' session, so POST /generate would return 409 forever and
-  // clients would poll a job nobody is working on.
+  // On startup, mark *expired* running leases as failed so clients see a
+  // retryable terminal state without waiting for the next POST /generate.
+  // Only rows past the lease window are touched — a blanket sweep of every
+  // `running` row would fail live work owned by peer instances during a
+  // rolling deploy / multi-instance boot. Fresh leases are left alone; they
+  // remain reclaimable via beginGeneration once the lease expires.
   async resetStaleRunningGenerations() {
     try {
-      const result = await this.query(`
-        UPDATE prompt_sessions
-        SET generation_status = 'failed',
-            generation_error = COALESCE(generation_error, 'Generation was interrupted before it completed (server restart) - retry with POST /api/prompt-sessions/:id/generate'),
-            generation_finished_at = NOW(),
-            updated_at = NOW()
-        WHERE generation_status = 'running'
-      `);
+      const leaseSeconds = Math.max(1, Math.round(PromptSession.GENERATION_LEASE_MS / 1000));
+      const result = await this.query(
+        `UPDATE prompt_sessions
+           SET generation_status = 'failed',
+               generation_error = COALESCE(generation_error, 'Generation was interrupted before it completed (server restart) - retry with POST /api/prompt-sessions/:id/generate'),
+               generation_finished_at = NOW(),
+               updated_at = NOW()
+         WHERE generation_status = 'running'
+           AND (
+             generation_started_at IS NULL
+             OR generation_started_at < NOW() - INTERVAL ? SECOND
+           )`,
+        [leaseSeconds]
+      );
       const reset = result?.affectedRows || 0;
       if (reset > 0) {
-        console.log(`Reset ${reset} interrupted prompt_sessions generation(s) from 'running' to 'failed' (retryable).`);
+        console.log(`Reset ${reset} expired prompt_sessions generation lease(s) from 'running' to 'failed' (retryable).`);
       }
       return reset;
     } catch (err) {
@@ -294,6 +319,7 @@ class PromptSession {
   // The raw generation_status / generation_started_at / generation_finished_at
   // columns are folded into that object rather than also being emitted at the
   // top level, so there is exactly one place a client reads job state from.
+  // `generation_claim_id` is an internal lease token and is never exposed.
   // `generation_error` stays at the top level too — it predates this object and
   // clients already depend on it.
   serializeSession(row) {
@@ -303,6 +329,7 @@ class PromptSession {
       generation_status,
       generation_started_at,
       generation_finished_at,
+      generation_claim_id,
       ...rest
     } = row;
     const bridgeContent = this.parseMaybeJson(row.bridge_content);
@@ -571,28 +598,37 @@ class PromptSession {
   // beginGeneration may steal the lock. Generous by default: a real generation
   // can take a while (LLM retries, queue wait), and stealing the lock from a
   // worker that is still going would double the LLM spend this CAS exists to
-  // prevent. The startup sweep handles the common case (restart) immediately;
-  // this lease only covers a process that is alive but wedged.
+  // prevent. The startup sweep only fails *expired* leases; this value also
+  // covers a process that is alive but wedged.
   static get GENERATION_LEASE_MS() {
-    return Number(process.env.PROMPT_SESSION_GENERATION_LEASE_MS || 600000);
+    const n = Number(process.env.PROMPT_SESSION_GENERATION_LEASE_MS || 600000);
+    return Number.isFinite(n) && n > 0 ? n : 600000;
   }
 
   // Compare-and-swap transition into 'running'. Only succeeds when the
   // session is not already running/succeeded and has no content yet, so two
   // concurrent callers (e.g. an explicit POST /generate racing the
   // auto-generate background trigger) cannot both start an LLM call for the
-  // same session. Returns true if THIS call won the race.
+  // same session.
+  //
+  // Returns an opaque claim id (string) when THIS call won the race, or null
+  // if it lost. Callers must pass that id into saveGeneratedContent /
+  // updateGenerationError so a late worker whose lease was reclaimed cannot
+  // corrupt the new owner's row. A timestamp is not enough: DATETIME is
+  // second-precision, so two claims in the same second would collide.
   //
   // A 'running' row whose generation_started_at is older than the lease is
   // also claimable, so a wedged worker can't brick the session permanently.
   async beginGeneration(promptSessionId) {
     const leaseSeconds = Math.max(1, Math.round(PromptSession.GENERATION_LEASE_MS / 1000));
+    const claimId = this.generateUniqueId();
     const result = await this.query(
       `UPDATE prompt_sessions
          SET generation_status = 'running',
              generation_started_at = NOW(),
              generation_finished_at = NULL,
              generation_error = NULL,
+             generation_claim_id = ?,
              updated_at = NOW()
        WHERE id = ?
          AND (
@@ -605,24 +641,47 @@ class PromptSession {
          )
          AND bridge_content IS NULL
          AND session_content IS NULL`,
-      [promptSessionId, leaseSeconds]
+      [claimId, promptSessionId, leaseSeconds]
     );
-    return result.affectedRows > 0;
+    return result.affectedRows > 0 ? claimId : null;
   }
 
   // Persist generated Bridge + Session content along with the prompt that
   // produced it. `bridgeContent` / `sessionContent` may be objects (stored as
   // JSON) or strings. Marks generation_status 'succeeded' and stamps
   // generation_finished_at.
+  //
+  // CAS: only writes while this worker still owns the running lease and no
+  // content exists yet. After a lease reclaim, a late first worker must not
+  // overwrite the second worker's content (or mark succeeded mid-flight).
+  // Pass `claimId` from beginGeneration to bind the write to the claim.
   async saveGeneratedContent(promptSessionId, {
     bridgeContent = null,
     sessionContent = null,
     generationPrompt = null,
     llmUsed = null,
     secondsToGenerate = null,
-    status = 'bridge'
+    status = 'bridge',
+    claimId = null
   }) {
     const toStorage = (v) => (v && typeof v === 'object' ? JSON.stringify(v) : v);
+    const params = [
+      toStorage(bridgeContent),
+      toStorage(sessionContent),
+      generationPrompt,
+      llmUsed,
+      secondsToGenerate,
+      status,
+      promptSessionId
+    ];
+    let ownership = `
+         AND generation_status = 'running'
+         AND bridge_content IS NULL
+         AND session_content IS NULL`;
+    if (claimId != null) {
+      ownership += ` AND generation_claim_id = ?`;
+      params.push(claimId);
+    }
     const result = await this.query(
       `UPDATE prompt_sessions
          SET bridge_content = ?,
@@ -636,13 +695,26 @@ class PromptSession {
              generation_finished_at = NOW(),
              status = ?,
              updated_at = NOW()
-       WHERE id = ?`,
-      [toStorage(bridgeContent), toStorage(sessionContent), generationPrompt, llmUsed, secondsToGenerate, status, promptSessionId]
+       WHERE id = ?${ownership}`,
+      params
     );
     if (result.affectedRows === 0) {
-      throw new Error('Prompt session not found');
+      const existing = await this.getPromptSessionById(promptSessionId);
+      if (!existing) {
+        throw new Error('Prompt session not found');
+      }
+      // Another worker already finished — treat as success for the caller.
+      if (
+        existing.generation?.status === 'succeeded'
+        || (existing.bridge_content && existing.session_content)
+      ) {
+        return { message: 'Generated content already present', saved: false };
+      }
+      const err = new Error('Lost generation lease; content not saved');
+      err.code = 'GENERATION_LEASE_LOST';
+      throw err;
     }
-    return { message: 'Generated content saved successfully' };
+    return { message: 'Generated content saved successfully', saved: true };
   }
 
   // Record a generation failure. Only overwrites generation_prompt when a
@@ -650,16 +722,23 @@ class PromptSession {
   // generation_status 'failed' and stamps generation_finished_at so a
   // subsequent POST /generate can retry (idle/pending/failed -> running).
   //
-  // Refuses to touch a session that already has content: once the lease in
-  // beginGeneration can hand a session to a second worker, a wedged first
-  // worker may report its failure *after* the second one succeeded, and that
-  // late error must not flip a good session to 'failed'. Returns whether the
-  // failure was actually recorded.
-  async updateGenerationError(promptSessionId, errorMessage, generationPrompt = null) {
-    const guard = `
+  // Ownership: only the worker that still holds the running lease may mark
+  // failed. Content-null alone is not enough — after a lease reclaim the row
+  // is still running with null content for the *new* owner, and a late error
+  // from the old owner must not fail that job (or reopen the claim for a
+  // third concurrent LLM call). Pass `claimId` from beginGeneration.
+  // Returns whether the failure was actually recorded.
+  async updateGenerationError(promptSessionId, errorMessage, generationPrompt = null, claimId = null) {
+    let guard = `
+        AND generation_status = 'running'
         AND bridge_content IS NULL
-        AND session_content IS NULL
-        AND generation_status <> 'succeeded'`;
+        AND session_content IS NULL`;
+    const ownershipParams = [];
+    if (claimId != null) {
+      guard += `
+        AND generation_claim_id = ?`;
+      ownershipParams.push(claimId);
+    }
     const updateQuery = generationPrompt !== null
       ? `UPDATE prompt_sessions
            SET generation_error = ?, generation_prompt = ?,
@@ -672,13 +751,12 @@ class PromptSession {
                updated_at = NOW()
          WHERE id = ?${guard}`;
     const params = generationPrompt !== null
-      ? [errorMessage, generationPrompt, promptSessionId]
-      : [errorMessage, promptSessionId];
+      ? [errorMessage, generationPrompt, promptSessionId, ...ownershipParams]
+      : [errorMessage, promptSessionId, ...ownershipParams];
 
     const result = await this.query(updateQuery, params);
     if (result.affectedRows === 0) {
-      // Either the session is gone or it succeeded in the meantime. Distinguish
-      // the two so a missing session still surfaces as an error.
+      // Session gone, lease stolen, or another worker already finished.
       const existing = await this.queryOne(
         `SELECT id FROM prompt_sessions WHERE id = ?`,
         [promptSessionId]
@@ -686,7 +764,7 @@ class PromptSession {
       if (!existing) {
         throw new Error('Prompt session not found');
       }
-      return { message: 'Generation error skipped; session already has content', recorded: false };
+      return { message: 'Generation error skipped; lease no longer owned or content already present', recorded: false };
     }
     return { message: 'Generation error updated successfully', recorded: true };
   }

@@ -1222,11 +1222,11 @@ class PromptSessionsTestRunner {
         `status: ${session.generation.status}`
       );
 
-      const won1 = await model.beginGeneration(session.id);
-      this.assert(won1 === true, 'Model: first beginGeneration() wins the compare-and-swap', `won1: ${won1}`);
+      const claim1 = await model.beginGeneration(session.id);
+      this.assert(!!claim1, 'Model: first beginGeneration() wins the compare-and-swap', `claim1: ${claim1}`);
 
-      const won2 = await model.beginGeneration(session.id);
-      this.assert(won2 === false, 'Model: second beginGeneration() loses while already running', `won2: ${won2}`);
+      const claim2 = await model.beginGeneration(session.id);
+      this.assert(claim2 === null, 'Model: second beginGeneration() loses while already running', `claim2: ${claim2}`);
 
       const runningSession = await model.getPromptSessionById(session.id);
       this.assert(
@@ -1249,7 +1249,8 @@ class PromptSessionsTestRunner {
             { id: 'close', prompt: 'p'.repeat(20) }
           ]
         },
-        llmUsed: 'model-unit-test-mock'
+        llmUsed: 'model-unit-test-mock',
+        claimId: claim1
       });
 
       const succeededSession = await model.getPromptSessionById(session.id);
@@ -1264,18 +1265,18 @@ class PromptSessionsTestRunner {
         `ready: ${succeededSession.generation.ready}`
       );
 
-      const wonAfterSucceeded = await model.beginGeneration(session.id);
+      const claimAfterSucceeded = await model.beginGeneration(session.id);
       this.assert(
-        wonAfterSucceeded === false,
+        claimAfterSucceeded === null,
         'Model: beginGeneration() refuses to restart an already-succeeded session',
-        `won: ${wonAfterSucceeded}`
+        `claim: ${claimAfterSucceeded}`
       );
 
       // Isolated second session for the failed -> retry transition.
       const session2 = await model.createPromptSession({ createdByUserId: ownerId });
       createdIds.push(session2.id);
-      await model.beginGeneration(session2.id);
-      await model.updateGenerationError(session2.id, 'Model unit test forced failure');
+      const claimFail = await model.beginGeneration(session2.id);
+      await model.updateGenerationError(session2.id, 'Model unit test forced failure', null, claimFail);
 
       const failedSession = await model.getPromptSessionById(session2.id);
       this.assert(
@@ -1284,8 +1285,8 @@ class PromptSessionsTestRunner {
         `status: ${failedSession.generation.status}, error: ${failedSession.generation.error}`
       );
 
-      const retryWon = await model.beginGeneration(session2.id);
-      this.assert(retryWon === true, 'Model: beginGeneration() allows failed -> running retry', `retryWon: ${retryWon}`);
+      const claimRetry = await model.beginGeneration(session2.id);
+      this.assert(!!claimRetry, 'Model: beginGeneration() allows failed -> running retry', `claimRetry: ${claimRetry}`);
 
       const retriedSession = await model.getPromptSessionById(session2.id);
       this.assert(
@@ -1300,16 +1301,94 @@ class PromptSessionsTestRunner {
         `UPDATE prompt_sessions SET generation_started_at = NOW() - INTERVAL 1 DAY WHERE id = ?`,
         [session2.id]
       );
-      const wonExpiredLease = await model.beginGeneration(session2.id);
+      const claimExpired = await model.beginGeneration(session2.id);
       this.assert(
-        wonExpiredLease === true,
+        !!claimExpired,
         'Model: beginGeneration() reclaims a running session whose lease has expired',
-        `won: ${wonExpiredLease}`
+        `claim: ${claimExpired}`
+      );
+
+      // Stale claim token (pre-reclaim) must not mark the reclaimed job failed.
+      const lateFailureWhileReclaimed = await model.updateGenerationError(
+        session2.id,
+        'Late failure from worker whose lease was stolen',
+        null,
+        claimRetry
+      );
+      this.assert(
+        lateFailureWhileReclaimed.recorded === false,
+        'Model: updateGenerationError refuses to fail a row after its lease was reclaimed',
+        `recorded: ${lateFailureWhileReclaimed.recorded}`
+      );
+      const stillRunningAfterStaleFail = await model.getPromptSessionById(session2.id);
+      this.assert(
+        stillRunningAfterStaleFail.generation.status === 'running',
+        'Model: reclaimed session stays running when a stale owner reports failure',
+        `status: ${stillRunningAfterStaleFail.generation.status}`
+      );
+
+      // Stale save must not overwrite content written by the new owner.
+      await model.saveGeneratedContent(session2.id, {
+        bridgeContent: {
+          summary: 'new owner '.repeat(5),
+          shared_themes: ['reclaim theme'],
+          transition: 'new owner transition text'
+        },
+        sessionContent: {
+          title: 'Reclaim Owner Session',
+          phases: [
+            { id: 'open', prompt: 'p'.repeat(20) },
+            { id: 'deepen', prompt: 'p'.repeat(20) },
+            { id: 'close', prompt: 'p'.repeat(20) }
+          ]
+        },
+        llmUsed: 'reclaim-owner-mock',
+        claimId: claimExpired
+      });
+      let staleSaveLostLease = false;
+      let staleSaveAlreadyPresent = false;
+      try {
+        const staleSave = await model.saveGeneratedContent(session2.id, {
+          bridgeContent: {
+            summary: 'stale owner '.repeat(5),
+            shared_themes: ['stale theme'],
+            transition: 'stale owner transition text'
+          },
+          sessionContent: {
+            title: 'Stale Owner Session',
+            phases: [
+              { id: 'open', prompt: 's'.repeat(20) },
+              { id: 'deepen', prompt: 's'.repeat(20) },
+              { id: 'close', prompt: 's'.repeat(20) }
+            ]
+          },
+          llmUsed: 'stale-owner-mock',
+          claimId: claimRetry
+        });
+        staleSaveAlreadyPresent = staleSave.saved === false;
+      } catch (err) {
+        staleSaveLostLease = err.code === 'GENERATION_LEASE_LOST';
+      }
+      this.assert(
+        staleSaveAlreadyPresent || staleSaveLostLease,
+        'Model: saveGeneratedContent with a stale claim does not overwrite the new owner',
+        `alreadyPresent=${staleSaveAlreadyPresent}, lostLease=${staleSaveLostLease}`
+      );
+      const afterStaleSave = await model.getPromptSessionById(session2.id);
+      this.assert(
+        afterStaleSave.session_content?.title === 'Reclaim Owner Session',
+        'Model: content after stale save still belongs to the reclaim owner',
+        `title: ${afterStaleSave.session_content?.title}`
       );
 
       // A worker that finally reports failure after another worker already
       // succeeded must not flip a good session back to 'failed'.
-      const lateFailure = await model.updateGenerationError(session.id, 'Late failure from a wedged worker');
+      const lateFailure = await model.updateGenerationError(
+        session.id,
+        'Late failure from a wedged worker',
+        null,
+        claim1
+      );
       this.assert(
         lateFailure.recorded === false,
         'Model: updateGenerationError refuses to overwrite a session that already has content',
@@ -1322,16 +1401,26 @@ class PromptSessionsTestRunner {
         `status: ${stillSucceeded.generation.status}, error: ${stillSucceeded.generation.error}`
       );
 
-      // The startup sweep is what recovers rows whose process is simply gone.
-      // It is table-wide by design, so this assertion only checks "at least one"
-      // and the suite runs it last, after every other generation has settled.
+      // Startup sweep only touches *expired* leases so multi-instance boot
+      // cannot fail a peer's still-live generation. Age the row first.
       const session3 = await model.createPromptSession({ createdByUserId: ownerId });
       createdIds.push(session3.id);
       await model.beginGeneration(session3.id);
+      const freshReset = await model.resetStaleRunningGenerations();
+      const stillFresh = await model.getPromptSessionById(session3.id);
+      this.assert(
+        stillFresh.generation.status === 'running',
+        'Model: resetStaleRunningGenerations() leaves a fresh (in-lease) running row alone',
+        `status: ${stillFresh.generation.status}, resetCount: ${freshReset}`
+      );
+      await pool.execute(
+        `UPDATE prompt_sessions SET generation_started_at = NOW() - INTERVAL 1 DAY WHERE id = ?`,
+        [session3.id]
+      );
       const resetCount = await model.resetStaleRunningGenerations();
       this.assert(
         resetCount >= 1,
-        'Model: resetStaleRunningGenerations() sweeps running rows left over from a dead process',
+        'Model: resetStaleRunningGenerations() sweeps expired running leases from a dead process',
         `reset: ${resetCount}`
       );
       const sweptSession = await model.getPromptSessionById(session3.id);
@@ -1340,11 +1429,11 @@ class PromptSessionsTestRunner {
         'Model: swept session lands on failed with an explanatory, retryable error',
         `status: ${sweptSession.generation.status}, error: ${sweptSession.generation.error}`
       );
-      const wonAfterSweep = await model.beginGeneration(session3.id);
+      const claimAfterSweep = await model.beginGeneration(session3.id);
       this.assert(
-        wonAfterSweep === true,
+        !!claimAfterSweep,
         'Model: a swept session can be retried immediately',
-        `won: ${wonAfterSweep}`
+        `claim: ${claimAfterSweep}`
       );
     } catch (error) {
       this.assert(false, 'Model generation_status unit tests', `Error: ${error.message}`);
