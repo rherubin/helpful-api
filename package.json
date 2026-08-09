@@ -23,6 +23,7 @@
     "test:admin-push": "node tests/admin-push-test-test.js",
     "test:stripe-billing": "node tests/stripe-billing-test.js",
     "test:prompt-sessions": "node tests/prompt-sessions-test.js",
+    "test:prompt-session-generate-demo": "node tests/prompt-session-generate-demo.js",
     "test:pairing-lifecycle": "node tests/pairing-lifecycle-test.js",
     "test:user-soft-delete": "node tests/user-soft-delete-test.js",
     "purge:prompt-sessions": "node scripts/purge-prompt-sessions.js",
