@@ -89,6 +89,22 @@ CREATE TABLE prompt_sessions (
 - We deliberately store `generation_prompt` (following the existing pattern in the `programs` table).
 - `current_phase` gives the client a clear signal for what UI to show.
 
+### `generation_status` — first-class generation job state
+
+`status` (`prep`/`bridge`/…) is the **product** lifecycle and does not tell clients whether an LLM call is currently running. `generation_status` is a second, orthogonal state machine dedicated to that:
+
+```
+idle -> running -> succeeded
+              \--> failed -> running -> succeeded | failed   (retry)
+```
+
+- `generation_started_at` / `generation_finished_at` are stamped on each `running` transition and each terminal outcome, respectively.
+- The `idle`/`failed` → `running` transition is a compare-and-swap `UPDATE ... WHERE generation_status IN ('idle','pending','failed') AND bridge_content IS NULL AND session_content IS NULL` (`PromptSession.beginGeneration`), so an explicit `POST .../generate` racing the auto-generate background trigger can never both reach the LLM — the loser gets a `GENERATION_RUNNING` error, surfaced as **409** by the route.
+- `succeeded` never restarts: once content exists, `POST .../generate` is a pure read (idempotent).
+- `failed` is retryable: a subsequent `POST .../generate` clears `generation_error` and re-enters `running`.
+- `serializeSession()` never exposes raw `generation_status`/`generation_started_at`/`generation_finished_at` derivation logic to clients directly — it also attaches a computed, non-persisted `generation` object (`{ status, error, started_at, finished_at, ready }`) so app/web don't reinvent the "is this actually ready" rule from `bridge_content`/`session_content` null-checks.
+- Full client-facing contract (state table, polling guidance, status codes): see the [README "Generation state"](../README.md#generation-state-generation_status) section — that is the canonical, single source of truth; this note is implementation background only.
+
 ### `prompt_session_preps`
 
 One row per partner per prompt session. This is the "six questions + optional focus".

@@ -117,7 +117,17 @@ function createPromptSessionRoutes(
   }
 
   // Run LLM generation and persist bridge/session (or generation_error).
-  // Returns the refreshed session row. Throws on hard failures after error is stored.
+  // Returns the refreshed session row. Throws on hard failures after error is
+  // stored. Shared by the explicit POST /:id/generate route and the
+  // fire-and-forget auto-generate trigger, so both paths drive the exact same
+  // generation_status state machine (idle/pending/failed -> running ->
+  // succeeded|failed) and polling clients see the same transitions either way.
+  //
+  // Concurrency: the idle/failed -> running transition is a compare-and-swap
+  // (promptSessionModel.beginGeneration), so only one caller can ever be
+  // mid-flight for a given session — a second caller gets a
+  // GENERATION_RUNNING error (mapped to 409 by the route) instead of also
+  // calling the LLM.
   async function runGeneration(promptSessionId) {
     if (!helpfulPromptService || !helpfulPromptService.isConfigured()) {
       const err = new Error('LLM service is not configured - set OPENAI_API_KEY');
@@ -125,8 +135,8 @@ function createPromptSessionRoutes(
       throw err;
     }
 
-    const session = await promptSessionModel.getPromptSessionById(promptSessionId);
-    if (hasGeneratedContent(session)) {
+    let session = await promptSessionModel.getPromptSessionById(promptSessionId);
+    if (hasGeneratedContent(session) || session.generation?.status === 'succeeded') {
       return session;
     }
 
@@ -136,6 +146,19 @@ function createPromptSessionRoutes(
         ? 'Both partners must complete prep before generating'
         : 'Prep must be complete before generating');
       err.code = 'PREP_NOT_READY';
+      throw err;
+    }
+
+    const wonRace = await promptSessionModel.beginGeneration(promptSessionId);
+    if (!wonRace) {
+      // Someone else is already running, or finished between our read above
+      // and now — re-read and decide which of those it was.
+      session = await promptSessionModel.getPromptSessionById(promptSessionId);
+      if (hasGeneratedContent(session) || session.generation?.status === 'succeeded') {
+        return session;
+      }
+      const err = new Error('Generation already in progress');
+      err.code = 'GENERATION_RUNNING';
       throw err;
     }
 
@@ -176,6 +199,9 @@ function createPromptSessionRoutes(
   }
 
   // Fire-and-forget when prep becomes ready (does not block the prep response).
+  // Shares runGeneration's state machine with the explicit generate route, so
+  // a client polling GET /:id sees the same idle -> running -> succeeded|failed
+  // transitions regardless of which path started the job.
   function triggerGenerationInBackground(promptSessionId) {
     if (!helpfulPromptService || !helpfulPromptService.isConfigured()) {
       console.log(`[prompt_sessions] Prep ready for ${promptSessionId}; LLM not configured — skip auto-generate.`);
@@ -183,9 +209,13 @@ function createPromptSessionRoutes(
     }
     runGeneration(promptSessionId)
       .then((session) => {
-        console.log(`[prompt_sessions] Auto-generation finished for ${promptSessionId}, status=${session?.status}`);
+        console.log(`[prompt_sessions] Auto-generation finished for ${promptSessionId}, status=${session?.status}, generation_status=${session?.generation?.status}`);
       })
       .catch((err) => {
+        if (err.code === 'GENERATION_RUNNING') {
+          console.log(`[prompt_sessions] Auto-generation for ${promptSessionId} skipped — already running (explicit generate likely won the race).`);
+          return;
+        }
         console.warn(`[prompt_sessions] Auto-generation failed for ${promptSessionId}:`, err.message);
       });
   }
@@ -468,7 +498,11 @@ function createPromptSessionRoutes(
   });
 
   // Trigger content generation from completed prep(s).
-  // Idempotent: if bridge/session content already exists, returns it (200).
+  //
+  // State machine (generation_status): idle | pending | running | succeeded | failed.
+  //   - Already succeeded / content present → 200 with the existing session (idempotent; no LLM call).
+  //   - Already running (this call or the auto-generate background trigger) → 409.
+  //   - idle or failed → running → succeeded|failed (failed sessions can be retried this way).
   router.post('/:id/generate', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
@@ -479,9 +513,16 @@ function createPromptSessionRoutes(
         return res.status(403).json({ error: 'Not authorized to access this prompt session' });
       }
 
-      if (hasGeneratedContent(session)) {
+      if (hasGeneratedContent(session) || session.generation?.status === 'succeeded') {
         return res.status(200).json({
           message: 'Prompt session content already generated',
+          prompt_session: session
+        });
+      }
+
+      if (session.generation?.status === 'running') {
+        return res.status(409).json({
+          error: 'Generation already in progress',
           prompt_session: session
         });
       }
@@ -512,6 +553,9 @@ function createPromptSessionRoutes(
       }
       if (error.code === 'PREP_NOT_READY') {
         return res.status(409).json({ error: error.message });
+      }
+      if (error.code === 'GENERATION_RUNNING') {
+        return res.status(409).json({ error: 'Generation already in progress' });
       }
       if (error.code === 'LLM_NOT_CONFIGURED') {
         return res.status(503).json({
