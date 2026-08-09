@@ -10,7 +10,8 @@ const axios = require('axios');
  *   - prep submit/merge + completion detection (1 prep solo / 2 prep paired)
  *   - partner prep visibility policy (hidden until BOTH preps complete when paired)
  *   - phase/status PATCH
- *   - generation endpoint stub (409 before ready, 501 after)
+ *   - generation endpoint (409 before ready; 200 with bridge/session after;
+ *     idempotent if already generated)
  *   - generation_prompt never exposed to clients
  *
  * Run with: node tests/prompt-sessions-test.js
@@ -52,13 +53,16 @@ class PromptSessionsTestRunner {
   }
 
   fullPrep(overrides = {}) {
+    // Values align with Sit Session product copy (see HelpfulPromptService.SIT_SESSION_PREP_LINES):
+    // gratitude=feeling, energy_level=tank, boundary=closeness, intention=tone,
+    // curiosity=topic, bringing_text=free-form.
     return {
-      bringing_text: 'I am bringing curiosity and some tiredness.',
-      energy_level: 'medium',
-      intention: 'To listen more than I speak.',
-      curiosity: 'What has felt heavy for you this week?',
-      boundary: 'Let us avoid logistics tonight.',
-      gratitude: 'Thank you for planning dinner.',
+      gratitude: 'hopeful and a bit tender',
+      energy_level: 'somewhat full',
+      boundary: 'somewhat close',
+      intention: 'gentle and honest',
+      curiosity: 'stay on reconnecting after a hard week',
+      bringing_text: 'I want us to leave tonight feeling more on the same team.',
       ...overrides
     };
   }
@@ -268,14 +272,32 @@ class PromptSessionsTestRunner {
     }
 
     try {
-      await axios.post(
+      // Auto-generate may already have finished after full prep.
+      await this.sleep(300);
+      const res = await axios.post(
         `${this.baseURL}/api/prompt-sessions/${soloSessionId}/generate`,
         {},
         this.authHeader(outsider.token)
       );
-      this.assert(false, 'Solo generate stub should not succeed yet', 'Request unexpectedly succeeded');
+      this.assert(res.status === 200, 'Solo generate returns 200 after prep', `Status: ${res.status}`);
+      const soloBridge = res.data.prompt_session?.bridge_content;
+      const soloSession = res.data.prompt_session?.session_content;
+      this.assert(
+        !!soloBridge && !!soloSession,
+        'Solo generate includes bridge + session content',
+        `bridge: ${!!soloBridge}, session: ${!!soloSession}`
+      );
+      this.assert(
+        typeof soloBridge?.summary === 'string' && Array.isArray(soloSession?.phases) && soloSession.phases.length === 3,
+        'Solo generate uses strict schema',
+        `summary?: ${typeof soloBridge?.summary}, phases: ${soloSession?.phases?.length}`
+      );
     } catch (error) {
-      this.assert(error.response?.status === 501, 'Solo generate returns 501 after prep', `Status: ${error.response?.status}`);
+      this.assert(
+        false,
+        'Solo generate after prep',
+        `Status: ${error.response?.status} Error: ${error.response?.data?.error || error.message}`
+      );
     }
 
     try {
@@ -609,14 +631,154 @@ class PromptSessionsTestRunner {
     }
   }
 
-  async testGenerateStub() {
-    this.log('Testing generation stub (501 once both preps complete)', 'section');
+  async testGenerateSuccess() {
+    this.log('Testing generation once both preps complete', 'section');
     const { user1, sessionId } = this.testData;
+
+    // Auto-generate may already have run after the second prep; allow settle time.
+    await this.sleep(500);
+
     try {
-      await axios.post(`${this.baseURL}/api/prompt-sessions/${sessionId}/generate`, {}, this.authHeader(user1.token));
-      this.assert(false, 'Generate stub should not succeed yet', 'Request unexpectedly succeeded');
+      const res = await axios.post(
+        `${this.baseURL}/api/prompt-sessions/${sessionId}/generate`,
+        {},
+        this.authHeader(user1.token)
+      );
+      this.assert(res.status === 200, 'Generate returns 200', `Status: ${res.status}`);
+      const session = res.data.prompt_session;
+      this.assert(!!session, 'Response includes prompt_session', `keys: ${Object.keys(res.data || {}).join(',')}`);
+      this.assert(
+        !('generation_prompt' in (session || {})),
+        'generation_prompt is NOT exposed after generate',
+        `keys: ${Object.keys(session || {}).join(',')}`
+      );
+      this.assert(
+        !!session.bridge_content,
+        'bridge_content present after generate',
+        `bridge_content: ${JSON.stringify(session.bridge_content)?.slice(0, 80)}`
+      );
+      this.assert(
+        !!session.session_content,
+        'session_content present after generate',
+        `session_content: ${JSON.stringify(session.session_content)?.slice(0, 80)}`
+      );
+      const bridge = session.bridge_content;
+      const sess = session.session_content;
+      this.assert(
+        typeof bridge?.summary === 'string' && bridge.summary.length >= 20,
+        'bridge_content.summary present',
+        `len: ${bridge?.summary?.length}`
+      );
+      this.assert(
+        Array.isArray(bridge?.shared_themes) && bridge.shared_themes.length >= 1,
+        'bridge_content.shared_themes is non-empty array',
+        `len: ${bridge?.shared_themes?.length}`
+      );
+      this.assert(
+        typeof bridge?.transition === 'string' && bridge.transition.length >= 15,
+        'bridge_content.transition present',
+        `len: ${bridge?.transition?.length}`
+      );
+      this.assert(
+        typeof sess?.title === 'string' && sess.title.length >= 5,
+        'session_content.title present',
+        `title: ${sess?.title}`
+      );
+      this.assert(
+        Array.isArray(sess?.phases) && sess.phases.length === 3,
+        'session_content.phases has 3 entries',
+        `len: ${sess?.phases?.length}`
+      );
+      this.assert(
+        sess.phases.map(p => p.id).join(',') === 'open,deepen,close',
+        'phases ordered open,deepen,close',
+        `ids: ${sess.phases.map(p => p.id).join(',')}`
+      );
+      this.assert(
+        session.status === 'bridge' || session.status === 'in_session' || session.status === 'prep',
+        'status is non-terminal after generate',
+        `status: ${session.status}`
+      );
+
+      // Idempotent second call
+      const res2 = await axios.post(
+        `${this.baseURL}/api/prompt-sessions/${sessionId}/generate`,
+        {},
+        this.authHeader(user1.token)
+      );
+      this.assert(res2.status === 200, 'Second generate is idempotent (200)', `Status: ${res2.status}`);
+      this.assert(
+        /already generated|generated successfully/i.test(res2.data.message || ''),
+        'Second generate message acknowledges content',
+        `message: ${res2.data.message}`
+      );
     } catch (error) {
-      this.assert(error.response?.status === 501, 'Generate returns 501 (not implemented)', `Status: ${error.response?.status}`);
+      this.assert(
+        false,
+        'Generate success',
+        `Status: ${error.response?.status} Error: ${error.response?.data?.error || error.message}`
+      );
+    }
+  }
+
+  async testSoloGenerate() {
+    this.log('Testing solo generate after one complete prep', 'section');
+    const { user1 } = this.testData;
+    try {
+      // Clear any active solo by completing previous if needed — create may 409.
+      // Use a fresh user so we do not collide with earlier solo session.
+      const soloUser = await this.createUser('sologen');
+      // Set a real display name so LLM name validation is happy if used.
+      await axios.put(
+        `${this.baseURL}/api/users/${soloUser.id}`,
+        { user_name: 'SoloGen' },
+        this.authHeader(soloUser.token)
+      );
+
+      const createRes = await axios.post(
+        `${this.baseURL}/api/prompt-sessions`,
+        {},
+        this.authHeader(soloUser.token)
+      );
+      this.assert(createRes.status === 201, 'Solo session created for generate test', `Status: ${createRes.status}`);
+      const sessionId = createRes.data.prompt_session.id;
+
+      const prepRes = await axios.post(
+        `${this.baseURL}/api/prompt-sessions/${sessionId}/prep`,
+        this.fullPrep(),
+        this.authHeader(soloUser.token)
+      );
+      this.assert(prepRes.data.both_preps_complete === true, 'Solo prep ready', `value: ${prepRes.data.both_preps_complete}`);
+
+      const genRes = await axios.post(
+        `${this.baseURL}/api/prompt-sessions/${sessionId}/generate`,
+        {},
+        this.authHeader(soloUser.token)
+      );
+      this.assert(genRes.status === 200, 'Solo generate returns 200', `Status: ${genRes.status}`);
+      const gBridge = genRes.data.prompt_session?.bridge_content;
+      const gSession = genRes.data.prompt_session?.session_content;
+      this.assert(
+        !!gBridge && !!gSession,
+        'Solo generate has bridge + session content',
+        `bridge: ${!!gBridge}, session: ${!!gSession}`
+      );
+      this.assert(
+        typeof gBridge?.summary === 'string' &&
+          Array.isArray(gBridge?.shared_themes) &&
+          gSession?.phases?.map(p => p.id).join(',') === 'open,deepen,close',
+        'Solo generate strict schema',
+        `summary?: ${typeof gBridge?.summary}, phases: ${gSession?.phases?.map(p => p.id).join(',')}`
+      );
+
+      // Quiet unused
+      void user1;
+    } catch (error) {
+      this.assert(
+        false,
+        'Solo generate',
+        `Status: ${error.response?.status} Error: ${error.response?.data?.error || error.message}`
+      );
     }
   }
 
@@ -650,7 +812,9 @@ class PromptSessionsTestRunner {
       console.log('');
       await this.testPhasePatch();
       console.log('');
-      await this.testGenerateStub();
+      await this.testGenerateSuccess();
+      console.log('');
+      await this.testSoloGenerate();
       console.log('');
 
       this.printSummary();

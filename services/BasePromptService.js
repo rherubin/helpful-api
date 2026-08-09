@@ -98,10 +98,18 @@ class BasePromptService {
     // those still route to the faith-shaped mock.
     const isHopeful = /faith-based|spiritual wellness|pastor|scripture|bible|church/.test(combined);
 
+    // Sit Session (prompt_sessions) generation — Bridge + Session JSON.
+    const isSitSession = /sit session|the bridge|emotional tank/.test(combined);
+
     if (jsonMode) {
-      const content = isHopeful
-        ? JSON.stringify(this._buildHopefulMockProgram())
-        : JSON.stringify(this._buildHelpfulMockProgram());
+      let content;
+      if (isSitSession) {
+        content = JSON.stringify(this._buildSitSessionMockContent());
+      } else if (isHopeful) {
+        content = JSON.stringify(this._buildHopefulMockProgram());
+      } else {
+        content = JSON.stringify(this._buildHelpfulMockProgram());
+      }
       return {
         content,
         finishReason: 'stop',
@@ -158,6 +166,38 @@ class BasePromptService {
             science_behind_it: `On day ${day}, research on couples communication shows that partners who actively listen and share feelings build deeper trust, stronger emotional connection, intimacy, and long-term relationship satisfaction. Reflect together on what you can share to support each other.`
           };
         })
+      }
+    };
+  }
+
+  // Sit Session mock: strict Bridge + Session schema for prompt_sessions generation.
+  _buildSitSessionMockContent() {
+    return {
+      bridge: {
+        summary: 'Thank you for showing up to this Sit Session. Based on what you shared in prep — how you are feeling, where your emotional tank is, and what tone and topic you want — this is a safe space to slow down, listen, and reconnect with care and curiosity.',
+        shared_themes: [
+          'emotional connection',
+          'feeling seen after a hard stretch',
+          'gentle honesty'
+        ],
+        transition: 'When you are ready, we will move into a short guided Session with three simple steps: open, deepen, and close.'
+      },
+      session: {
+        title: 'Same Team Tonight',
+        phases: [
+          {
+            id: 'open',
+            prompt: 'Each of you name one feeling you brought into the room and one thing you hope feels different by the end of this Sit Session.'
+          },
+          {
+            id: 'deepen',
+            prompt: 'Take turns answering: what would help your emotional tank feel a little fuller this week, and how can your partner support that without fixing it for you?'
+          },
+          {
+            id: 'close',
+            prompt: 'Share one appreciation for your partner and one small next step you can take together today so you leave feeling more on the same team.'
+          }
+        ]
       }
     };
   }

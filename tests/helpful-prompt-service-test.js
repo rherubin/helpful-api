@@ -135,12 +135,34 @@ class HelpfulPromptServiceTestRunner {
     this.assert(typeof service.generateNextCouplesProgram === 'function', 'generateNextCouplesProgram exists');
     this.assert(typeof service.generateCouplesTherapyResponse === 'function', 'generateCouplesTherapyResponse exists');
     this.assert(typeof service.generateChimeInPrompt === 'function', 'generateChimeInPrompt exists');
+    this.assert(typeof service.generateSitSessionContent === 'function', 'generateSitSessionContent exists');
+    this.assert(typeof service.buildSitSessionPrepPrompt === 'function', 'buildSitSessionPrepPrompt exists');
     this.assert(typeof service.generateInitialProgram === 'function', 'generateInitialProgram exists');
     this.assert(typeof service.generateNextProgram === 'function', 'generateNextProgram exists (not delegating stub)');
     this.assert(typeof service.getMetrics === 'function', 'getMetrics (inherited from Base) exists');
     this.assert(typeof service.model === 'string' && service.model.length > 0, 'model is a non-empty string', `model = ${service.model}`);
 
     return service;
+  }
+
+  buildMockSitSession(overrides = {}) {
+    return {
+      bridge: {
+        summary: 'Thank you both for showing up. Your prep shows care for tone, topic, and closeness — this Bridge is a soft landing into the Session together.',
+        shared_themes: ['reconnection', 'gentle honesty', 'emotional safety'],
+        transition: 'When you are ready, we will move into three short steps to open, deepen, and close together.',
+        ...(overrides.bridge || {})
+      },
+      session: {
+        title: 'Same Team Tonight',
+        phases: [
+          { id: 'open', prompt: 'Each of you name one feeling you brought into the room and what you hope feels different by the end.' },
+          { id: 'deepen', prompt: 'What would help your emotional tank feel a little fuller this week, and how can your partner support that?' },
+          { id: 'close', prompt: 'Share one appreciation and one small next step so you leave feeling more on the same team tonight.' }
+        ],
+        ...(overrides.session || {})
+      }
+    };
   }
 
   async testInitialProgramIs14DayCouplesFormat(service) {
@@ -306,6 +328,187 @@ class HelpfulPromptServiceTestRunner {
     }
   }
 
+  testSitSessionPrepPromptShape(service) {
+    this.log('Testing Sit Session prep prompt is filled from prep fields', 'section');
+    const prepA = {
+      gratitude: 'hopeful',
+      energy_level: 'somewhat full',
+      boundary: 'somewhat close',
+      intention: 'gentle',
+      curiosity: 'stay on reconnecting',
+      bringing_text: 'I want us to feel like a team again.',
+      optional_focus: 'evening check-ins'
+    };
+    const prepB = {
+      gratitude: 'tired but open',
+      energy_level: 'empty',
+      boundary: 'distant',
+      intention: 'honest',
+      curiosity: 'talk about conflict',
+      bringing_text: 'I need more patience from both of us.'
+    };
+
+    const prompt = service.buildSitSessionPrepPrompt([
+      { name: 'Alex', prep: prepA },
+      { name: 'Jordan', prep: prepB }
+    ]);
+
+    this.assert(/Alex says:/.test(prompt), 'Includes Partner A name block');
+    this.assert(/Jordan says:/.test(prompt), 'Includes Partner B name block');
+    this.assert(/1\. They're feeling hopeful/.test(prompt), 'Line 1 maps gratitude → feeling');
+    this.assert(/2\. Their emotional tank is feeling somewhat full right now/.test(prompt), 'Line 2 maps energy_level → tank');
+    this.assert(/3\. They're feeling somewhat close to their partner/.test(prompt), 'Line 3 maps boundary → closeness');
+    this.assert(/4\. They want the tone of the session to be gentle/.test(prompt), 'Line 4 maps intention → tone');
+    this.assert(/5\. They want the topic to stay on reconnecting/.test(prompt), 'Line 5 maps curiosity → topic');
+    this.assert(/6\. In a free form text field, they've entered I want us to feel like a team again\./.test(prompt), 'Line 6 maps bringing_text → free form');
+    this.assert(/optional focus: evening check-ins/.test(prompt), 'optional_focus appended to free-form line');
+    this.assert(/They're feeling tired but open/.test(prompt), 'Partner B feeling present');
+    this.assert(/emotional tank is feeling empty/.test(prompt), 'Partner B tank present');
+  }
+
+  async testSitSessionGeneration(service) {
+    this.log('Testing generateSitSessionContent returns strict bridge + session schema', 'section');
+    const originalFetch = global.fetch;
+    this._installMockFetch(JSON.stringify(this.buildMockSitSession()));
+
+    try {
+      const result = await service.generateSitSessionContent([
+        {
+          name: 'Alex',
+          prep: {
+            gratitude: 'hopeful',
+            energy_level: 'somewhat full',
+            boundary: 'somewhat close',
+            intention: 'gentle',
+            curiosity: 'reconnect',
+            bringing_text: 'I want us on the same team.'
+          }
+        },
+        {
+          name: 'Jordan',
+          prep: {
+            gratitude: 'open',
+            energy_level: 'empty',
+            boundary: 'distant',
+            intention: 'honest',
+            curiosity: 'conflict',
+            bringing_text: 'I need more patience.'
+          }
+        }
+      ]);
+
+      this.assert(!!result && !!result.bridge && !!result.session, 'Returns bridge + session objects');
+      this.assert(
+        typeof result.bridge.summary === 'string' && result.bridge.summary.length >= 20,
+        'bridge.summary is non-trivial text'
+      );
+      this.assert(
+        Array.isArray(result.bridge.shared_themes) && result.bridge.shared_themes.length >= 1,
+        'bridge.shared_themes is a non-empty array',
+        `len=${result.bridge.shared_themes?.length}`
+      );
+      this.assert(
+        typeof result.bridge.transition === 'string' && result.bridge.transition.length >= 15,
+        'bridge.transition is non-trivial text'
+      );
+      this.assert(typeof result.session.title === 'string' && result.session.title.length >= 5, 'session.title present');
+      this.assert(
+        Array.isArray(result.session.phases) && result.session.phases.length === 3,
+        'session.phases has exactly 3 entries',
+        `len=${result.session.phases?.length}`
+      );
+      this.assert(
+        result.session.phases.map(p => p.id).join(',') === 'open,deepen,close',
+        'phases ordered open → deepen → close',
+        `ids=${result.session.phases.map(p => p.id).join(',')}`
+      );
+      this.assert(
+        result.session.phases.every(p => typeof p.prompt === 'string' && p.prompt.length >= 15),
+        'each phase.prompt is non-trivial text'
+      );
+      this.assert(!('content' in result.bridge), 'legacy bridge.content not present after normalize');
+      this.assert(!('content' in result.session), 'legacy session.content not present after normalize');
+      this.assert(typeof result.__prompt === 'string' && result.__prompt.length > 0, '__prompt attached for persistence');
+
+      const prompt = this.lastCapturedPrompt || '';
+      this.assert(/Sit Session/i.test(prompt), 'User prompt mentions Sit Session');
+      this.assert(/Alex says:/.test(prompt), 'User prompt includes Partner A prep block');
+      this.assert(/Jordan says:/.test(prompt), 'User prompt includes Partner B prep block');
+      this.assert(/emotional tank is feeling somewhat full/i.test(prompt), 'User prompt fills tank selection from prep');
+      this.assert(/shared_themes/i.test(prompt), 'User prompt requests shared_themes field');
+      this.assert(/"id": "open"/i.test(prompt), 'User prompt requests open phase id');
+      this.assert(
+        this.lastCapturedBody?.response_format?.type === 'json_object',
+        'Sit Session generation uses jsonMode'
+      );
+    } catch (error) {
+      this.assert(false, 'generateSitSessionContent call', `Error: ${error.message}`);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  }
+
+  testSitSessionNormalizeStrictness(service) {
+    this.log('Testing normalizeSitSessionResponse rejects bad shapes and strips extras', 'section');
+
+    const good = this.buildMockSitSession();
+    const normalized = service.normalizeSitSessionResponse({
+      ...good,
+      extra_top: true,
+      bridge: { ...good.bridge, extra_bridge: 1 },
+      session: { ...good.session, phases: [...good.session.phases].reverse(), extra_session: 'x' }
+    });
+    this.assert(!!normalized, 'Valid payload with extras still normalizes');
+    this.assert(!('extra_top' in normalized), 'Top-level extras stripped');
+    this.assert(!('extra_bridge' in normalized.bridge), 'Bridge extras stripped');
+    this.assert(
+      normalized.session.phases.map(p => p.id).join(',') === 'open,deepen,close',
+      'Phases reordered to open → deepen → close regardless of LLM order'
+    );
+
+    this.assert(
+      service.normalizeSitSessionResponse({ bridge: { content: 'old' }, session: { content: 'old' } }) === null,
+      'Legacy content-only shape is rejected'
+    );
+    this.assert(
+      service.normalizeSitSessionResponse(this.buildMockSitSession({
+        session: {
+          title: 'X',
+          phases: [
+            { id: 'open', prompt: 'Enough text for open phase here.' },
+            { id: 'deepen', prompt: 'Enough text for deepen phase here.' }
+            // missing close
+          ]
+        }
+      })) === null,
+      'Missing close phase is rejected'
+    );
+    this.assert(
+      service.normalizeSitSessionResponse(this.buildMockSitSession({
+        bridge: {
+          summary: good.bridge.summary,
+          shared_themes: [],
+          transition: good.bridge.transition
+        }
+      })) === null,
+      'Empty shared_themes is rejected'
+    );
+    this.assert(
+      service.normalizeSitSessionResponse(this.buildMockSitSession({
+        session: {
+          title: good.session.title,
+          phases: [
+            { id: 'open', prompt: 'Enough text for open phase here.' },
+            { id: 'deepen', prompt: 'Enough text for deepen phase here.' },
+            { id: 'close', prompt: 'Enough text for close phase here.' },
+            { id: 'bonus', prompt: 'Extra phase that should not be allowed at all.' }
+          ]
+        }
+      })) === null,
+      'Extra phase id is rejected'
+    );
+  }
+
   printSummary() {
     console.log('\n' + '='.repeat(60));
     console.log(`Results: ${this.testResults.passed}/${this.testResults.total} passed (${this.testResults.failed} failed)`);
@@ -347,6 +550,9 @@ class HelpfulPromptServiceTestRunner {
     await this.testNextProgramIncludesPreviousStarters(service);
     await this.testCouplesTherapyResponseReturnsArray(service);
     await this.testInputValidationRejectsGenericNames(service);
+    this.testSitSessionPrepPromptShape(service);
+    await this.testSitSessionGeneration(service);
+    this.testSitSessionNormalizeStrictness(service);
 
     this.assertTokenSafety();
 

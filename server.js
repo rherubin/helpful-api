@@ -342,7 +342,14 @@ function setupRoutes() {
 
   // Setup prompt session ("Sit Sessions") routes
   if (promptSessionModel && pairingModel && authService) {
-    app.use('/api/prompt-sessions', createPromptSessionRoutes(promptSessionModel, pairingModel, authService, pushNotificationService || null));
+    app.use('/api/prompt-sessions', createPromptSessionRoutes(
+      promptSessionModel,
+      pairingModel,
+      authService,
+      pushNotificationService || null,
+      helpfulPromptService || null,
+      userModel || null
+    ));
   }
 
   // Setup admin auth routes

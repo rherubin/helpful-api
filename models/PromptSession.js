@@ -7,14 +7,9 @@
 //     before or without an accepted pair.
 //
 // When paired, once both preps are complete the dynamic LLM prompt is built and
-// Bridge + Session content is generated. Solo sessions are ready after the
-// creator's prep is complete.
-//
-// NOTE: The generation step (building `generation_prompt`, calling an LLM, and
-// persisting `bridge_content` / `session_content`) is intentionally NOT yet
-// implemented. The persistence hooks exist (saveGeneratedContent /
-// updateGenerationError) so the route layer can wire them up once the prompt
-// construction + LLM method are defined.
+// Bridge + Session content is generated (HelpfulPromptService.generateSitSessionContent).
+// Solo sessions are ready after the creator's prep is complete.
+// Persistence: saveGeneratedContent / updateGenerationError.
 class PromptSession {
   constructor(db) {
     this.db = db; // MySQL pool
@@ -414,7 +409,7 @@ class PromptSession {
     return { message: 'Phase updated successfully' };
   }
 
-  // ---- Generation persistence hooks (used once generation is implemented) ----
+  // ---- Generation persistence ----
 
   // Persist generated Bridge + Session content along with the prompt that
   // produced it. `bridgeContent` / `sessionContent` may be objects (stored as

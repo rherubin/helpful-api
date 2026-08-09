@@ -9,14 +9,24 @@ const PromptSession = require('../models/PromptSession');
 //   - pairingModel:             required (membership / access checks when paired)
 //   - authService:              for token refresh in auth middleware
 //   - pushNotificationService:  optional (partner notifications)
+//   - helpfulPromptService:     optional (Sit Session LLM generation)
+//   - userModel:                optional (partner display names for generation)
 //
 // Solo / single-device mode: POST without pairing_id creates a session owned by
 // the caller. Prep and other member endpoints work without an accepted pairing.
 //
-// NOTE: Content generation (building the dynamic prompt + LLM call) is NOT yet
-// implemented. The `/generate` endpoint and the auto-trigger on second prep
-// completion are stubbed and clearly marked as TODO.
-function createPromptSessionRoutes(promptSessionModel, pairingModel, authService = null, pushNotificationService = null) {
+// Generation: POST /:id/generate builds a prompt from completed prep(s) via
+// HelpfulPromptService.generateSitSessionContent and persists bridge/session
+// content. When prep becomes ready, generation is also kicked off in the
+// background (fire-and-forget).
+function createPromptSessionRoutes(
+  promptSessionModel,
+  pairingModel,
+  authService = null,
+  pushNotificationService = null,
+  helpfulPromptService = null,
+  userModel = null
+) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
 
@@ -31,11 +41,153 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
     return pairing.user1_id === userId ? pairing.user2_id : pairing.user1_id;
   }
 
-  // STUB: invoked when prep requirements are met. Real implementation will build
-  // the dynamic prompt from prep(s), call the LLM, and persist content via
-  // promptSessionModel.saveGeneratedContent / updateGenerationError.
-  function triggerGenerationStub(promptSessionId) {
-    console.log(`[prompt_sessions] TODO: generation not implemented — prep ready for session ${promptSessionId}.`);
+  function displayNameForUser(user, fallback) {
+    if (!user) return fallback;
+    const name = (user.user_name || '').trim();
+    if (name) return name;
+    if (user.email) {
+      const local = String(user.email).split('@')[0];
+      if (local) return local;
+    }
+    return fallback;
+  }
+
+  // True when Bridge/Session content has already been persisted.
+  function hasGeneratedContent(session) {
+    return !!(session && (session.bridge_content || session.session_content));
+  }
+
+  // Build partners[] for HelpfulPromptService from session + completed preps.
+  // Creator is Partner A; when paired, the other member is Partner B.
+  async function buildPartnersForGeneration(session) {
+    const preps = await promptSessionModel.getPreps(session.id);
+    const completedPreps = preps.filter(p => p.completed);
+    if (completedPreps.length === 0) {
+      throw new Error('No completed preps available for generation');
+    }
+
+    const prepByUserId = new Map(completedPreps.map(p => [p.user_id, p]));
+
+    const creatorId = session.created_by_user_id;
+    let partnerUserIds = [creatorId];
+
+    if (session.pairing_id) {
+      let pairing = null;
+      try {
+        pairing = await loadPairing(session.pairing_id);
+      } catch {
+        pairing = null;
+      }
+      if (pairing) {
+        const otherId = partnerIdFor(pairing, creatorId);
+        if (otherId) {
+          partnerUserIds = [creatorId, otherId];
+        }
+      }
+    }
+
+    // Solo: only the creator's prep. Paired: both members in A/B order.
+    const partners = [];
+    for (let i = 0; i < partnerUserIds.length; i++) {
+      const userId = partnerUserIds[i];
+      const prep = prepByUserId.get(userId);
+      if (!prep) {
+        // Paired but one prep missing should not happen when bothPrepsComplete.
+        continue;
+      }
+      let user = null;
+      if (userModel) {
+        try {
+          user = await userModel.getUserById(userId);
+        } catch {
+          user = null;
+        }
+      }
+      const fallback = i === 0 ? 'Partner A' : 'Partner B';
+      partners.push({
+        name: displayNameForUser(user, fallback),
+        prep
+      });
+    }
+
+    if (partners.length === 0) {
+      throw new Error('No completed preps available for generation');
+    }
+    return partners;
+  }
+
+  // Run LLM generation and persist bridge/session (or generation_error).
+  // Returns the refreshed session row. Throws on hard failures after error is stored.
+  async function runGeneration(promptSessionId) {
+    if (!helpfulPromptService || !helpfulPromptService.isConfigured()) {
+      const err = new Error('LLM service is not configured - set OPENAI_API_KEY');
+      err.code = 'LLM_NOT_CONFIGURED';
+      throw err;
+    }
+
+    const session = await promptSessionModel.getPromptSessionById(promptSessionId);
+    if (hasGeneratedContent(session)) {
+      return session;
+    }
+
+    const bothComplete = await promptSessionModel.bothPrepsComplete(promptSessionId);
+    if (!bothComplete) {
+      const err = new Error(session.pairing_id
+        ? 'Both partners must complete prep before generating'
+        : 'Prep must be complete before generating');
+      err.code = 'PREP_NOT_READY';
+      throw err;
+    }
+
+    const partners = await buildPartnersForGeneration(session);
+    const startedAt = Date.now();
+    let generationPrompt = null;
+
+    try {
+      const result = await helpfulPromptService.generateSitSessionContent(partners);
+      generationPrompt = result && result.__prompt ? result.__prompt : null;
+      const secondsToGenerate = (Date.now() - startedAt) / 1000;
+
+      await promptSessionModel.saveGeneratedContent(promptSessionId, {
+        bridgeContent: result.bridge || null,
+        sessionContent: result.session || null,
+        generationPrompt,
+        llmUsed: helpfulPromptService.model || null,
+        secondsToGenerate,
+        status: 'bridge'
+      });
+
+      return promptSessionModel.getPromptSessionById(promptSessionId);
+    } catch (error) {
+      if (error && error.__prompt) {
+        generationPrompt = error.__prompt;
+      }
+      try {
+        await promptSessionModel.updateGenerationError(
+          promptSessionId,
+          error.message || 'Failed to generate Sit Session content',
+          generationPrompt
+        );
+      } catch (persistErr) {
+        console.warn('[prompt_sessions] Failed to persist generation_error:', persistErr.message);
+      }
+      throw error;
+    }
+  }
+
+  // Fire-and-forget when prep becomes ready (does not block the prep response).
+  function triggerGenerationInBackground(promptSessionId) {
+    if (!helpfulPromptService || !helpfulPromptService.isConfigured()) {
+      console.log(`[prompt_sessions] Prep ready for ${promptSessionId}; LLM not configured — skip auto-generate.`);
+      return;
+    }
+    runGeneration(promptSessionId)
+      .then((session) => {
+        console.log(`[prompt_sessions] Auto-generation finished for ${promptSessionId}, status=${session?.status}`);
+      })
+      .catch((err) => {
+        console.warn(`[prompt_sessions] Auto-generation failed for ${promptSessionId}:`, err.message);
+      });
   }
 
   // Create a prompt session. pairing_id is optional (solo / single-device mode).
@@ -202,8 +354,7 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
       const partnerId = partnerIdFor(pairing, userId);
 
       if (bothComplete) {
-        // TODO: kick off real generation here.
-        triggerGenerationStub(id);
+        triggerGenerationInBackground(id);
       } else if (prep.completed && pushNotificationService && partnerId) {
         // My prep is done but my partner's is not — nudge them.
         pushNotificationService.sendToUser(partnerId, {
@@ -316,7 +467,8 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
     }
   });
 
-  // Trigger content generation. STUB — not implemented yet.
+  // Trigger content generation from completed prep(s).
+  // Idempotent: if bridge/session content already exists, returns it (200).
   router.post('/:id/generate', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
@@ -327,6 +479,13 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
         return res.status(403).json({ error: 'Not authorized to access this prompt session' });
       }
 
+      if (hasGeneratedContent(session)) {
+        return res.status(200).json({
+          message: 'Prompt session content already generated',
+          prompt_session: session
+        });
+      }
+
       const bothComplete = await promptSessionModel.bothPrepsComplete(id);
       if (!bothComplete) {
         const message = session.pairing_id
@@ -335,16 +494,30 @@ function createPromptSessionRoutes(promptSessionModel, pairingModel, authService
         return res.status(409).json({ error: message });
       }
 
-      // TODO: implement prompt construction + LLM call, then persist via
-      // promptSessionModel.saveGeneratedContent(...). Until then, advertise
-      // that this endpoint is not yet implemented.
-      return res.status(501).json({
-        error: 'Prompt session generation is not implemented yet',
-        details: 'The dynamic prompt construction and LLM call still need to be defined. See docs/prompt-sessions-design.md.'
+      if (!helpfulPromptService || !helpfulPromptService.isConfigured()) {
+        return res.status(503).json({
+          error: 'LLM service is not configured',
+          details: 'Set OPENAI_API_KEY (or TEST_MOCK_LLM=true for tests) to enable Sit Session generation.'
+        });
+      }
+
+      const updated = await runGeneration(id);
+      return res.status(200).json({
+        message: 'Prompt session content generated successfully',
+        prompt_session: updated
       });
     } catch (error) {
       if (error.message === 'Prompt session not found') {
         return res.status(404).json({ error: error.message });
+      }
+      if (error.code === 'PREP_NOT_READY') {
+        return res.status(409).json({ error: error.message });
+      }
+      if (error.code === 'LLM_NOT_CONFIGURED') {
+        return res.status(503).json({
+          error: 'LLM service is not configured',
+          details: 'Set OPENAI_API_KEY (or TEST_MOCK_LLM=true for tests) to enable Sit Session generation.'
+        });
       }
       console.error('Error generating prompt session content:', error.message);
       return res.status(500).json({ error: 'Failed to generate prompt session content' });

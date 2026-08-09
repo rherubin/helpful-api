@@ -17,7 +17,7 @@ Node.js / Express REST API with MySQL for couples therapy programs: user account
   - **Helpful** (default) — secular EFT/Gottman-style
   - **Hopeful** — faith-based when the user has a linked org code or custom `org_name` / `org_city` / `org_state`
 - **Program steps + messages** — day steps, user messages, contributions tracking, unlock progress
-- **Sit Sessions** (`/api/prompt-sessions`) — solo (single-device) or paired prep flow; **content generation not implemented** (`POST .../generate` → **501**)
+- **Sit Sessions** (`/api/prompt-sessions`) — solo or paired prep → **working** `POST .../generate` (strict Bridge/Session JSON); full docs under [Prompt sessions (“Sit Sessions”)](#prompt-sessions-sit-sessions)
 
 ### Premium & orgs
 - **Pairing premium** — active iOS/Android subscription on either partner sets `pairings.premium`
@@ -176,7 +176,7 @@ npm run dev        # nodemon
 | Org codes | `/api/org-codes` (admin for mutations) |
 | Admin | `/api/admin/auth/*`, `POST /api/admin/push-test` |
 | Push devices | `/api/device-tokens` |
-| Sit sessions | `/api/prompt-sessions` |
+| Sit sessions | `/api/prompt-sessions` — [full docs](#prompt-sessions-sit-sessions) |
 | Stats | `GET /api/messages-stats?date=&programId=` |
 
 Auth header: `Authorization: Bearer {access_token}` unless noted.
@@ -259,8 +259,7 @@ Login: `premium` = pairing premium only (implementation quirk — prefer `/api/p
 | `program_ready` | Program generation finished |
 | `step_message` | Partner posted on a step |
 | `therapy_response` | Couples therapy system messages added |
-| `prompt_session_created` | Partner started a Sit Session |
-| `prompt_session_prep_complete` | One prep complete, partner still pending |
+| `prompt_session_*` | Sit Sessions — see [Prompt sessions](#prompt-sessions-sit-sessions) |
 
 ---
 
@@ -524,32 +523,284 @@ Max **25** tokens per user. Raw FCM token never returned after register (only re
 
 ### Prompt sessions (“Sit Sessions”)
 
-Internal name `prompt_sessions`; product name Sit Session. Design notes: [`docs/prompt-sessions-design.md`](./docs/prompt-sessions-design.md).
+**Canonical docs for Sit Sessions.** Internal name `prompt_sessions` / product name **Sit Session**. Auth on all routes: `Authorization: Bearer {access_token}`. Design notes (open questions, schema intent): [`docs/prompt-sessions-design.md`](./docs/prompt-sessions-design.md). Tests: `npm run test:prompt-sessions`.
 
-**Modes**
+#### Modes and policies
 
-| Mode | How | Access | Prep “ready” (`both_preps_complete`) |
-|------|-----|--------|--------------------------------------|
-| **Solo / single-device** | `POST` with no `pairing_id` | Creator only | **1** completed prep |
-| **Paired** | `POST` with `{ "pairing_id" }` | Creator or pairing member | **2** completed preps |
+| Mode | Create body | Access | Prep ready (`both_preps_complete`) |
+|------|-------------|--------|------------------------------------|
+| **Solo / single-device** | omit `pairing_id` (or `{}`) | Creator only | **1** completed prep |
+| **Paired** | `{ "pairing_id" }` | Creator or pairing member | **2** completed preps |
 
-Pairing status need **not** be `accepted` to create a session or submit prep. If `pairing_id` is sent, the caller must still be a **member** of that pairing (pending is fine). Soft-deleted pairings do not grant partner access.
+- Pairing status need **not** be `accepted`. If `pairing_id` is sent, the caller must be a **member** (pending is fine). Soft-deleted pairings do not grant partner access.
+- **One** active (non-terminal) session **per pairing**; **one** active solo session **per user**. Active = status not `complete` / `abandoned`.
+- Statuses: `prep` \| `bridge` \| `in_session` \| `complete` \| `abandoned`.
+- `generation_prompt` is stored server-side for audit/replay and is **never** exposed to clients.
 
-**Policies:** one active (non-terminal) session **per pairing**; one active **solo** session **per user**.
+#### Call sequence (create → prep → generate)
+
+1. **Create** — `POST /api/prompt-sessions` (solo or with `pairing_id`).
+2. **Prep** — `POST /api/prompt-sessions/:id/prep` with the six required fields (merge/upsert; may be called more than once). Solo is ready after one complete prep; paired needs both partners.
+3. **Generate** — `POST /api/prompt-sessions/:id/generate` once prep is ready (or wait for auto-generate, then `GET`).
+
+#### Generate endpoint — working state (app / web)
+
+**Status: implemented and live.** `POST /api/prompt-sessions/:id/generate` is **not** a stub. It builds a prompt from completed prep(s) via `HelpfulPromptService.generateSitSessionContent`, calls the LLM, validates + normalizes a **strict JSON schema**, and persists Bridge + Session content. On success, session `status` becomes `bridge`.
+
+| Behavior | Detail |
+|----------|--------|
+| **When it runs** | Explicitly via `POST .../generate`, **or** auto in the background when prep becomes ready (`both_preps_complete: true` on prep response) |
+| **Sync vs async** | Explicit generate is **synchronous** — the HTTP response includes the generated payload (or an error). Auto-generate is fire-and-forget; poll `GET .../:id` until content appears |
+| **Idempotent** | If content already exists, `POST .../generate` returns **200** with the **stored** session (does not re-call the LLM) |
+| **Auth** | Same as other member routes: `Authorization: Bearer {access_token}`; caller must be creator or pairing member |
+| **LLM config** | Needs `OPENAI_API_KEY` or `TEST_MOCK_LLM=true`. Otherwise **503** |
+| **Never returned** | `generation_prompt` (server audit only) |
+
+**Status codes for `POST .../generate`:**
+
+| Status | Meaning |
+|--------|---------|
+| **200** | Content generated **or** already present (see `message`) |
+| **403** | Not a member / no access |
+| **404** | Session not found |
+| **409** | Prep not ready (solo: complete own prep; paired: both partners) |
+| **500** | LLM/validation failure after retries (`generation_error` may be set on the session) |
+| **503** | LLM not configured |
+
+##### How to read generated data after `/generate`
+
+Clients should treat the session object as the source of truth. Content lives on **`prompt_session.bridge_content`** and **`prompt_session.session_content`**.
+
+| Access path | When to use |
+|-------------|-------------|
+| **`POST /api/prompt-sessions/:id/generate`** response | Immediate use after the user taps Generate (or to force/wait for content). Body includes full `prompt_session`. |
+| **`GET /api/prompt-sessions/:id`** | Resume, refresh, second device, or after **auto-generate** (prep completed and you did not call generate). Same fields once ready. |
+| **`GET /api/prompt-sessions`** | List sessions; each item can include `bridge_content` / `session_content` when already generated. |
+
+**Ready check (client):** content is ready when both are non-null objects with the strict shape below, e.g.:
+
+```js
+const ready =
+  session?.bridge_content?.summary &&
+  Array.isArray(session?.session_content?.phases) &&
+  session.session_content.phases.length === 3;
+```
+
+If only auto-generate ran: after prep returns `both_preps_complete: true`, poll `GET /api/prompt-sessions/:id` until `ready` (or call `POST .../generate` and use its **200** body).
+
+**Suggested UI field binding:**
+
+| UI | Path |
+|----|------|
+| Bridge summary copy | `prompt_session.bridge_content.summary` |
+| Theme chips / bullets | `prompt_session.bridge_content.shared_themes` (array of strings) |
+| Bridge → Session CTA text | `prompt_session.bridge_content.transition` |
+| Session title | `prompt_session.session_content.title` |
+| Open step | `prompt_session.session_content.phases` find `id === "open"` → `.prompt` |
+| Deepen step | same, `id === "deepen"` |
+| Close step | same, `id === "close"` |
+| Phase order | Always `open` → `deepen` → `close` (server normalizes) |
+| Session lifecycle | `prompt_session.status` (`prep` → `bridge` after generate; client may `PATCH` to `in_session` / `complete` / `abandoned`) |
+| Failure hint | `prompt_session.generation_error` (string or null); do not show `generation_prompt` |
+
+##### Example: successful `POST .../generate` response
+
+```http
+POST /api/prompt-sessions/{id}/generate
+Authorization: Bearer {access_token}
+```
+
+```json
+{
+  "message": "Prompt session content generated successfully",
+  "prompt_session": {
+    "id": "ps_abc123",
+    "pairing_id": null,
+    "created_by_user_id": "user_…",
+    "status": "bridge",
+    "current_phase": null,
+    "bridge_content": {
+      "summary": "Thank you for showing up…",
+      "shared_themes": [
+        "emotional connection",
+        "feeling seen after a hard stretch",
+        "gentle honesty"
+      ],
+      "transition": "When you are ready, we will move into a short guided Session…"
+    },
+    "session_content": {
+      "title": "Same Team Tonight",
+      "phases": [
+        { "id": "open", "prompt": "Each of you name one feeling you brought into the room…" },
+        { "id": "deepen", "prompt": "Take turns answering: what would help your emotional tank…" },
+        { "id": "close", "prompt": "Share one appreciation and one small next step…" }
+      ]
+    },
+    "llm_used": "gpt-5.4",
+    "seconds_to_generate": 1.2345,
+    "generation_error": null,
+    "generation_prompt_used_at": "2026-08-09T16:00:00.000Z",
+    "created_at": "…",
+    "updated_at": "…"
+  }
+}
+```
+
+If content was already stored, same **200** shape with `"message": "Prompt session content already generated"`.
+
+`GET /api/prompt-sessions/:id` returns the same `prompt_session` object (including `bridge_content` / `session_content` when present).
+
+#### Generated content schema (strict)
+
+LLM output is rejected (and retried once) unless it matches this contract. The server then **normalizes** (trim strings, reorder phases to `open → deepen → close`, drop unknown keys) before save. API responses always use this shape on `bridge_content` / `session_content`:
+
+```json
+{
+  "bridge_content": {
+    "summary": "string (≥ 20 chars)",
+    "shared_themes": ["string", "..."],
+    "transition": "string (≥ 15 chars)"
+  },
+  "session_content": {
+    "title": "string (≥ 5 chars)",
+    "phases": [
+      { "id": "open", "prompt": "string (≥ 15 chars)" },
+      { "id": "deepen", "prompt": "string (≥ 15 chars)" },
+      { "id": "close", "prompt": "string (≥ 15 chars)" }
+    ]
+  }
+}
+```
+
+| Field | Rules |
+|-------|--------|
+| `bridge_content.summary` | required string |
+| `bridge_content.shared_themes` | required array, **1–5** non-empty strings |
+| `bridge_content.transition` | required string |
+| `session_content.title` | required string |
+| `session_content.phases` | exactly **3** objects; `id` must be `open`, `deepen`, `close` (each once); each has `prompt` |
+| Extra keys | stripped on normalize; not returned |
+
+Clients should bind UI to these fields only (not free-form prose blobs).
+
+#### Endpoints
 
 | Method | Path | Notes |
 |--------|------|--------|
 | POST | `/api/prompt-sessions` | Body optional `{ "pairing_id" }` · **201** · **409** if an active session already exists |
-| GET | `/api/prompt-sessions` | Optional `?pairing_id=` · list includes solo sessions the user created |
-| GET | `/api/prompt-sessions/:id` | Creator or pairing member |
-| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields (works without pairing) |
-| GET | `/api/prompt-sessions/:id/prep` | Own prep; when paired, partner status (full partner answers only when both complete). Solo: `partner_prep: null` |
-| PATCH | `/api/prompt-sessions/:id` | `status` and/or `current_phase` |
-| POST | `/api/prompt-sessions/:id/generate` | **409** if prep not ready · **501** not implemented |
+| GET | `/api/prompt-sessions` | Optional `?pairing_id=` · list; items include `bridge_content` / `session_content` when generated |
+| GET | `/api/prompt-sessions/:id` | Creator or pairing member · **primary read path** for Bridge/Session after generate or auto-generate |
+| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields. Response: `prep`, `both_preps_complete` |
+| GET | `/api/prompt-sessions/:id/prep` | Own prep; partner answers only when both complete (paired). Solo: `partner_prep: null` |
+| PATCH | `/api/prompt-sessions/:id` | Body `status` and/or `current_phase` |
+| POST | `/api/prompt-sessions/:id/generate` | **Working.** **200** + full `prompt_session` with Bridge/Session · **409** prep not ready · **503** LLM not configured · idempotent |
 
-**Prep fields (six required for complete):** `bringing_text`, `energy_level`, `intention`, `curiosity`, `boundary`, `gratitude`. Optional: `optional_focus`.  
-Statuses: `prep` \| `bridge` \| `in_session` \| `complete` \| `abandoned`.  
-`generation_prompt` is never exposed to clients. Prep-ready triggers a **stub** only (log), not LLM.
+#### Prep fields
+
+Six required (all non-empty strings mark prep complete). API field names are storage keys; generation maps them into product copy:
+
+| Field | Product line in generation prompt |
+|-------|-----------------------------------|
+| `gratitude` | 1. They're feeling {{value}} |
+| `energy_level` | 2. Their emotional tank is feeling {{value}} right now (e.g. very full / somewhat full / empty) |
+| `boundary` | 3. They're feeling {{value}} to their partner (e.g. very close / somewhat close / distant) |
+| `intention` | 4. They want the tone of the session to be {{value}} |
+| `curiosity` | 5. They want the topic to {{value}} |
+| `bringing_text` | 6. In a free form text field, they've entered {{value}} |
+
+Optional: `optional_focus` (appended to free-form line 6 when present).
+
+Display names in the prompt come from each user's `user_name` (else email local-part). Creator is Partner A; paired partner is Partner B.
+
+#### Push (`data.kind`) for Sit Sessions
+
+| kind | When |
+|------|------|
+| `prompt_session_created` | Partner started a paired Sit Session |
+| `prompt_session_prep_complete` | One partner finished prep; the other is still pending |
+
+#### Example curls
+
+Solo create → prep → generate:
+
+```bash
+# 1. Create (solo)
+curl -s -X POST http://localhost:9000/api/prompt-sessions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+# → 201 { "prompt_session": { "id": "…", "pairing_id": null, "status": "prep", … } }
+
+# 2. Submit prep (all six required fields to mark complete)
+curl -s -X POST http://localhost:9000/api/prompt-sessions/$SESSION_ID/prep \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "gratitude":"hopeful and a bit tender",
+    "energy_level":"somewhat full",
+    "boundary":"somewhat close",
+    "intention":"gentle and honest",
+    "curiosity":"stay on reconnecting after a hard week",
+    "bringing_text":"I want us to leave tonight feeling more on the same team."
+  }'
+# → both_preps_complete: true after one complete prep (solo)
+# → server may auto-start generation in the background
+
+# 3. Generate (synchronous; safe to call even if auto-generate already finished)
+curl -s -X POST http://localhost:9000/api/prompt-sessions/$SESSION_ID/generate \
+  -H "Authorization: Bearer $TOKEN"
+# → 200 {
+#     "message": "Prompt session content generated successfully",
+#     "prompt_session": {
+#       "status": "bridge",
+#       "bridge_content": { "summary", "shared_themes", "transition" },
+#       "session_content": { "title", "phases": [open, deepen, close] },
+#       …
+#     }
+#   }
+# → 409 if prep not ready; 503 if LLM not configured
+
+# 4. Re-fetch anytime (same content shape)
+curl -s http://localhost:9000/api/prompt-sessions/$SESSION_ID \
+  -H "Authorization: Bearer $TOKEN"
+# → 200 { "prompt_session": { … bridge_content, session_content … } }
+```
+
+Paired create:
+
+```bash
+curl -s -X POST http://localhost:9000/api/prompt-sessions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"pairing_id":"PAIRING_ID"}'
+# Each partner then POSTs .../prep; generate is ready after both complete
+# (or call POST .../generate explicitly).
+```
+
+#### Schema (summary)
+
+Tables `prompt_sessions` and `prompt_session_preps` (see [Database schema](#database-schema)). `pairing_id` nullable for solo. Startup migrates older NOT NULL columns.
+
+#### Purge all Sit Sessions (dev / env reset)
+
+While the feature is in development, wipe **all** `prompt_sessions` (and cascaded `prompt_session_preps`) so legacy or invalid generated payloads do not linger. Dry-run by default; pass `--confirm` to delete.
+
+```bash
+# Dry-run — prints counts against the DB from MYSQL_* / MYSQL_URL
+npm run purge:prompt-sessions
+
+# Delete every prompt session + prep on that DB
+npm run purge:prompt-sessions:confirm
+```
+
+Point at another environment with env vars (dry-run first):
+
+```bash
+MYSQL_URL='mysql://…' npm run purge:prompt-sessions
+MYSQL_URL='mysql://…' npm run purge:prompt-sessions:confirm
+```
+
+Script: `scripts/purge-prompt-sessions.js`. This is a full wipe of Sit Session data for the target database — not a selective legacy-only migration.
 
 ### Message stats
 
@@ -621,6 +872,8 @@ Includes `last_used_at` (activity + cleanup). UNIQUE `(user_id, device_token)`. 
 
 ### Prompt sessions (representative)
 
+API behavior, endpoints, and examples: [Prompt sessions (“Sit Sessions”)](#prompt-sessions-sit-sessions).
+
 ```sql
 -- prompt_sessions
 id, pairing_id NULL, created_by_user_id,
@@ -649,8 +902,7 @@ completed_at, …
 | 423 | Login lockout |
 | 429 | Rate limit |
 | 500 | Server / DB |
-| 501 | Prompt session generate not implemented |
-| 503 | LLM or push not configured (where enforced) |
+| 503 | LLM or push not configured (where enforced; Sit Session generate when no API key / mock) |
 
 ---
 
@@ -712,31 +964,7 @@ curl -s -X POST http://localhost:9000/api/login \
   -d '{"email":"user@example.com","password":"Pass123!"}'
 ```
 
-### Sit Session (solo / single-device)
-
-```bash
-# Create without pairing
-curl -s -X POST http://localhost:9000/api/prompt-sessions \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-
-# Submit prep (all six required fields to mark complete)
-curl -s -X POST http://localhost:9000/api/prompt-sessions/$SESSION_ID/prep \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "bringing_text":"…","energy_level":"medium","intention":"…",
-    "curiosity":"…","boundary":"…","gratitude":"…"
-  }'
-# → both_preps_complete: true after one complete prep (solo)
-
-# Optional: attach to a pairing you belong to (status need not be accepted)
-curl -s -X POST http://localhost:9000/api/prompt-sessions \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"pairing_id":"PAIRING_ID"}'
-```
+Sit Session create / prep / generate curls live under [Prompt sessions (“Sit Sessions”)](#prompt-sessions-sit-sessions).
 
 ---
 
@@ -770,8 +998,10 @@ Test emails use **`@example.com`** so `npm run test:cleanup` can remove them saf
 | `npm run test:user-soft-delete` | User soft-delete / restore + pairing cascade |
 | `npm run test:push` | `PushNotificationService` unit tests (mocked FCM) |
 | `npm run test:admin-push` | `POST /api/admin/push-test` integration |
-| `npm run test:prompt-sessions` | Sit Sessions: solo + paired + pending pairing, prep, generate stub |
+| `npm run test:prompt-sessions` | Sit Sessions: solo + paired + pending pairing, prep, generate |
 | `npm run test:cleanup` | Delete `@example.com` test rows |
+| `npm run purge:prompt-sessions` | Dry-run: count all Sit Sessions on target DB |
+| `npm run purge:prompt-sessions:confirm` | **Delete all** Sit Sessions + preps (see [Purge](#purge-all-sit-sessions-dev--env-reset)) |
 
 Useful flags on the main runner: `--no-load`, `--no-security`, `--no-pairing-lifecycle`, `--no-user-soft-delete`, `--url=…`, `--timeout=…`, `--skip-server-check`.
 
@@ -795,7 +1025,7 @@ What the default suite exercises vs thinner / standalone areas:
 | Subscriptions + pairing premium | Yes | `subscription-test` |
 | Stripe billing (Checkout/Portal/webhook mock) | Yes | `stripe-billing-test` |
 | Device tokens | Yes | `device-tokens-test` |
-| Sit Sessions (solo, paired, pending pairing; prep visibility; generate stub) | Yes | `prompt-sessions-test` |
+| Sit Sessions (solo, paired, pending pairing; prep visibility; generate) | Yes | `prompt-sessions-test` |
 | Push unit + admin push-test | Yes | `push-notification-service-test`, `admin-push-test-test` |
 | Security (prompt injection helpers) | Yes | `security-test` |
 | Load | Yes (skip with `test:quick`) | `load-test` |
@@ -811,6 +1041,7 @@ What the default suite exercises vs thinner / standalone areas:
 |--------|---------|
 | `node scripts/seed-local-org-codes.js` | Upsert sample org codes for local Hopeful testing |
 | `node scripts/query-mysql-database.js` | Ad-hoc DB stats (path/require may need running from repo root) |
+| `node scripts/purge-prompt-sessions.js` | Dry-run Sit Session purge; add `--confirm` to delete all (or `npm run purge:prompt-sessions[:confirm]`) |
 
 ---
 
@@ -848,7 +1079,8 @@ helpful-api/
 │   └── admin.js                 # push-test
 ├── scripts/
 │   ├── seed-local-org-codes.js
-│   └── query-mysql-database.js
+│   ├── query-mysql-database.js
+│   └── purge-prompt-sessions.js   # wipe all Sit Sessions (--confirm)
 ├── docs/
 │   └── prompt-sessions-design.md
 ├── tests/

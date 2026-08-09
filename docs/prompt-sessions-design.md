@@ -172,7 +172,7 @@ Response (201) — solo (`pairing_id` omitted): same shape with `"pairing_id": n
 - `GET /api/prompt-sessions/:id`
 - `POST /api/prompt-sessions/:id/prep` — submit or update my prep answers
 - `GET /api/prompt-sessions/:id/prep` — my prep + partner completion status (full partner answers once both done); solo returns `partner_prep: null`
-- `POST /api/prompt-sessions/:id/generate` — **501** until LLM wiring lands (**409** if prep not ready)
+- `POST /api/prompt-sessions/:id/generate` — builds prep-based prompt via `HelpfulPromptService.generateSitSessionContent`, persists `bridge_content` / `session_content` (**409** if prep not ready · **503** if LLM not configured · idempotent if already generated)
 - `PATCH /api/prompt-sessions/:id` — `status` and/or `current_phase`
 
 Push notifications will be important (e.g., "Your partner finished prep", "Your Sit Session is ready").
