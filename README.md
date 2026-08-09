@@ -851,6 +851,30 @@ curl -s http://localhost:9000/api/prompt-sessions/$SESSION_ID \
 # → 200 { "prompt_session": { … bridge_content, session_content … } }
 ```
 
+##### Debug demo: full generate JSON (paired, two preps)
+
+Creates two users, pairs them, creates a session, submits both preps, calls generate, and prints the full HTTP JSON (plus a `bridge_content` / `session_content` extract):
+
+```bash
+# Terminal 1 — mock LLM (stable schema, no OpenAI spend):
+TEST_MOCK_LLM=true TEST_MOCK_PUSH=true npm start
+
+# Terminal 2:
+npm run test:prompt-session-generate-demo
+```
+
+Live model (real GPT text, same response shape):
+
+```bash
+# Terminal 1 — OPENAI_API_KEY set, TEST_MOCK_LLM unset:
+npm start
+
+# Terminal 2:
+npm run test:prompt-session-generate-demo
+```
+
+Script: `tests/prompt-session-generate-demo.js`. Optional: `TEST_BASE_URL=http://127.0.0.1:9000`.
+
 Paired create:
 
 ```bash
@@ -1103,6 +1127,7 @@ Test emails use **`@example.com`** so `npm run test:cleanup` can remove them saf
 | `npm run test:push` | `PushNotificationService` unit tests (mocked FCM) |
 | `npm run test:admin-push` | `POST /api/admin/push-test` integration |
 | `npm run test:prompt-sessions` | Sit Sessions: solo + paired + pending pairing, prep, generate |
+| `npm run test:prompt-session-generate-demo` | Paired create → both preps → generate; prints full JSON for debugging |
 | `npm run test:cleanup` | Delete `@example.com` test rows |
 | `npm run purge:prompt-sessions` | Dry-run: count all Sit Sessions on target DB |
 | `npm run purge:prompt-sessions:confirm` | **Delete all** Sit Sessions + preps (see [Purge](#purge-all-sit-sessions-dev--env-reset)) |
