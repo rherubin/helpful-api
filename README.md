@@ -111,6 +111,8 @@ OPENAI_API_KEY=your-openai-api-key
 | `OPENAI_API_KEY` | For LLM | — | Soft-fail if missing (no generation) |
 | `OPENAI_MODEL` | No | `gpt-5.4` | Chat model |
 | `TEST_MOCK_LLM` | No | — | Deterministic mock responses |
+| `TEST_MOCK_LLM_DELAY_MS` | No | `0` | Holds each mocked LLM call open this long, so tests can observe a generation mid-flight (concurrency assertions). Test-only |
+| `PROMPT_SESSION_GENERATION_LEASE_MS` | No | `600000` | How long a Sit Session `generation_status = 'running'` row is trusted before `POST .../generate` may reclaim it |
 | `TEST_MOCK_PUSH` | No | — | Mock FCM success |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` / `_PATH` | No | — | Real FCM |
 | `USER_UPDATE_RATE_LIMIT` | No | `3` | ≤0 disables |
@@ -557,7 +559,14 @@ Every `prompt_session` carries an explicit **generation job state**, separate fr
 
 **Transitions:** `idle` → `running` → `succeeded` \| `failed`. A `failed` session can retry: `failed` → `running` → `succeeded` \| `failed`. A `succeeded` session never restarts (`POST .../generate` just returns the stored content).
 
-Every `prompt_session` response includes a computed, non-persisted `generation` object so clients never have to reinvent these rules from raw columns:
+`running` is never a dead end. Because it means "a server process is working on this", the backend recovers it two ways so an interrupted job can't leave a session permanently un-retryable:
+
+- **On startup**, any row still `running` belongs to a process that no longer exists (deploy, crash), so it is swept to `failed` with an explanatory `generation.error` and can be retried immediately.
+- **While running**, the lock is a *lease*: a `running` row whose `started_at` is older than `PROMPT_SESSION_GENERATION_LEASE_MS` (default 10 minutes) can be reclaimed by the next `POST .../generate`. This covers a process that is alive but wedged.
+
+Clients don't need to special-case either: keep polling while `running`, and if you hit your own timeout, `POST .../generate` again.
+
+Every `prompt_session` response includes a computed, non-persisted `generation` object so clients never have to reinvent these rules from raw columns. This object is the **only** place job state is exposed — the raw `generation_status` / `generation_started_at` / `generation_finished_at` columns are deliberately not emitted at the top level, so there's no second source of truth to drift onto:
 
 ```json
 "generation": {
@@ -581,7 +590,9 @@ Every `prompt_session` response includes a computed, non-persisted `generation` 
 | Success | `generation.status === "succeeded"` && `generation.ready === true` |
 | Failed | `generation.status === "failed"` && `generation.error` is a non-null string |
 
-**Polling guidance:** after prep returns `both_preps_complete: true` (or after a `POST .../generate` returns **409** because auto-generate is already running), poll `GET /api/prompt-sessions/:id` every **1–2s** for up to **~60–90s**, stopping once `generation.status` is `succeeded` or `failed`. Prefer having exactly **one** device/tab call `POST .../generate` synchronously and block on its response; other devices/tabs should just poll `GET`. A realtime push notification on generation success/failure (`prompt_session_generation_succeeded` / `_failed`) is a nice-to-have, not yet implemented.
+**Polling guidance:** after prep returns `both_preps_complete: true` (or after a `POST .../generate` returns **409 `GENERATION_RUNNING`** because auto-generate is already running), poll `GET /api/prompt-sessions/:id` every **1–2s** for up to **~60–90s**, stopping once `generation.status` is `succeeded` or `failed`. Prefer having exactly **one** device/tab call `POST .../generate` synchronously and block on its response; other devices/tabs should just poll `GET`. A realtime push notification on generation success/failure (`prompt_session_generation_succeeded` / `_failed`) is a nice-to-have, not yet implemented.
+
+> **Migrating an existing client:** `POST .../generate` used to always return **200** with content when prep was ready. It can now return **409 `GENERATION_RUNNING`** instead, whenever the background auto-generate triggered by the prep response is still in flight — which is common if you call generate immediately after prep. This is what stops the LLM being billed twice for one session. Clients must treat that 409 as "keep polling `GET`", not as an error to surface.
 
 #### Generate endpoint — working state (app / web)
 
@@ -592,7 +603,8 @@ Every `prompt_session` response includes a computed, non-persisted `generation` 
 | **When it runs** | Explicitly via `POST .../generate`, **or** auto in the background when prep becomes ready (`both_preps_complete: true` on prep response). Both paths drive the **same** `generation_status` state machine, so polling `GET .../:id` sees identical transitions either way |
 | **Sync vs async** | Explicit generate is **synchronous** — the HTTP response includes the generated payload (or an error). Auto-generate is fire-and-forget; poll `GET .../:id` until `generation.status` is terminal |
 | **Idempotent** | If `generation.status === "succeeded"` (content already exists), `POST .../generate` returns **200** with the **stored** session (does not re-call the LLM) |
-| **Concurrency-safe** | The `idle`/`failed` → `running` transition is a database compare-and-swap. If a call is already `running` (this call or the auto-generate trigger), a second `POST .../generate` gets **409** instead of also calling the LLM — the model spend never doubles |
+| **Concurrency-safe** | The `idle`/`failed` → `running` transition is a database compare-and-swap. If a call is already `running` (this call or the auto-generate trigger), a second `POST .../generate` gets **409 `GENERATION_RUNNING`** instead of also calling the LLM — the model spend never doubles |
+| **Crash-safe** | `running` is held as a lease, and any `running` row is swept to `failed` on startup, so an interrupted generation is always retryable rather than stuck at 409 forever |
 | **Retry after failure** | `POST .../generate` on a `failed` session retries (`failed` → `running` → `succeeded`\|`failed`) and clears `generation_error` on the new attempt |
 | **Auth** | Same as other member routes: `Authorization: Bearer {access_token}`; caller must be creator or pairing member |
 | **LLM config** | Needs `OPENAI_API_KEY` or `TEST_MOCK_LLM=true`. Otherwise **503** |
@@ -600,14 +612,17 @@ Every `prompt_session` response includes a computed, non-persisted `generation` 
 
 **Status codes for `POST .../generate`:**
 
-| Status | Meaning |
-|--------|---------|
-| **200** | Content generated **or** already present (see `message`; `generation.status` is `succeeded`) |
-| **403** | Not a member / no access |
-| **404** | Session not found |
-| **409** | Prep not ready (solo: complete own prep; paired: both partners) **or** generation is already `running` (`"error": "Generation already in progress"`) |
-| **500** | LLM/validation failure after retries (`generation_error` set, `generation.status` becomes `failed`) |
-| **503** | LLM not configured |
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| **200** | — | Content generated **or** already present (see `message`; `generation.status` is `succeeded`) |
+| **403** | — | Not a member / no access |
+| **404** | `NOT_FOUND` | Session not found |
+| **409** | `PREP_NOT_READY` | Prep not ready (solo: complete own prep; paired: both partners) |
+| **409** | `GENERATION_RUNNING` | A generation is already in flight for this session (body also includes `prompt_session`) |
+| **500** | `GENERATION_FAILED` | LLM/validation failure after retries (`generation_error` set, `generation.status` becomes `failed`) — retryable |
+| **503** | `LLM_NOT_CONFIGURED` | LLM not configured |
+
+The two 409s mean opposite things, so **branch on `code`, not on the status**: `GENERATION_RUNNING` means poll `GET` and the content is coming, while `PREP_NOT_READY` means collect more prep first and polling will never resolve.
 
 ##### Example: GET while running vs succeeded vs failed
 
@@ -645,7 +660,7 @@ const ready = session?.generation?.ready === true;
 //   && session.session_content.phases.length === 3;
 ```
 
-If only auto-generate ran: after prep returns `both_preps_complete: true`, poll `GET /api/prompt-sessions/:id` until `ready` (or call `POST .../generate` — **200** if already done, **409** if still running, in which case fall back to polling).
+If only auto-generate ran: after prep returns `both_preps_complete: true`, poll `GET /api/prompt-sessions/:id` until `ready` (or call `POST .../generate` — **200** if already done, **409 `GENERATION_RUNNING`** if still running, in which case fall back to polling).
 
 **Suggested UI field binding:**
 
@@ -699,9 +714,6 @@ Authorization: Bearer {access_token}
     "llm_used": "gpt-5.4",
     "seconds_to_generate": 1.2345,
     "generation_error": null,
-    "generation_status": "succeeded",
-    "generation_started_at": "2026-08-09T16:00:00.000Z",
-    "generation_finished_at": "2026-08-09T16:00:01.000Z",
     "generation_prompt_used_at": "2026-08-09T16:00:00.000Z",
     "generation": {
       "status": "succeeded",
@@ -763,7 +775,7 @@ Clients should bind UI to these fields only (not free-form prose blobs).
 | POST | `/api/prompt-sessions/:id/prep` | Merge prep fields. Response: `prep`, `both_preps_complete` |
 | GET | `/api/prompt-sessions/:id/prep` | Own prep; partner answers only when both complete (paired). Solo: `partner_prep: null` |
 | PATCH | `/api/prompt-sessions/:id` | Body `status` and/or `current_phase` |
-| POST | `/api/prompt-sessions/:id/generate` | **Working.** **200** + full `prompt_session` with Bridge/Session · **409** prep not ready **or** already `running` · **503** LLM not configured · idempotent once `succeeded`; retries when `failed` |
+| POST | `/api/prompt-sessions/:id/generate` | **Working.** **200** + full `prompt_session` with Bridge/Session · **409** `PREP_NOT_READY` or `GENERATION_RUNNING` (branch on `code`) · **503** LLM not configured · idempotent once `succeeded`; retries when `failed` |
 
 #### Prep fields
 
@@ -829,7 +841,8 @@ curl -s -X POST http://localhost:9000/api/prompt-sessions/$SESSION_ID/generate \
 #       …
 #     }
 #   }
-# → 409 if prep not ready, or if auto-generate already has this session "running" (poll GET instead)
+# → 409 code=PREP_NOT_READY if prep not ready
+# → 409 code=GENERATION_RUNNING if auto-generate already has this session "running" (poll GET instead)
 # → 503 if LLM not configured
 
 # 4. Re-fetch anytime (same content shape)
@@ -851,15 +864,20 @@ curl -s -X POST http://localhost:9000/api/prompt-sessions \
 
 #### Schema (summary)
 
-Tables `prompt_sessions` and `prompt_session_preps` (see [Database schema](#database-schema)). `pairing_id` nullable for solo. Startup migrates older NOT NULL columns and adds the `generation_status` / `generation_started_at` / `generation_finished_at` columns (backfilled from existing content/error on first boot after upgrade) if missing.
+Tables `prompt_sessions` and `prompt_session_preps` (see [Database schema](#database-schema)). `pairing_id` nullable for solo. Startup adds the `generation_status` / `generation_started_at` / `generation_finished_at` columns if missing, and migrates older NOT NULL columns.
+
+Two startup behaviours are worth knowing about:
+
+- **Backfill** derives `generation_status` for pre-existing rows from the content/error they already have. It runs on every boot (not only the boot that adds the columns) because it is a no-op once applied, and gating it on the schema change meant an interrupted first boot could leave legacy rows stuck reporting `idle` while holding content.
+- **Adding the columns is fatal on failure.** Every generation write path references them, so booting without them would break Sit Session generation on a database that worked before the deploy. The backfill itself stays best-effort — a stale status degrades the UI but doesn't break generation.
 
 `prompt_sessions` fields relevant to generation:
 
 | Column | Type | Notes |
 |--------|------|-------|
 | `status` | `ENUM('prep','bridge','in_session','complete','abandoned')` | Product lifecycle; unaffected by generation failures |
-| `generation_status` | `ENUM('idle','pending','running','succeeded','failed')` DEFAULT `'idle'` | Generation job state — see [Generation state](#generation-state-generation_status) |
-| `generation_started_at` / `generation_finished_at` | `DATETIME NULL` | Stamped by `beginGeneration()` / `saveGeneratedContent()` / `updateGenerationError()` |
+| `generation_status` | `ENUM('idle','pending','running','succeeded','failed')` DEFAULT `'idle'` | Generation job state — see [Generation state](#generation-state-generation_status). Exposed to clients as `generation.status`, not as a top-level field |
+| `generation_started_at` / `generation_finished_at` | `DATETIME NULL` | Stamped by `beginGeneration()` / `saveGeneratedContent()` / `updateGenerationError()`. `generation_started_at` also doubles as the lease clock for reclaiming an abandoned `running` row |
 | `generation_error` | `TEXT NULL` | Set on failure; cleared on the next successful or retried attempt |
 | `bridge_content` / `session_content` | `LONGTEXT NULL` (JSON) | Present once `generation_status = 'succeeded'` |
 | `generation_prompt` | `LONGTEXT NULL` | Server audit only — **never** in API responses |
@@ -983,7 +1001,7 @@ completed_at, …
 | 401 | Missing/invalid/expired token or bad login |
 | 403 | Not allowed (wrong user, non-admin, non-member) |
 | 404 | Not found |
-| 409 | Conflict (email, receipt, active prompt session, therapy already generated, prep not ready, or Sit Session generation already `running`) |
+| 409 | Conflict (email, receipt, active prompt session, therapy already generated, prep not ready, or Sit Session generation already `running`). Sit Session generate returns a `code` — `PREP_NOT_READY` vs `GENERATION_RUNNING` — because the two need opposite client handling |
 | 423 | Login lockout |
 | 429 | Rate limit |
 | 500 | Server / DB |

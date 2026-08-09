@@ -133,6 +133,7 @@ class PromptSession {
       console.log('prompt_session_preps table initialized successfully.');
       await this.ensurePairingIdNullable();
       await this.ensureGenerationStatusColumns();
+      await this.resetStaleRunningGenerations();
     } catch (err) {
       console.error('Error creating prompt_sessions tables:', err.message);
       throw err;
@@ -163,72 +164,113 @@ class PromptSession {
   }
 
   // Existing DBs created before generation-state tracking need these columns
-  // added. Backfills a best-effort generation_status for pre-existing rows
-  // based on whatever content/error state they already have, so old sessions
-  // don't all show as "idle" once the column exists.
+  // added. Unlike the other migrations in this file, a failure here is fatal:
+  // every generation write path (beginGeneration, saveGeneratedContent,
+  // updateGenerationError) references these columns, so booting without them
+  // would break Sit Session generation entirely on a database that worked
+  // before the deploy. Better to fail loudly at startup.
   async ensureGenerationStatusColumns() {
+    const checkColumns = `
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'prompt_sessions'
+        AND COLUMN_NAME IN ('generation_status', 'generation_started_at', 'generation_finished_at')
+    `;
+    const existingColumns = await this.query(checkColumns);
+    const columnNames = existingColumns.map(col => col.COLUMN_NAME);
+
+    if (!columnNames.includes('generation_status')) {
+      await this.query(`
+        ALTER TABLE prompt_sessions
+        ADD COLUMN generation_status ENUM('idle','pending','running','succeeded','failed') DEFAULT 'idle'
+        AFTER generation_error
+      `);
+      console.log('Added generation_status column to prompt_sessions table.');
+    }
+
+    if (!columnNames.includes('generation_started_at')) {
+      await this.query(`
+        ALTER TABLE prompt_sessions
+        ADD COLUMN generation_started_at DATETIME DEFAULT NULL
+        AFTER generation_status
+      `);
+      console.log('Added generation_started_at column to prompt_sessions table.');
+    }
+
+    if (!columnNames.includes('generation_finished_at')) {
+      await this.query(`
+        ALTER TABLE prompt_sessions
+        ADD COLUMN generation_finished_at DATETIME DEFAULT NULL
+        AFTER generation_started_at
+      `);
+      console.log('Added generation_finished_at column to prompt_sessions table.');
+    }
+
+    await this.backfillGenerationStatus();
+  }
+
+  // Give pre-existing rows a generation_status that matches the outcome they
+  // already have, instead of the 'idle' column default.
+  //
+  // Runs on every boot rather than only when a column was just added: both
+  // statements are no-ops once applied (they only touch `idle` rows), and
+  // gating on "did we just add the column" meant an ALTER that succeeded
+  // followed by a crash or a failed UPDATE left legacy rows permanently
+  // reporting `idle` while holding content — a combination that matches none
+  // of the documented client states. Best-effort, since stale statuses on old
+  // rows degrade the UI but don't break generation.
+  async backfillGenerationStatus() {
     try {
-      const checkColumns = `
-        SELECT COLUMN_NAME
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'prompt_sessions'
-          AND COLUMN_NAME IN ('generation_status', 'generation_started_at', 'generation_finished_at')
-      `;
-      const existingColumns = await this.query(checkColumns);
-      const columnNames = existingColumns.map(col => col.COLUMN_NAME);
-      let addedAnyColumn = false;
-
-      if (!columnNames.includes('generation_status')) {
-        await this.query(`
-          ALTER TABLE prompt_sessions
-          ADD COLUMN generation_status ENUM('idle','pending','running','succeeded','failed') DEFAULT 'idle'
-          AFTER generation_error
-        `);
-        console.log('Added generation_status column to prompt_sessions table.');
-        addedAnyColumn = true;
-      }
-
-      if (!columnNames.includes('generation_started_at')) {
-        await this.query(`
-          ALTER TABLE prompt_sessions
-          ADD COLUMN generation_started_at DATETIME DEFAULT NULL
-          AFTER generation_status
-        `);
-        console.log('Added generation_started_at column to prompt_sessions table.');
-        addedAnyColumn = true;
-      }
-
-      if (!columnNames.includes('generation_finished_at')) {
-        await this.query(`
-          ALTER TABLE prompt_sessions
-          ADD COLUMN generation_finished_at DATETIME DEFAULT NULL
-          AFTER generation_started_at
-        `);
-        console.log('Added generation_finished_at column to prompt_sessions table.');
-        addedAnyColumn = true;
-      }
-
-      if (addedAnyColumn) {
-        // Backfill pre-existing rows so they reflect their already-known
-        // outcome instead of the 'idle' column default.
-        await this.query(`
-          UPDATE prompt_sessions
-          SET generation_status = 'succeeded', generation_finished_at = COALESCE(generation_finished_at, generation_prompt_used_at, updated_at)
-          WHERE generation_status = 'idle' AND (bridge_content IS NOT NULL OR session_content IS NOT NULL)
-        `);
-        await this.query(`
-          UPDATE prompt_sessions
-          SET generation_status = 'failed', generation_finished_at = COALESCE(generation_finished_at, updated_at)
-          WHERE generation_status = 'idle'
-            AND generation_error IS NOT NULL
-            AND bridge_content IS NULL
-            AND session_content IS NULL
-        `);
-        console.log('Backfilled generation_status for existing prompt_sessions rows.');
+      // Requires BOTH content columns, matching generation.ready: a row with
+      // only one is not renderable and should not claim to have succeeded.
+      const succeeded = await this.query(`
+        UPDATE prompt_sessions
+        SET generation_status = 'succeeded', generation_finished_at = COALESCE(generation_finished_at, generation_prompt_used_at, updated_at)
+        WHERE generation_status = 'idle'
+          AND bridge_content IS NOT NULL
+          AND session_content IS NOT NULL
+      `);
+      const failed = await this.query(`
+        UPDATE prompt_sessions
+        SET generation_status = 'failed', generation_finished_at = COALESCE(generation_finished_at, updated_at)
+        WHERE generation_status = 'idle'
+          AND generation_error IS NOT NULL
+          AND bridge_content IS NULL
+          AND session_content IS NULL
+      `);
+      const backfilled = (succeeded?.affectedRows || 0) + (failed?.affectedRows || 0);
+      if (backfilled > 0) {
+        console.log(`Backfilled generation_status for ${backfilled} pre-existing prompt_sessions row(s).`);
       }
     } catch (err) {
-      console.warn('Migration warning (prompt_sessions generation_status columns):', err.message);
+      console.warn('Backfill warning (prompt_sessions.generation_status):', err.message);
+    }
+  }
+
+  // A row is only 'running' while a process holds it, so any 'running' row at
+  // startup belongs to a process that no longer exists (deploy, crash, OOM).
+  // Without this sweep those rows are unrecoverable: beginGeneration refuses to
+  // restart a 'running' session, so POST /generate would return 409 forever and
+  // clients would poll a job nobody is working on.
+  async resetStaleRunningGenerations() {
+    try {
+      const result = await this.query(`
+        UPDATE prompt_sessions
+        SET generation_status = 'failed',
+            generation_error = COALESCE(generation_error, 'Generation was interrupted before it completed (server restart) - retry with POST /api/prompt-sessions/:id/generate'),
+            generation_finished_at = NOW(),
+            updated_at = NOW()
+        WHERE generation_status = 'running'
+      `);
+      const reset = result?.affectedRows || 0;
+      if (reset > 0) {
+        console.log(`Reset ${reset} interrupted prompt_sessions generation(s) from 'running' to 'failed' (retryable).`);
+      }
+      return reset;
+    } catch (err) {
+      console.warn('Startup warning (reset stale prompt_sessions generations):', err.message);
+      return 0;
     }
   }
 
@@ -248,12 +290,24 @@ class PromptSession {
   // don't have to reinvent the idle/running/succeeded/failed rules from raw
   // columns. `generation.ready` is true only once generation_status is
   // 'succeeded' AND both bridge_content/session_content are present.
+  //
+  // The raw generation_status / generation_started_at / generation_finished_at
+  // columns are folded into that object rather than also being emitted at the
+  // top level, so there is exactly one place a client reads job state from.
+  // `generation_error` stays at the top level too — it predates this object and
+  // clients already depend on it.
   serializeSession(row) {
     if (!row) return null;
-    const { generation_prompt, ...rest } = row;
+    const {
+      generation_prompt,
+      generation_status,
+      generation_started_at,
+      generation_finished_at,
+      ...rest
+    } = row;
     const bridgeContent = this.parseMaybeJson(row.bridge_content);
     const sessionContent = this.parseMaybeJson(row.session_content);
-    const generationStatus = row.generation_status || 'idle';
+    const generationStatus = generation_status || 'idle';
     return {
       ...rest,
       bridge_content: bridgeContent,
@@ -261,8 +315,8 @@ class PromptSession {
       generation: {
         status: generationStatus,
         error: row.generation_error || null,
-        started_at: row.generation_started_at || null,
-        finished_at: row.generation_finished_at || null,
+        started_at: generation_started_at || null,
+        finished_at: generation_finished_at || null,
         ready: generationStatus === 'succeeded' && !!bridgeContent && !!sessionContent
       }
     };
@@ -513,12 +567,26 @@ class PromptSession {
 
   // ---- Generation persistence ----
 
+  // How long a 'running' row is trusted to belong to a live worker. Past this,
+  // beginGeneration may steal the lock. Generous by default: a real generation
+  // can take a while (LLM retries, queue wait), and stealing the lock from a
+  // worker that is still going would double the LLM spend this CAS exists to
+  // prevent. The startup sweep handles the common case (restart) immediately;
+  // this lease only covers a process that is alive but wedged.
+  static get GENERATION_LEASE_MS() {
+    return Number(process.env.PROMPT_SESSION_GENERATION_LEASE_MS || 600000);
+  }
+
   // Compare-and-swap transition into 'running'. Only succeeds when the
   // session is not already running/succeeded and has no content yet, so two
   // concurrent callers (e.g. an explicit POST /generate racing the
   // auto-generate background trigger) cannot both start an LLM call for the
   // same session. Returns true if THIS call won the race.
+  //
+  // A 'running' row whose generation_started_at is older than the lease is
+  // also claimable, so a wedged worker can't brick the session permanently.
   async beginGeneration(promptSessionId) {
+    const leaseSeconds = Math.max(1, Math.round(PromptSession.GENERATION_LEASE_MS / 1000));
     const result = await this.query(
       `UPDATE prompt_sessions
          SET generation_status = 'running',
@@ -527,46 +595,19 @@ class PromptSession {
              generation_error = NULL,
              updated_at = NOW()
        WHERE id = ?
-         AND generation_status IN ('idle', 'pending', 'failed')
+         AND (
+           generation_status IN ('idle', 'pending', 'failed')
+           OR (
+             generation_status = 'running'
+             AND generation_started_at IS NOT NULL
+             AND generation_started_at < NOW() - INTERVAL ? SECOND
+           )
+         )
          AND bridge_content IS NULL
          AND session_content IS NULL`,
-      [promptSessionId]
+      [promptSessionId, leaseSeconds]
     );
     return result.affectedRows > 0;
-  }
-
-  // General-purpose generation_status transition helper (e.g. explicitly
-  // marking 'pending' before a queued job starts). Callers doing the actual
-  // idle/failed -> running transition that guards against double LLM spend
-  // should use beginGeneration() instead, which is compare-and-swap.
-  async updateGenerationStatus(promptSessionId, { status, startedAt, finishedAt, clearError = false } = {}) {
-    if (!PromptSession.GENERATION_STATUSES.includes(status)) {
-      throw new Error(`Invalid generation_status: ${status}`);
-    }
-
-    const sets = ['generation_status = ?', 'updated_at = NOW()'];
-    const params = [status];
-
-    if (startedAt !== undefined) {
-      sets.push('generation_started_at = ?');
-      params.push(startedAt);
-    }
-    if (finishedAt !== undefined) {
-      sets.push('generation_finished_at = ?');
-      params.push(finishedAt);
-    }
-    if (clearError) {
-      sets.push('generation_error = NULL');
-    }
-
-    const result = await this.query(
-      `UPDATE prompt_sessions SET ${sets.join(', ')} WHERE id = ?`,
-      [...params, promptSessionId]
-    );
-    if (result.affectedRows === 0) {
-      throw new Error('Prompt session not found');
-    }
-    return { message: 'Generation status updated successfully' };
   }
 
   // Persist generated Bridge + Session content along with the prompt that
@@ -608,27 +649,46 @@ class PromptSession {
   // non-null value is provided (mirrors the Program model behavior). Marks
   // generation_status 'failed' and stamps generation_finished_at so a
   // subsequent POST /generate can retry (idle/pending/failed -> running).
+  //
+  // Refuses to touch a session that already has content: once the lease in
+  // beginGeneration can hand a session to a second worker, a wedged first
+  // worker may report its failure *after* the second one succeeded, and that
+  // late error must not flip a good session to 'failed'. Returns whether the
+  // failure was actually recorded.
   async updateGenerationError(promptSessionId, errorMessage, generationPrompt = null) {
+    const guard = `
+        AND bridge_content IS NULL
+        AND session_content IS NULL
+        AND generation_status <> 'succeeded'`;
     const updateQuery = generationPrompt !== null
       ? `UPDATE prompt_sessions
            SET generation_error = ?, generation_prompt = ?,
                generation_status = 'failed', generation_finished_at = NOW(),
                updated_at = NOW()
-         WHERE id = ?`
+         WHERE id = ?${guard}`
       : `UPDATE prompt_sessions
            SET generation_error = ?,
                generation_status = 'failed', generation_finished_at = NOW(),
                updated_at = NOW()
-         WHERE id = ?`;
+         WHERE id = ?${guard}`;
     const params = generationPrompt !== null
       ? [errorMessage, generationPrompt, promptSessionId]
       : [errorMessage, promptSessionId];
 
     const result = await this.query(updateQuery, params);
     if (result.affectedRows === 0) {
-      throw new Error('Prompt session not found');
+      // Either the session is gone or it succeeded in the meantime. Distinguish
+      // the two so a missing session still surfaces as an error.
+      const existing = await this.queryOne(
+        `SELECT id FROM prompt_sessions WHERE id = ?`,
+        [promptSessionId]
+      );
+      if (!existing) {
+        throw new Error('Prompt session not found');
+      }
+      return { message: 'Generation error skipped; session already has content', recorded: false };
     }
-    return { message: 'Generation error updated successfully' };
+    return { message: 'Generation error updated successfully', recorded: true };
   }
 }
 

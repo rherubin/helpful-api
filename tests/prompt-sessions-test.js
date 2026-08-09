@@ -51,6 +51,14 @@ class PromptSessionsTestRunner {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  // True only for the 409 that means "a generation is in flight, poll for it".
+  // Deliberately keyed on `code` rather than the bare 409 status: PREP_NOT_READY
+  // is also a 409 but polling for it would hang forever, so a test that sees it
+  // where it expects GENERATION_RUNNING should fail loudly instead.
+  isGenerationRunning(error) {
+    return error?.response?.status === 409 && error?.response?.data?.code === 'GENERATION_RUNNING';
+  }
+
   // Poll GET .../:id until generation.status reaches a terminal state
   // (succeeded or failed), or timeoutMs elapses. Used when an explicit
   // POST .../generate races the fire-and-forget auto-generate trigger and
@@ -227,6 +235,11 @@ class PromptSessionsTestRunner {
       this.assert(false, 'Solo generate before prep should fail', 'Request unexpectedly succeeded');
     } catch (error) {
       this.assert(error.response?.status === 409, 'Solo generate before prep returns 409', `Status: ${error.response?.status}`);
+      this.assert(
+        error.response?.data?.code === 'PREP_NOT_READY',
+        'Solo generate before prep returns code PREP_NOT_READY (not GENERATION_RUNNING)',
+        `code: ${error.response?.data?.code}`
+      );
     }
 
     // Partial prep
@@ -306,7 +319,7 @@ class PromptSessionsTestRunner {
         this.assert(res.status === 200, 'Solo generate returns 200 after prep', `Status: ${res.status}`);
         soloGenerated = res.data.prompt_session;
       } catch (genError) {
-        if (genError.response?.status === 409) {
+        if (this.isGenerationRunning(genError)) {
           // Auto-generate won the race; fall back to polling like a client would.
           soloGenerated = await this.pollGenerationTerminal(outsider.token, soloSessionId);
         } else {
@@ -558,6 +571,11 @@ class PromptSessionsTestRunner {
         '409 message mentions prep requirement',
         `error: ${error.response?.data?.error}`
       );
+      this.assert(
+        error.response?.data?.code === 'PREP_NOT_READY',
+        '409 before both preps returns code PREP_NOT_READY (not GENERATION_RUNNING)',
+        `code: ${error.response?.data?.code}`
+      );
     }
   }
 
@@ -682,7 +700,7 @@ class PromptSessionsTestRunner {
         this.assert(res.status === 200, 'Generate returns 200', `Status: ${res.status}`);
         session = res.data.prompt_session;
       } catch (genError) {
-        if (genError.response?.status === 409) {
+        if (this.isGenerationRunning(genError)) {
           session = await this.pollGenerationTerminal(user1.token, sessionId);
           this.assert(!!session, 'Generate 409 fallback: polled session found', `found: ${!!session}`);
         } else {
@@ -834,7 +852,7 @@ class PromptSessionsTestRunner {
         this.assert(genRes.status === 200, 'Solo generate returns 200', `Status: ${genRes.status}`);
         generatedSession = genRes.data.prompt_session;
       } catch (genError) {
-        if (genError.response?.status === 409) {
+        if (this.isGenerationRunning(genError)) {
           this.log('Solo generate got 409 (auto-generate already in progress) — polling GET for final state', 'info');
           generatedSession = await this.pollGenerationTerminal(soloUser.token, sessionId);
           this.assert(!!generatedSession, 'Solo generate 409 fallback: polled session found', `found: ${!!generatedSession}`);
@@ -914,12 +932,19 @@ class PromptSessionsTestRunner {
       return;
     }
 
-    // Complete prep, then fire two generate calls back-to-back. The mock LLM
-    // resolves fast enough that we cannot always *observe* one call as
-    // mid-flight 409, but the model's compare-and-swap (beginGeneration)
-    // guarantees only one caller ever reaches the LLM — every possible HTTP
-    // outcome here is either 200 (generated/already-generated) or 409
-    // (already in progress); nothing should 500 or double-generate.
+    // Complete prep, then fire two generate calls back-to-back.
+    //
+    // Three callers race here, not two: completing prep also kicks off the
+    // fire-and-forget auto-generate. With an instant mock LLM whichever one wins
+    // can finish before the others are even routed, so they all see 200 and the
+    // lock is never exercised. Start the server with TEST_MOCK_LLM_DELAY_MS>=1000
+    // to hold the winning call open long enough that the others land mid-flight;
+    // then at least one caller must be rejected with 409 GENERATION_RUNNING,
+    // which is the property that actually matters — a loser is turned away
+    // instead of making a second LLM call. (Which caller wins is not
+    // deterministic and doesn't matter: usually auto-generate, in which case
+    // both explicit calls get 409.)
+    const strictConcurrency = Number(process.env.TEST_MOCK_LLM_DELAY_MS || 0) >= 1000;
     try {
       await axios.post(
         `${this.baseURL}/api/prompt-sessions/${genStatusSessionId}/prep`,
@@ -939,12 +964,32 @@ class PromptSessionsTestRunner {
         `statuses: ${statuses.join(',')}`
       );
 
+      if (strictConcurrency) {
+        this.assert(
+          statuses.filter(s => s === 409).length >= 1,
+          'With a delayed mock LLM, a concurrent generate is rejected with 409 rather than making a second LLM call',
+          `statuses: ${statuses.join(',')} (TEST_MOCK_LLM_DELAY_MS=${process.env.TEST_MOCK_LLM_DELAY_MS})`
+        );
+        this.assert(
+          statuses.filter(s => s === 200).length <= 1,
+          'With a delayed mock LLM, at most one concurrent generate returns generated content',
+          `statuses: ${statuses.join(',')}`
+        );
+      } else {
+        this.log('TEST_MOCK_LLM_DELAY_MS unset — skipping strict mid-flight concurrency assertions (see comment above)', 'info');
+      }
+
       for (const r of [res1, res2]) {
         if (r.status === 'rejected' && r.reason?.response?.status === 409) {
           this.assert(
             /already in progress/i.test(r.reason.response.data?.error || ''),
             '409 from concurrent generate mentions "already in progress"',
             `error: ${r.reason.response.data?.error}`
+          );
+          this.assert(
+            r.reason.response.data?.code === 'GENERATION_RUNNING',
+            '409 from concurrent generate carries code GENERATION_RUNNING',
+            `code: ${r.reason.response.data?.code}`
           );
         }
       }
@@ -953,8 +998,9 @@ class PromptSessionsTestRunner {
     }
 
     try {
-      const res = await axios.get(`${this.baseURL}/api/prompt-sessions/${genStatusSessionId}`, this.authHeader(genStatusUser.token));
-      const session = res.data.prompt_session;
+      // Whoever won the race may still be mid-flight (guaranteed to be, with a
+      // delayed mock), so poll to a terminal state rather than reading once.
+      const session = await this.pollGenerationTerminal(genStatusUser.token, genStatusSessionId);
       this.assert(
         session?.generation?.status === 'succeeded',
         'After concurrent generate settles, generation.status is succeeded',
@@ -1060,6 +1106,16 @@ class PromptSessionsTestRunner {
         '409 while running mentions "already in progress"',
         `error: ${error.response?.data?.error}`
       );
+      this.assert(
+        error.response?.data?.code === 'GENERATION_RUNNING',
+        '409 while running carries code GENERATION_RUNNING (distinguishable from PREP_NOT_READY)',
+        `code: ${error.response?.data?.code}`
+      );
+      this.assert(
+        error.response?.data?.prompt_session?.generation?.status === 'running',
+        '409 while running includes the prompt_session with generation.status running',
+        `status: ${error.response?.data?.prompt_session?.generation?.status}`
+      );
     } finally {
       // Recover the row from the simulated 'running' state and re-generate so
       // the session ends this test in a normal, content-bearing state.
@@ -1077,6 +1133,69 @@ class PromptSessionsTestRunner {
       } catch {
         // Best-effort cleanup; failure here should not fail the suite.
       }
+    }
+
+    // A 'running' row whose worker died is indistinguishable from a live one at
+    // the DB level, so the lock is a lease: once generation_started_at is older
+    // than PROMPT_SESSION_GENERATION_LEASE_MS, generate may reclaim it. Without
+    // this, an interrupted generation would 409 forever and the session could
+    // never be recovered through the API.
+    try {
+      const pool = getPool();
+      await pool.execute(
+        `UPDATE prompt_sessions
+           SET generation_status = 'running',
+               generation_started_at = NOW() - INTERVAL 1 DAY,
+               generation_finished_at = NULL,
+               bridge_content = NULL,
+               session_content = NULL,
+               generation_error = NULL
+         WHERE id = ?`,
+        [genStatusSessionId]
+      );
+
+      const reclaimRes = await axios.post(
+        `${this.baseURL}/api/prompt-sessions/${genStatusSessionId}/generate`,
+        {},
+        this.authHeader(genStatusUser.token)
+      );
+      this.assert(
+        reclaimRes.status === 200,
+        'Generate reclaims an abandoned "running" session past the lease (200, not a permanent 409)',
+        `Status: ${reclaimRes.status}`
+      );
+      this.assert(
+        reclaimRes.data.prompt_session?.generation?.status === 'succeeded',
+        'Reclaimed abandoned generation completes to succeeded',
+        `status: ${reclaimRes.data.prompt_session?.generation?.status}`
+      );
+    } catch (error) {
+      this.assert(
+        false,
+        'Generate reclaims an abandoned "running" session past the lease',
+        `Status: ${error.response?.status} Error: ${error.response?.data?.error || error.message}`
+      );
+    }
+
+    // Job state is exposed only through the computed `generation` object, so
+    // clients have one place to read it and can't drift onto raw columns.
+    try {
+      const res = await axios.get(`${this.baseURL}/api/prompt-sessions/${genStatusSessionId}`, this.authHeader(genStatusUser.token));
+      const session = res.data.prompt_session;
+      this.assert(
+        session?.generation_status === undefined &&
+          session?.generation_started_at === undefined &&
+          session?.generation_finished_at === undefined,
+        'Raw generation_status/started_at/finished_at columns are not exposed alongside the generation object',
+        `keys present: ${['generation_status', 'generation_started_at', 'generation_finished_at'].filter(k => session?.[k] !== undefined).join(',') || 'none'}`
+      );
+      this.assert(
+        session?.generation_prompt === undefined,
+        'generation_prompt is still never exposed',
+        `generation_prompt: ${session?.generation_prompt}`
+      );
+    } catch (error) {
+      this.assert(false, 'Serialized session omits raw generation columns', `Error: ${error.response?.data?.error || error.message}`);
     }
   }
 
@@ -1173,6 +1292,59 @@ class PromptSessionsTestRunner {
         retriedSession.generation.status === 'running' && retriedSession.generation.error === null,
         'Model: retry transition clears generation_error and is running again',
         `status: ${retriedSession.generation.status}, error: ${retriedSession.generation.error}`
+      );
+
+      // Lease reclaim: a 'running' row older than the lease is claimable, so a
+      // worker that died or wedged cannot hold a session hostage.
+      await pool.execute(
+        `UPDATE prompt_sessions SET generation_started_at = NOW() - INTERVAL 1 DAY WHERE id = ?`,
+        [session2.id]
+      );
+      const wonExpiredLease = await model.beginGeneration(session2.id);
+      this.assert(
+        wonExpiredLease === true,
+        'Model: beginGeneration() reclaims a running session whose lease has expired',
+        `won: ${wonExpiredLease}`
+      );
+
+      // A worker that finally reports failure after another worker already
+      // succeeded must not flip a good session back to 'failed'.
+      const lateFailure = await model.updateGenerationError(session.id, 'Late failure from a wedged worker');
+      this.assert(
+        lateFailure.recorded === false,
+        'Model: updateGenerationError refuses to overwrite a session that already has content',
+        `recorded: ${lateFailure.recorded}`
+      );
+      const stillSucceeded = await model.getPromptSessionById(session.id);
+      this.assert(
+        stillSucceeded.generation.status === 'succeeded' && stillSucceeded.generation.error === null,
+        'Model: late failure leaves the succeeded session untouched',
+        `status: ${stillSucceeded.generation.status}, error: ${stillSucceeded.generation.error}`
+      );
+
+      // The startup sweep is what recovers rows whose process is simply gone.
+      // It is table-wide by design, so this assertion only checks "at least one"
+      // and the suite runs it last, after every other generation has settled.
+      const session3 = await model.createPromptSession({ createdByUserId: ownerId });
+      createdIds.push(session3.id);
+      await model.beginGeneration(session3.id);
+      const resetCount = await model.resetStaleRunningGenerations();
+      this.assert(
+        resetCount >= 1,
+        'Model: resetStaleRunningGenerations() sweeps running rows left over from a dead process',
+        `reset: ${resetCount}`
+      );
+      const sweptSession = await model.getPromptSessionById(session3.id);
+      this.assert(
+        sweptSession.generation.status === 'failed' && /interrupted/i.test(sweptSession.generation.error || ''),
+        'Model: swept session lands on failed with an explanatory, retryable error',
+        `status: ${sweptSession.generation.status}, error: ${sweptSession.generation.error}`
+      );
+      const wonAfterSweep = await model.beginGeneration(session3.id);
+      this.assert(
+        wonAfterSweep === true,
+        'Model: a swept session can be retried immediately',
+        `won: ${wonAfterSweep}`
       );
     } catch (error) {
       this.assert(false, 'Model generation_status unit tests', `Error: ${error.message}`);

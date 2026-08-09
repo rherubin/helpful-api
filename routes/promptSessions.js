@@ -159,14 +159,22 @@ function createPromptSessionRoutes(
       }
       const err = new Error('Generation already in progress');
       err.code = 'GENERATION_RUNNING';
+      // Carried so the route can return the same body shape as its own
+      // pre-flight 409 check (error + code + prompt_session).
+      err.promptSession = session;
       throw err;
     }
 
-    const partners = await buildPartnersForGeneration(session);
+    // Everything below runs while we hold the 'running' lock, so every exit
+    // path must land on a terminal status. Anything that throws in here —
+    // including buildPartnersForGeneration's DB reads — has to go through
+    // updateGenerationError, or the row stays 'running' forever and
+    // beginGeneration will refuse every future retry.
     const startedAt = Date.now();
     let generationPrompt = null;
 
     try {
+      const partners = await buildPartnersForGeneration(session);
       const result = await helpfulPromptService.generateSitSessionContent(partners);
       generationPrompt = result && result.__prompt ? result.__prompt : null;
       const secondsToGenerate = (Date.now() - startedAt) / 1000;
@@ -501,8 +509,12 @@ function createPromptSessionRoutes(
   //
   // State machine (generation_status): idle | pending | running | succeeded | failed.
   //   - Already succeeded / content present → 200 with the existing session (idempotent; no LLM call).
-  //   - Already running (this call or the auto-generate background trigger) → 409.
+  //   - Already running (this call or the auto-generate background trigger) → 409 GENERATION_RUNNING.
   //   - idle or failed → running → succeeded|failed (failed sessions can be retried this way).
+  //
+  // Both 409s carry a machine-readable `code` because they mean opposite
+  // things to a client: GENERATION_RUNNING means "poll GET, it's coming",
+  // PREP_NOT_READY means "collect more prep first, polling will never help".
   router.post('/:id/generate', authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
@@ -520,24 +532,24 @@ function createPromptSessionRoutes(
         });
       }
 
-      if (session.generation?.status === 'running') {
-        return res.status(409).json({
-          error: 'Generation already in progress',
-          prompt_session: session
-        });
-      }
-
+      // Note: "already running" is deliberately NOT checked here. That
+      // decision belongs to the beginGeneration compare-and-swap inside
+      // runGeneration, which is also the only thing that knows whether a
+      // 'running' row still holds a live lease or has been abandoned by a
+      // wedged worker. Checking it here would shadow the lease and make
+      // abandoned sessions permanently un-retryable.
       const bothComplete = await promptSessionModel.bothPrepsComplete(id);
       if (!bothComplete) {
         const message = session.pairing_id
           ? 'Both partners must complete prep before generating'
           : 'Prep must be complete before generating';
-        return res.status(409).json({ error: message });
+        return res.status(409).json({ error: message, code: 'PREP_NOT_READY' });
       }
 
       if (!helpfulPromptService || !helpfulPromptService.isConfigured()) {
         return res.status(503).json({
           error: 'LLM service is not configured',
+          code: 'LLM_NOT_CONFIGURED',
           details: 'Set OPENAI_API_KEY (or TEST_MOCK_LLM=true for tests) to enable Sit Session generation.'
         });
       }
@@ -549,22 +561,30 @@ function createPromptSessionRoutes(
       });
     } catch (error) {
       if (error.message === 'Prompt session not found') {
-        return res.status(404).json({ error: error.message });
+        return res.status(404).json({ error: error.message, code: 'NOT_FOUND' });
       }
       if (error.code === 'PREP_NOT_READY') {
-        return res.status(409).json({ error: error.message });
+        return res.status(409).json({ error: error.message, code: 'PREP_NOT_READY' });
       }
       if (error.code === 'GENERATION_RUNNING') {
-        return res.status(409).json({ error: 'Generation already in progress' });
+        const body = { error: 'Generation already in progress', code: 'GENERATION_RUNNING' };
+        if (error.promptSession) {
+          body.prompt_session = error.promptSession;
+        }
+        return res.status(409).json(body);
       }
       if (error.code === 'LLM_NOT_CONFIGURED') {
         return res.status(503).json({
           error: 'LLM service is not configured',
+          code: 'LLM_NOT_CONFIGURED',
           details: 'Set OPENAI_API_KEY (or TEST_MOCK_LLM=true for tests) to enable Sit Session generation.'
         });
       }
       console.error('Error generating prompt session content:', error.message);
-      return res.status(500).json({ error: 'Failed to generate prompt session content' });
+      return res.status(500).json({
+        error: 'Failed to generate prompt session content',
+        code: 'GENERATION_FAILED'
+      });
     }
   });
 

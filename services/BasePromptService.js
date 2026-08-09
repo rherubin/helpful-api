@@ -22,6 +22,12 @@ class BasePromptService {
     this.apiUrl = 'https://api.openai.com/v1/chat/completions';
 
     this.mockMode = process.env.TEST_MOCK_LLM === 'true';
+    // Mock responses normally return instantly, which makes it impossible for a
+    // test to observe a generation while it is still in flight. Setting this
+    // holds each mocked call open for a fixed duration so concurrency behaviour
+    // (e.g. the prompt_sessions 'running' lock) can be asserted deterministically
+    // instead of racing. Zero — the default — keeps the old instant behaviour.
+    this.mockDelayMs = Math.max(0, Number(process.env.TEST_MOCK_LLM_DELAY_MS || 0));
 
     this.validateApiKey();
 
@@ -43,7 +49,8 @@ class BasePromptService {
 
   validateApiKey() {
     if (this.mockMode) {
-      console.log(`LLM configured: service=${this.constructor.name}, provider=openai, model=${this.model}, mock=TEST_MOCK_LLM`);
+      const delayNote = this.mockDelayMs > 0 ? `, mock_delay_ms=${this.mockDelayMs}` : '';
+      console.log(`LLM configured: service=${this.constructor.name}, provider=openai, model=${this.model}, mock=TEST_MOCK_LLM${delayNote}`);
       return;
     }
 
@@ -70,6 +77,9 @@ class BasePromptService {
     const { maxTokens, temperature = 0.7, jsonMode = false } = options;
 
     if (this.mockMode) {
+      if (this.mockDelayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, this.mockDelayMs));
+      }
       return this._buildMockResponse({ jsonMode, systemPrompt, userPrompt });
     }
 

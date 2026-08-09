@@ -71,6 +71,7 @@ Skip categories with flags, e.g. `--no-load`, `--no-pairing-lifecycle`, `--no-us
 | `npm run test:push` | `push-notification-service-test.js` |
 | `npm run test:admin-push` | `admin-push-test-test.js` |
 | `npm run test:prompt-sessions` | `prompt-sessions-test.js` (solo + paired + pending + `generation_status`) |
+| — | For the strict concurrency assertion (exactly one winner), start the server with `TEST_MOCK_LLM_DELAY_MS=1500` so a generation is observable mid-flight; without it that one assertion is skipped |
 | `npm run test:cleanup` | `cleanup-test-data.js` |
 
 ---
