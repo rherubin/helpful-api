@@ -30,17 +30,17 @@ Public-facing language can remain "Sit Session" / "Sit Together". Internal code 
 
 A **Prompt Session** (publicly called a "Sit Session") is a structured, time-bounded experience. It supports:
 
-- **Solo / single-device**: no pairing required — one user creates a session and fills prep (web unpaired flow).
+- **Solo / single-device**: no pairing required — one user creates a session and fills prep (web unpaired / shared-phone flow). Generate is allowed after one prep; output is still **couple-shaped** so pairing can happen after the first Sit Session.
 - **Paired**: optional `pairing_id` links the session to a couple so both members can prep and later generate shared content.
 
 High-level flow (paired):
 1. One partner initiates a Prompt Session (with or without an accepted pairing).
 2. Both partners independently complete **Prep** (six questions + optional focus area).
 3. Once both preps are complete → system generates the dynamic prompt → produces the Bridge + Session content.
-4. The couple moves through "The Bridge" (transition / synthesis of prep) → "The Session" (the guided experience itself).
+4. The couple moves through "The Bridge" (psychoeducation + comparison) → "The Session" (reflections, conversation starter, challenge).
 5. The Prompt Session has a clear completion state.
 
-Solo flow: create without `pairing_id` → complete own prep → prep is considered ready (one completed prep).
+Solo flow: create without `pairing_id` → complete own prep → generate (or auto-generate) → same Bridge/Session schema as paired.
 
 Key differences from Programs:
 - Prep is structured; for paired sessions both partners complete prep before content generation.
@@ -196,7 +196,7 @@ Response (201) — solo (`pairing_id` omitted): same shape with `"pairing_id": n
 - `GET /api/prompt-sessions/:id`
 - `POST /api/prompt-sessions/:id/prep` — submit or update my prep answers
 - `GET /api/prompt-sessions/:id/prep` — my prep + partner completion status (full partner answers once both done); solo returns `partner_prep: null`
-- `POST /api/prompt-sessions/:id/generate` — builds prep-based prompt via `HelpfulPromptService.generateSitSessionContent`, persists `bridge_content` / `session_content` (**409** if prep not ready · **503** if LLM not configured · idempotent if already generated)
+- `POST /api/prompt-sessions/:id/generate` — builds prep-based prompt via `HelpfulPromptService.generateSitSessionContent`, persists `bridge_content` / `session_content` (**409** `PREP_NOT_READY` / `GENERATION_RUNNING` · **503** if LLM not configured · idempotent if already generated). Works for solo/single-device (1 prep) and paired (2 preps); pairing can happen after the first Sit Session. **Canonical client contract** (schema + UI bindings): [README — Prompt sessions](../README.md#prompt-sessions-sit-sessions).
 - `PATCH /api/prompt-sessions/:id` — `status` and/or `current_phase`
 
 Push notifications will be important (e.g., "Your partner finished prep", "Your Sit Session is ready").

@@ -146,21 +146,69 @@ class HelpfulPromptServiceTestRunner {
   }
 
   buildMockSitSession(overrides = {}) {
+    const bridgeOverrides = overrides.bridge || {};
+    const sessionOverrides = overrides.session || {};
+
     return {
       bridge: {
-        summary: 'Thank you both for showing up. Your prep shows care for tone, topic, and closeness — this Bridge is a soft landing into the Session together.',
-        shared_themes: ['reconnection', 'gentle honesty', 'emotional safety'],
-        transition: 'When you are ready, we will move into three short steps to open, deepen, and close together.',
-        ...(overrides.bridge || {})
+        psychoeducation: {
+          body: 'When couples slow down and name what they feel, their nervous systems often settle enough for connection to return. Research on emotional attunement shows that brief, structured check-ins can reduce defensiveness and help partners feel safer reaching for each other.',
+          references: [
+            {
+              citation: 'Gottman, J. & Silver, N. — emotional bids and turning toward',
+              note: 'Supports noticing and responding to emotional signals.'
+            },
+            {
+              citation: 'Johnson, S. — Emotionally Focused Therapy attachment bonding',
+              note: 'Supports creating a safe emotional bridge before problem-solving.'
+            }
+          ],
+          ...(bridgeOverrides.psychoeducation || {})
+        },
+        comparison: {
+          partner_1: 'Alex is arriving hopeful, wanting a gentle tone and more team energy.',
+          partner_2: 'Jordan is arriving honest about an empty tank and needing more patience.',
+          insight: 'Both want closeness, but they are entering with different energy levels tonight.',
+          ...(bridgeOverrides.comparison || {})
+        }
       },
       session: {
-        title: 'Same Team Tonight',
-        phases: [
-          { id: 'open', prompt: 'Each of you name one feeling you brought into the room and what you hope feels different by the end.' },
-          { id: 'deepen', prompt: 'What would help your emotional tank feel a little fuller this week, and how can your partner support that?' },
-          { id: 'close', prompt: 'Share one appreciation and one small next step so you leave feeling more on the same team tonight.' }
+        reflections: sessionOverrides.reflections || [
+          {
+            partner: 'Alex',
+            question: 'What feeling are you bringing into this Sit Session, and what would help you feel more settled with Jordan?'
+          },
+          {
+            partner: 'Jordan',
+            question: 'Where is your emotional tank right now, and what support from Alex would feel genuinely helpful?'
+          }
         ],
-        ...(overrides.session || {})
+        conversation_starter: {
+          question: 'Building on what you each just named, where do you already feel on the same team — and where do you still feel a little apart?',
+          ...(sessionOverrides.conversation_starter || {})
+        },
+        challenge: {
+          title: 'Same Team Check-In',
+          steps: [
+            {
+              number: 1,
+              title: 'Face each other',
+              body: 'Sit close enough to make easy eye contact. Take one slow breath together before either of you speaks.',
+              bullets: ['Phones away', 'Knees or hands lightly touching if comfortable']
+            },
+            {
+              number: 2,
+              title: 'Share reflections',
+              body: 'Take turns answering your reflection questions without interrupting. Listener only mirrors back one key feeling they heard.'
+            },
+            {
+              number: 3,
+              title: 'Close with one next step',
+              body: 'Agree on one small action you can take together in the next 24 hours so you leave feeling more connected.'
+            }
+          ],
+          ...(sessionOverrides.challenge || {})
+        }
       }
     };
   }
@@ -399,44 +447,62 @@ class HelpfulPromptServiceTestRunner {
 
       this.assert(!!result && !!result.bridge && !!result.session, 'Returns bridge + session objects');
       this.assert(
-        typeof result.bridge.summary === 'string' && result.bridge.summary.length >= 20,
-        'bridge.summary is non-trivial text'
+        typeof result.bridge.psychoeducation?.body === 'string' && result.bridge.psychoeducation.body.length >= 40,
+        'bridge.psychoeducation.body is non-trivial text'
       );
       this.assert(
-        Array.isArray(result.bridge.shared_themes) && result.bridge.shared_themes.length >= 1,
-        'bridge.shared_themes is a non-empty array',
-        `len=${result.bridge.shared_themes?.length}`
+        Array.isArray(result.bridge.psychoeducation?.references) && result.bridge.psychoeducation.references.length >= 1,
+        'bridge.psychoeducation.references is a non-empty array',
+        `len=${result.bridge.psychoeducation?.references?.length}`
       );
       this.assert(
-        typeof result.bridge.transition === 'string' && result.bridge.transition.length >= 15,
-        'bridge.transition is non-trivial text'
-      );
-      this.assert(typeof result.session.title === 'string' && result.session.title.length >= 5, 'session.title present');
-      this.assert(
-        Array.isArray(result.session.phases) && result.session.phases.length === 3,
-        'session.phases has exactly 3 entries',
-        `len=${result.session.phases?.length}`
+        result.bridge.psychoeducation.references.every(r => typeof r.citation === 'string' && r.citation.length >= 8),
+        'each psychoeducation reference has a citation'
       );
       this.assert(
-        result.session.phases.map(p => p.id).join(',') === 'open,deepen,close',
-        'phases ordered open → deepen → close',
-        `ids=${result.session.phases.map(p => p.id).join(',')}`
+        typeof result.bridge.comparison?.partner_1 === 'string' &&
+          typeof result.bridge.comparison?.partner_2 === 'string' &&
+          typeof result.bridge.comparison?.insight === 'string',
+        'bridge.comparison has partner_1, partner_2, insight'
       );
       this.assert(
-        result.session.phases.every(p => typeof p.prompt === 'string' && p.prompt.length >= 15),
-        'each phase.prompt is non-trivial text'
+        Array.isArray(result.session.reflections) && result.session.reflections.length === 2,
+        'session.reflections has exactly 2 entries',
+        `len=${result.session.reflections?.length}`
       );
-      this.assert(!('content' in result.bridge), 'legacy bridge.content not present after normalize');
-      this.assert(!('content' in result.session), 'legacy session.content not present after normalize');
+      this.assert(
+        result.session.reflections.every(r => typeof r.partner === 'string' && typeof r.question === 'string'),
+        'each reflection has partner + question'
+      );
+      this.assert(
+        typeof result.session.conversation_starter?.question === 'string' &&
+          result.session.conversation_starter.question.length >= 15,
+        'session.conversation_starter.question present'
+      );
+      this.assert(
+        typeof result.session.challenge?.title === 'string' &&
+          Array.isArray(result.session.challenge?.steps) &&
+          result.session.challenge.steps.length >= 1,
+        'session.challenge has title + steps'
+      );
+      this.assert(
+        result.session.challenge.steps.every(s =>
+          typeof s.number === 'number' && typeof s.title === 'string' && typeof s.body === 'string'
+        ),
+        'each challenge step has number, title, body'
+      );
+      this.assert(!('summary' in result.bridge), 'legacy bridge.summary not present after normalize');
+      this.assert(!('phases' in result.session), 'legacy session.phases not present after normalize');
       this.assert(typeof result.__prompt === 'string' && result.__prompt.length > 0, '__prompt attached for persistence');
 
       const prompt = this.lastCapturedPrompt || '';
-      this.assert(/Sit Session/i.test(prompt), 'User prompt mentions Sit Session');
+      this.assert(/relationship expert/i.test(prompt), 'User prompt frames the LLM as a relationship expert');
       this.assert(/Alex says:/.test(prompt), 'User prompt includes Partner A prep block');
       this.assert(/Jordan says:/.test(prompt), 'User prompt includes Partner B prep block');
       this.assert(/emotional tank is feeling somewhat full/i.test(prompt), 'User prompt fills tank selection from prep');
-      this.assert(/shared_themes/i.test(prompt), 'User prompt requests shared_themes field');
-      this.assert(/"id": "open"/i.test(prompt), 'User prompt requests open phase id');
+      this.assert(/psychoeducation/i.test(prompt), 'User prompt requests psychoeducation');
+      this.assert(/"references"/i.test(prompt), 'User prompt requests references array');
+      this.assert(/conversation.starter/i.test(prompt), 'User prompt requests conversation-starter');
       this.assert(
         this.lastCapturedBody?.response_format?.type === 'json_object',
         'Sit Session generation uses jsonMode'
@@ -445,6 +511,38 @@ class HelpfulPromptServiceTestRunner {
       this.assert(false, 'generateSitSessionContent call', `Error: ${error.message}`);
     } finally {
       global.fetch = originalFetch;
+    }
+
+    const soloOriginalFetch = global.fetch;
+    this._installMockFetch(JSON.stringify(this.buildMockSitSession()));
+    try {
+      const soloResult = await service.generateSitSessionContent([
+        {
+          name: 'Alex',
+          prep: {
+            gratitude: 'hopeful',
+            energy_level: 'somewhat full',
+            boundary: 'somewhat close',
+            intention: 'gentle',
+            curiosity: 'reconnect',
+            bringing_text: 'I want us on the same team.'
+          }
+        }
+      ]);
+      this.assert(!!soloResult?.bridge && !!soloResult?.session, 'Solo (1 prep) generateSitSessionContent succeeds');
+      this.assert(
+        Array.isArray(soloResult.session.reflections) && soloResult.session.reflections.length === 2,
+        'Solo generate still returns couple-shaped reflections (2)',
+        `len=${soloResult.session.reflections?.length}`
+      );
+      this.assert(
+        /single-device/i.test(soloResult.__prompt || ''),
+        'Solo user prompt notes single-device flow'
+      );
+    } catch (error) {
+      this.assert(false, 'Solo generateSitSessionContent call', `Error: ${error.message}`);
+    } finally {
+      global.fetch = soloOriginalFetch;
     }
   }
 
@@ -456,14 +554,23 @@ class HelpfulPromptServiceTestRunner {
       ...good,
       extra_top: true,
       bridge: { ...good.bridge, extra_bridge: 1 },
-      session: { ...good.session, phases: [...good.session.phases].reverse(), extra_session: 'x' }
+      session: {
+        ...good.session,
+        challenge: {
+          ...good.session.challenge,
+          steps: [...good.session.challenge.steps].reverse(),
+          extra_challenge: 'x'
+        },
+        extra_session: 'x'
+      }
     });
     this.assert(!!normalized, 'Valid payload with extras still normalizes');
     this.assert(!('extra_top' in normalized), 'Top-level extras stripped');
     this.assert(!('extra_bridge' in normalized.bridge), 'Bridge extras stripped');
     this.assert(
-      normalized.session.phases.map(p => p.id).join(',') === 'open,deepen,close',
-      'Phases reordered to open → deepen → close regardless of LLM order'
+      normalized.session.challenge.steps.map(s => s.number).join(',') ===
+        Array.from({ length: good.session.challenge.steps.length }, (_, i) => i + 1).join(','),
+      'Challenge steps renumbered 1..n regardless of LLM order'
     );
 
     this.assert(
@@ -472,40 +579,35 @@ class HelpfulPromptServiceTestRunner {
     );
     this.assert(
       service.normalizeSitSessionResponse(this.buildMockSitSession({
-        session: {
-          title: 'X',
-          phases: [
-            { id: 'open', prompt: 'Enough text for open phase here.' },
-            { id: 'deepen', prompt: 'Enough text for deepen phase here.' }
-            // missing close
-          ]
-        }
-      })) === null,
-      'Missing close phase is rejected'
-    );
-    this.assert(
-      service.normalizeSitSessionResponse(this.buildMockSitSession({
         bridge: {
-          summary: good.bridge.summary,
-          shared_themes: [],
-          transition: good.bridge.transition
+          psychoeducation: {
+            body: good.bridge.psychoeducation.body,
+            references: []
+          }
         }
       })) === null,
-      'Empty shared_themes is rejected'
+      'Empty psychoeducation.references is rejected'
     );
     this.assert(
       service.normalizeSitSessionResponse(this.buildMockSitSession({
         session: {
-          title: good.session.title,
-          phases: [
-            { id: 'open', prompt: 'Enough text for open phase here.' },
-            { id: 'deepen', prompt: 'Enough text for deepen phase here.' },
-            { id: 'close', prompt: 'Enough text for close phase here.' },
-            { id: 'bonus', prompt: 'Extra phase that should not be allowed at all.' }
+          reflections: [
+            { partner: 'Alex', question: 'Enough text for a reflection question here.' }
           ]
         }
       })) === null,
-      'Extra phase id is rejected'
+      'Single reflection is rejected'
+    );
+    this.assert(
+      service.normalizeSitSessionResponse(this.buildMockSitSession({
+        session: {
+          challenge: {
+            title: good.session.challenge.title,
+            steps: []
+          }
+        }
+      })) === null,
+      'Empty challenge.steps is rejected'
     );
   }
 

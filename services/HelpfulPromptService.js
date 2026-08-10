@@ -67,11 +67,16 @@ class HelpfulPromptService extends BasePromptService {
   }
 
   // Sit Session (prompt_sessions) content from completed prep(s).
-  // partners: array of { name, prep } — one entry for solo, two for paired.
+  // partners: array of { name, prep } — one (single-device / solo) or two (paired).
+  // Output is always couple-shaped; with one prep the model still writes for both
+  // people in the room (pairing can happen later).
   // prep fields map to product copy in buildSitSessionPrepBlock().
   async generateSitSessionContent(partners) {
     if (!this.isConfigured()) {
       throw new Error('LLM service is not configured - set OPENAI_API_KEY');
+    }
+    if (!Array.isArray(partners) || partners.length < 1 || partners.length > 2) {
+      throw new Error('Sit Session generation requires one or two partner preps');
     }
 
     return this.queueOpenAIRequest({
@@ -163,8 +168,8 @@ class HelpfulPromptService extends BasePromptService {
     let systemPrompt = null;
 
     try {
-      if (!Array.isArray(partners) || partners.length === 0) {
-        throw new Error('At least one partner prep is required for Sit Session generation');
+      if (!Array.isArray(partners) || partners.length < 1 || partners.length > 2) {
+        throw new Error('Sit Session generation requires one or two partner preps');
       }
 
       const sanitizedPartners = partners.map(({ name, prep }) => {
@@ -197,54 +202,81 @@ class HelpfulPromptService extends BasePromptService {
       });
 
       const prepBlock = this.buildSitSessionPrepPrompt(sanitizedPartners);
-      const isSolo = sanitizedPartners.length === 1;
-      const names = sanitizedPartners.map(p => p.name);
-      const nameList = names.length === 1
-        ? names[0]
-        : `${names[0]} and ${names[1]}`;
+      const isSingleDevice = sanitizedPartners.length === 1;
+      const partnerA = sanitizedPartners[0];
+      const partnerB = sanitizedPartners[1] || { name: 'Partner' };
 
-      prompt = `You're a top-tier couples therapist with deep expertise using Sue Johnson's Emotionally Focused Therapy method of couples therapy, as well as the Gottman Couples Therapy method.
+      const comparisonInstructions = isSingleDevice
+        ? `2. A quick comparison of how they are entering into the session. Only ${partnerA.name}'s prep answers are available (single-device / shared-phone flow — pairing may happen later). Still write: one sentence for Partner 1 (${partnerA.name}), one sentence for Partner 2 (their partner in the room — label partner as "${partnerB.name}"), and one insight sentence. Infer Partner 2 carefully from how ${partnerA.name} described closeness, tone, and topic; do not invent private facts about Partner 2.`
+        : `2. A quick comparison of how the partner is entering into the session, based on what they said in their onboarding. The format should be: one sentence for Partner 1 (${partnerA.name}), one sentence for Partner 2 (${partnerB.name}), and one sentence for the insight. For the insight, analyze what they say and pull out something interesting, either a commonality or difference.`;
 
-Your advice is anchored in Emotionally Focused Therapy, but utilizes Gottman Couples Therapy methods when the context merits it.
+      const reflectionInstructions = isSingleDevice
+        ? `3. Two reflections — one for ${partnerA.name} and one for their partner (${partnerB.name}). Return each as a structured question the app can pull in. Partner 2's reflection should invite the other person in based on ${partnerA.name}'s prep, without assuming unstated details.`
+        : `3. Two reflections, one for each person. Return this as a structured question that I can pull into an app.`;
 
-${isSolo ? `${nameList} is preparing for a Sit Session (a short, structured connection practice).` : `${nameList} are preparing for a Sit Session together (a short, structured connection practice).`}
+      const availabilityNote = isSingleDevice
+        ? `\nNote: This is a single-device Sit Session. Only one prep block is provided below, but both people are (or will be) together in person for the session. Create a full couple experience anyway.\n`
+        : '';
 
-Here is what they shared in prep:
+      prompt = `You're a relationship expert, trained in a number of methodologies from experts like John Gottman and Sue Johnson (but not limited to them), and a couple sits with you in order to make progress today. They come to you a few times a week, and each time, they leave feeling better than when they arrived.
+
+Your job is to take in information from the couple, bridge their perspectives and how they're healing, and then create then an app-based session they can do together in person.
+${availabilityNote}
+Here's the session content:
+
+1. A few short paragraphs of psychoeducation, with references to studies and science (can be others besides Gottman and Johnson, but you can also use them if it fits best). Also return a structured references array the app can render separately (citation + optional note) — do not only name-drop studies inline.
+
+${comparisonInstructions}
+
+${reflectionInstructions}
+
+4. One conversation-starter for the couple. Return this as a structured question that I can pull into an app. Ensure that the conversation-starter builds on the reflection questions they just did together, and start immediately with the conversation-starter text.
+
+5. One challenge or activity for the couple. Since the couple will be together in person, feel free to creatively give them things they can do in person together. The format should be in steps, which each step called out as 1, 2, 3, etc. And each step should have a title, a body, and any optional bullets (if there are steps within the step). Return this as a structured exercise that I can pull into an app.
+
+Here's what each person has said:
 
 ${prepBlock}
 
-Your task is to generate structured content for this Sit Session. Write as if speaking to ${isSolo ? 'them' : 'the couple'} directly. Keep language practical, warm, and emotionally safe. Personalize from their prep answers.
-
-1. **bridge.summary** — brief warm synthesis of what ${isSolo ? 'they brought' : 'each partner brought'} into the room.
-2. **bridge.shared_themes** — 1 to 5 short theme strings (shared threads or gentle differences).
-3. **bridge.transition** — one or two sentences that invite them into the Session.
-4. **session.title** — short name for this Sit Session.
-5. **session.phases** — exactly three phases, in order, with these exact ids only:
-   - "open" — opening prompt / question to begin
-   - "deepen" — deepening prompt / question
-   - "close" — closing prompt / moment
-
-Note: Don't ever reference Emotionally Focused Therapy or Gottman Couples Therapy by name. You may refer to a research-based couples therapy approach when helpful.
+Now, create the session and keep in mind that I want the experience to feel really novel and interesting and helpful. The couple should think "wow, this is unique," and after they take it, they should say, "we feel better."
 
 Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exactly this shape and these field names:
 
 {
   "bridge": {
-    "summary": "string",
-    "shared_themes": ["string"],
-    "transition": "string"
+    "psychoeducation": {
+      "body": "string (a few short paragraphs)",
+      "references": [
+        { "citation": "string", "note": "string (optional)" }
+      ]
+    },
+    "comparison": {
+      "partner_1": "string (one sentence about ${partnerA.name})",
+      "partner_2": "string (one sentence about ${partnerB.name})",
+      "insight": "string (one sentence commonality or difference)"
+    }
   },
   "session": {
-    "title": "string",
-    "phases": [
-      { "id": "open", "prompt": "string" },
-      { "id": "deepen", "prompt": "string" },
-      { "id": "close", "prompt": "string" }
-    ]
+    "reflections": [
+      { "partner": "${partnerA.name}", "question": "string" },
+      { "partner": "${partnerB.name}", "question": "string" }
+    ],
+    "conversation_starter": { "question": "string (start immediately with the conversation-starter text)" },
+    "challenge": {
+      "title": "string",
+      "steps": [
+        {
+          "number": 1,
+          "title": "string",
+          "body": "string",
+          "bullets": ["string"]
+        }
+      ]
+    }
   }
 }`;
 
-      systemPrompt = 'You are a professional couples therapist facilitating a Sit Session. Respond only with valid JSON matching the exact schema requested. Required keys: bridge.summary (string), bridge.shared_themes (array of 1-5 strings), bridge.transition (string), session.title (string), session.phases (array of exactly three objects with id open|deepen|close and prompt string). Do not include markdown, commentary, or extra top-level keys.';
+      systemPrompt = 'You are a relationship expert facilitating an in-person couples Sit Session. Respond only with valid JSON matching the exact schema requested. Required: bridge.psychoeducation.body (string), bridge.psychoeducation.references (non-empty array of {citation, optional note}), bridge.comparison.partner_1/partner_2/insight (strings), session.reflections (exactly two {partner, question}), session.conversation_starter.question (string that starts with the starter text), session.challenge.title (string), session.challenge.steps (non-empty array of {number, title, body, optional bullets}). Do not include markdown, commentary, or extra top-level keys.';
 
       const llmResult = await this.callLLM(
         systemPrompt,
@@ -328,24 +360,18 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
     }
   }
 
-  // Canonical phase ids for session.phases (fixed order, fixed set).
-  static get SIT_SESSION_PHASE_IDS() {
-    return ['open', 'deepen', 'close'];
-  }
-
   // Minimum lengths for required string fields after trim.
   static get SIT_SESSION_MIN_LENGTHS() {
     return {
-      summary: 20,
-      transition: 15,
-      title: 5,
-      theme: 2,
-      phasePrompt: 15
+      psychoeducationBody: 40,
+      citation: 8,
+      comparisonSentence: 15,
+      partner: 1,
+      question: 15,
+      challengeTitle: 5,
+      stepTitle: 3,
+      stepBody: 15
     };
-  }
-
-  static get SIT_SESSION_THEME_LIMITS() {
-    return { min: 1, max: 5 };
   }
 
   // True when raw LLM JSON matches the strict Sit Session contract.
@@ -358,8 +384,15 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
   //
   // Canonical shape:
   // {
-  //   bridge: { summary, shared_themes: string[], transition },
-  //   session: { title, phases: [{ id: 'open'|'deepen'|'close', prompt }] }
+  //   bridge: {
+  //     psychoeducation: { body, references: [{ citation, note? }] },
+  //     comparison: { partner_1, partner_2, insight }
+  //   },
+  //   session: {
+  //     reflections: [{ partner, question }, { partner, question }],
+  //     conversation_starter: { question },
+  //     challenge: { title, steps: [{ number, title, body, bullets? }] }
+  //   }
   // }
   normalizeSitSessionResponse(parsed) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
@@ -367,57 +400,106 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
     if (!parsed.session || typeof parsed.session !== 'object' || Array.isArray(parsed.session)) return null;
 
     const mins = HelpfulPromptService.SIT_SESSION_MIN_LENGTHS;
-    const themeLimits = HelpfulPromptService.SIT_SESSION_THEME_LIMITS;
-    const requiredPhaseIds = HelpfulPromptService.SIT_SESSION_PHASE_IDS;
+    const psycho = parsed.bridge.psychoeducation;
+    const comparison = parsed.bridge.comparison;
+    if (!psycho || typeof psycho !== 'object' || Array.isArray(psycho)) return null;
+    if (!comparison || typeof comparison !== 'object' || Array.isArray(comparison)) return null;
 
-    const summary = typeof parsed.bridge.summary === 'string' ? parsed.bridge.summary.trim() : '';
-    const transition = typeof parsed.bridge.transition === 'string' ? parsed.bridge.transition.trim() : '';
-    if (summary.length < mins.summary) return null;
-    if (transition.length < mins.transition) return null;
+    const body = typeof psycho.body === 'string' ? psycho.body.trim() : '';
+    if (body.length < mins.psychoeducationBody) return null;
+    if (!Array.isArray(psycho.references) || psycho.references.length < 1) return null;
 
-    if (!Array.isArray(parsed.bridge.shared_themes)) return null;
-    const sharedThemes = [];
-    for (const theme of parsed.bridge.shared_themes) {
-      if (typeof theme !== 'string') return null;
-      const t = theme.trim();
-      if (t.length < mins.theme) return null;
-      sharedThemes.push(t);
+    const references = [];
+    for (const ref of psycho.references) {
+      if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return null;
+      const citation = typeof ref.citation === 'string' ? ref.citation.trim() : '';
+      if (citation.length < mins.citation) return null;
+      const note = typeof ref.note === 'string' ? ref.note.trim() : '';
+      const normalizedRef = { citation };
+      if (note) normalizedRef.note = note;
+      references.push(normalizedRef);
     }
-    if (sharedThemes.length < themeLimits.min || sharedThemes.length > themeLimits.max) return null;
 
-    const title = typeof parsed.session.title === 'string' ? parsed.session.title.trim() : '';
-    if (title.length < mins.title) return null;
+    const partner1 = typeof comparison.partner_1 === 'string' ? comparison.partner_1.trim() : '';
+    const partner2 = typeof comparison.partner_2 === 'string' ? comparison.partner_2.trim() : '';
+    const insight = typeof comparison.insight === 'string' ? comparison.insight.trim() : '';
+    if (partner1.length < mins.comparisonSentence) return null;
+    if (partner2.length < mins.comparisonSentence) return null;
+    if (insight.length < mins.comparisonSentence) return null;
 
-    if (!Array.isArray(parsed.session.phases) || parsed.session.phases.length !== requiredPhaseIds.length) {
+    if (!Array.isArray(parsed.session.reflections) || parsed.session.reflections.length !== 2) {
       return null;
     }
-
-    const phaseById = new Map();
-    for (const phase of parsed.session.phases) {
-      if (!phase || typeof phase !== 'object' || Array.isArray(phase)) return null;
-      const id = typeof phase.id === 'string' ? phase.id.trim().toLowerCase() : '';
-      const promptText = typeof phase.prompt === 'string' ? phase.prompt.trim() : '';
-      if (!requiredPhaseIds.includes(id)) return null;
-      if (phaseById.has(id)) return null; // duplicate id
-      if (promptText.length < mins.phasePrompt) return null;
-      phaseById.set(id, { id, prompt: promptText });
+    const reflections = [];
+    for (const reflection of parsed.session.reflections) {
+      if (!reflection || typeof reflection !== 'object' || Array.isArray(reflection)) return null;
+      const partner = typeof reflection.partner === 'string' ? reflection.partner.trim() : '';
+      const question = typeof reflection.question === 'string' ? reflection.question.trim() : '';
+      if (partner.length < mins.partner) return null;
+      if (question.length < mins.question) return null;
+      reflections.push({ partner, question });
     }
 
-    // Require every phase id present (no extras, no missing).
-    if (phaseById.size !== requiredPhaseIds.length) return null;
-    for (const id of requiredPhaseIds) {
-      if (!phaseById.has(id)) return null;
+    const starter = parsed.session.conversation_starter;
+    if (!starter || typeof starter !== 'object' || Array.isArray(starter)) return null;
+    const starterQuestion = typeof starter.question === 'string' ? starter.question.trim() : '';
+    if (starterQuestion.length < mins.question) return null;
+
+    const challenge = parsed.session.challenge;
+    if (!challenge || typeof challenge !== 'object' || Array.isArray(challenge)) return null;
+    const challengeTitle = typeof challenge.title === 'string' ? challenge.title.trim() : '';
+    if (challengeTitle.length < mins.challengeTitle) return null;
+    if (!Array.isArray(challenge.steps) || challenge.steps.length < 1) return null;
+
+    const steps = [];
+    for (let i = 0; i < challenge.steps.length; i++) {
+      const step = challenge.steps[i];
+      if (!step || typeof step !== 'object' || Array.isArray(step)) return null;
+      const title = typeof step.title === 'string' ? step.title.trim() : '';
+      const stepBody = typeof step.body === 'string' ? step.body.trim() : '';
+      if (title.length < mins.stepTitle) return null;
+      if (stepBody.length < mins.stepBody) return null;
+
+      const normalizedStep = {
+        number: i + 1,
+        title,
+        body: stepBody
+      };
+
+      if (Array.isArray(step.bullets)) {
+        const bullets = [];
+        for (const bullet of step.bullets) {
+          if (typeof bullet !== 'string') return null;
+          const b = bullet.trim();
+          if (!b) continue;
+          bullets.push(b);
+        }
+        if (bullets.length > 0) {
+          normalizedStep.bullets = bullets;
+        }
+      } else if (step.bullets != null) {
+        return null;
+      }
+
+      steps.push(normalizedStep);
     }
 
     return {
       bridge: {
-        summary,
-        shared_themes: sharedThemes,
-        transition
+        psychoeducation: { body, references },
+        comparison: {
+          partner_1: partner1,
+          partner_2: partner2,
+          insight
+        }
       },
       session: {
-        title,
-        phases: requiredPhaseIds.map(id => phaseById.get(id))
+        reflections,
+        conversation_starter: { question: starterQuestion },
+        challenge: {
+          title: challengeTitle,
+          steps
+        }
       }
     };
   }

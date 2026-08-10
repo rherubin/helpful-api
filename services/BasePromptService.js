@@ -184,30 +184,63 @@ class BasePromptService {
   _buildSitSessionMockContent() {
     return {
       bridge: {
-        summary: 'Thank you for showing up to this Sit Session. Based on what you shared in prep — how you are feeling, where your emotional tank is, and what tone and topic you want — this is a safe space to slow down, listen, and reconnect with care and curiosity.',
-        shared_themes: [
-          'emotional connection',
-          'feeling seen after a hard stretch',
-          'gentle honesty'
-        ],
-        transition: 'When you are ready, we will move into a short guided Session with three simple steps: open, deepen, and close.'
+        psychoeducation: {
+          body: 'When couples slow down and name what they feel, their nervous systems often settle enough for connection to return. Research on emotional attunement shows that brief, structured check-ins can reduce defensiveness and help partners feel safer reaching for each other. Small shared rituals — like reflecting, then talking, then doing one concrete activity together — turn insight into lived repair.',
+          references: [
+            {
+              citation: 'Gottman, J. & Silver, N. — research on emotional bids and turning toward',
+              note: 'Supports noticing and responding to each other\'s emotional signals in the moment.'
+            },
+            {
+              citation: 'Johnson, S. — Emotionally Focused Therapy attachment bonding',
+              note: 'Supports creating a safe emotional bridge before problem-solving.'
+            }
+          ]
+        },
+        comparison: {
+          partner_1: 'Partner A is arriving with care for closeness and a clear hope for a warmer tone.',
+          partner_2: 'Partner B is arriving with honesty about their emotional tank and what topic feels useful.',
+          insight: 'Both want the session to feel safer and more connecting, even if their energy levels differ right now.'
+        }
       },
       session: {
-        title: 'Same Team Tonight',
-        phases: [
+        reflections: [
           {
-            id: 'open',
-            prompt: 'Each of you name one feeling you brought into the room and one thing you hope feels different by the end of this Sit Session.'
+            partner: 'Partner A',
+            question: 'What feeling are you bringing into this Sit Session, and what would help you feel a little more settled with your partner?'
           },
           {
-            id: 'deepen',
-            prompt: 'Take turns answering: what would help your emotional tank feel a little fuller this week, and how can your partner support that without fixing it for you?'
-          },
-          {
-            id: 'close',
-            prompt: 'Share one appreciation for your partner and one small next step you can take together today so you leave feeling more on the same team.'
+            partner: 'Partner B',
+            question: 'Where is your emotional tank right now, and what kind of support from your partner would feel genuinely helpful tonight?'
           }
-        ]
+        ],
+        conversation_starter: {
+          question: 'Building on what you each just named, where do you already feel on the same team — and where do you still feel a little apart?'
+        },
+        challenge: {
+          title: 'Same Team Check-In',
+          steps: [
+            {
+              number: 1,
+              title: 'Face each other',
+              body: 'Sit close enough to make easy eye contact. Take one slow breath together before either of you speaks.',
+              bullets: [
+                'Phones away',
+                'Knees or hands lightly touching if that feels comfortable'
+              ]
+            },
+            {
+              number: 2,
+              title: 'Share reflections',
+              body: 'Take turns answering your reflection questions without interrupting. Listener only mirrors back one key feeling they heard.'
+            },
+            {
+              number: 3,
+              title: 'Close with one next step',
+              body: 'Agree on one small action you can take together in the next 24 hours so you leave feeling more connected.'
+            }
+          ]
+        }
       }
     };
   }

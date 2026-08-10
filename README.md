@@ -17,7 +17,7 @@ Node.js / Express REST API with MySQL for couples therapy programs: user account
   - **Helpful** (default) — secular EFT/Gottman-style
   - **Hopeful** — faith-based when the user has a linked org code or custom `org_name` / `org_city` / `org_state`
 - **Program steps + messages** — day steps, user messages, contributions tracking, unlock progress
-- **Sit Sessions** (`/api/prompt-sessions`) — solo or paired prep → **working** `POST .../generate` (strict Bridge/Session JSON) with a first-class `generation_status` job state (`idle`/`running`/`succeeded`/`failed`) so clients can distinguish "not started" from "generating"; full docs under [Prompt sessions (“Sit Sessions”)](#prompt-sessions-sit-sessions)
+- **Sit Sessions** (`/api/prompt-sessions`) — solo (single-device) or paired prep → **working** `POST .../generate` (strict Bridge/Session JSON with psychoeducation + references, comparison, reflections, conversation-starter, challenge) with a first-class `generation_status` job state (`idle`/`running`/`succeeded`/`failed`) so clients can distinguish "not started" from "generating"; pairing is optional and can happen after the first Sit Session; full docs under [Prompt sessions (“Sit Sessions”)](#prompt-sessions-sit-sessions)
 
 ### Premium & orgs
 - **Pairing premium** — active iOS/Android subscription on either partner sets `pairings.premium`
@@ -529,21 +529,24 @@ Max **25** tokens per user. Raw FCM token never returned after register (only re
 
 #### Modes and policies
 
-| Mode | Create body | Access | Prep ready (`both_preps_complete`) |
-|------|-------------|--------|------------------------------------|
-| **Solo / single-device** | omit `pairing_id` (or `{}`) | Creator only | **1** completed prep |
-| **Paired** | `{ "pairing_id" }` | Creator or pairing member | **2** completed preps |
+| Mode | Create body | Access | Prep ready (`both_preps_complete`) | Generate |
+|------|-------------|--------|------------------------------------|----------|
+| **Solo / single-device** | omit `pairing_id` (or `{}`) | Creator only | **1** completed prep | **Yes** — pairing not required |
+| **Paired** | `{ "pairing_id" }` | Creator or pairing member | **2** completed preps | **Yes** — after both preps |
+
+**Product note for web / app:** Sit Sessions are always written as a **couple experience** (two reflections, partner comparison, shared challenge), even in single-device mode. Pairing can happen **after** the first Sit Session. On one phone/shared web session, create a solo session (`pairing_id: null`), complete prep, then generate — the LLM still returns couple-shaped Bridge + Session content. When only one prep exists, Partner 2 may be labeled `"Partner"` (or similar) and inferred carefully from Partner 1’s answers.
 
 - Pairing status need **not** be `accepted`. If `pairing_id` is sent, the caller must be a **member** (pending is fine). Soft-deleted pairings do not grant partner access.
 - **One** active (non-terminal) session **per pairing**; **one** active solo session **per user**. Active = status not `complete` / `abandoned`.
 - Statuses (product lifecycle): `prep` \| `bridge` \| `in_session` \| `complete` \| `abandoned`. This is **separate** from the generation job state below.
 - `generation_prompt` is stored server-side for audit/replay and is **never** exposed to clients.
+- Prefer setting `user_name` on the profile before generate — display names in reflections/comparison come from `user_name` (else email local-part).
 
 #### Call sequence (create → prep → generate)
 
 1. **Create** — `POST /api/prompt-sessions` (solo or with `pairing_id`).
 2. **Prep** — `POST /api/prompt-sessions/:id/prep` with the six required fields (merge/upsert; may be called more than once). Solo is ready after one complete prep; paired needs both partners.
-3. **Generate** — `POST /api/prompt-sessions/:id/generate` once prep is ready (or wait for auto-generate, then `GET`).
+3. **Generate** — `POST /api/prompt-sessions/:id/generate` once prep is ready (or wait for auto-generate, then `GET`). Works for solo/single-device (1 prep) and paired (2 preps). Live OpenAI often takes **~20–40s**; treat **409 `GENERATION_RUNNING`** as “poll `GET`”, not a user-facing error.
 
 #### Generation state (`generation_status`)
 
@@ -590,9 +593,11 @@ Every `prompt_session` response includes a computed, non-persisted `generation` 
 | Success | `generation.status === "succeeded"` && `generation.ready === true` |
 | Failed | `generation.status === "failed"` && `generation.error` is a non-null string |
 
-**Polling guidance:** after prep returns `both_preps_complete: true` (or after a `POST .../generate` returns **409 `GENERATION_RUNNING`** because auto-generate is already running), poll `GET /api/prompt-sessions/:id` every **1–2s** for up to **~60–90s**, stopping once `generation.status` is `succeeded` or `failed`. Prefer having exactly **one** device/tab call `POST .../generate` synchronously and block on its response; other devices/tabs should just poll `GET`. A realtime push notification on generation success/failure (`prompt_session_generation_succeeded` / `_failed`) is a nice-to-have, not yet implemented.
+**Polling guidance:** after prep returns `both_preps_complete: true` (or after a `POST .../generate` returns **409 `GENERATION_RUNNING`** because auto-generate is already running), poll `GET /api/prompt-sessions/:id` every **1–2s** for up to **~90–120s** (live GPT can take ~20–40s+), stopping once `generation.status` is `succeeded` or `failed`. Prefer having exactly **one** device/tab call `POST .../generate` synchronously and block on its response; other devices/tabs should just poll `GET`. A realtime push notification on generation success/failure (`prompt_session_generation_succeeded` / `_failed`) is a nice-to-have, not yet implemented.
 
-> **Migrating an existing client:** `POST .../generate` used to always return **200** with content when prep was ready. It can now return **409 `GENERATION_RUNNING`** instead, whenever the background auto-generate triggered by the prep response is still in flight — which is common if you call generate immediately after prep. This is what stops the LLM being billed twice for one session. Clients must treat that 409 as "keep polling `GET`", not as an error to surface.
+> **Migrating an existing client:**
+> 1. `POST .../generate` can return **409 `GENERATION_RUNNING`** when auto-generate is still in flight — treat that as “keep polling `GET`”, not as an error to surface.
+> 2. **Generated content shape changed.** Do **not** bind UI to the old Bridge/Session fields (`summary`, `shared_themes`, `transition`, `title`, `phases` with `open`/`deepen`/`close`). Use the current contract below (`psychoeducation`, `comparison`, `reflections`, `conversation_starter`, `challenge`). Old rows may still exist in some DBs until purged; new generates always write the new shape.
 
 #### Generate endpoint — working state (app / web)
 
@@ -632,7 +637,7 @@ The two 409s mean opposite things, so **branch on `code`, not on the status**: `
   "generation": { "status": "running", "error": null, "started_at": "2026-08-09T16:00:00.000Z", "finished_at": null, "ready": false } } }
 
 // GET .../:id once generation succeeds
-{ "prompt_session": { "status": "bridge", "bridge_content": { "summary": "…", "shared_themes": ["…"], "transition": "…" }, "session_content": { "title": "…", "phases": [ /* open, deepen, close */ ] },
+{ "prompt_session": { "status": "bridge", "bridge_content": { "psychoeducation": { "body": "…", "references": [{ "citation": "…" }] }, "comparison": { "partner_1": "…", "partner_2": "…", "insight": "…" } }, "session_content": { "reflections": [ /* two */ ], "conversation_starter": { "question": "…" }, "challenge": { "title": "…", "steps": [ /* … */ ] } },
   "generation": { "status": "succeeded", "error": null, "started_at": "2026-08-09T16:00:00.000Z", "finished_at": "2026-08-09T16:00:01.000Z", "ready": true } } }
 
 // GET .../:id after a failed attempt (safe to retry via POST .../generate)
@@ -655,9 +660,9 @@ Clients should treat the session object as the source of truth. Content lives on
 ```js
 const ready = session?.generation?.ready === true;
 // Equivalent to (but prefer generation.ready): session?.generation?.status === 'succeeded'
-//   && session?.bridge_content?.summary
-//   && Array.isArray(session?.session_content?.phases)
-//   && session.session_content.phases.length === 3;
+//   && session?.bridge_content?.psychoeducation?.body
+//   && Array.isArray(session?.session_content?.reflections)
+//   && session.session_content.reflections.length === 2;
 ```
 
 If only auto-generate ran: after prep returns `both_preps_complete: true`, poll `GET /api/prompt-sessions/:id` until `ready` (or call `POST .../generate` — **200** if already done, **409 `GENERATION_RUNNING`** if still running, in which case fall back to polling).
@@ -666,19 +671,20 @@ If only auto-generate ran: after prep returns `both_preps_complete: true`, poll 
 
 | UI | Path |
 |----|------|
-| Bridge summary copy | `prompt_session.bridge_content.summary` |
-| Theme chips / bullets | `prompt_session.bridge_content.shared_themes` (array of strings) |
-| Bridge → Session CTA text | `prompt_session.bridge_content.transition` |
-| Session title | `prompt_session.session_content.title` |
-| Open step | `prompt_session.session_content.phases` find `id === "open"` → `.prompt` |
-| Deepen step | same, `id === "deepen"` |
-| Close step | same, `id === "close"` |
-| Phase order | Always `open` → `deepen` → `close` (server normalizes) |
+| Psychoeducation body | `prompt_session.bridge_content.psychoeducation.body` |
+| Study / science references | `prompt_session.bridge_content.psychoeducation.references[]` (`citation`, optional `note`) |
+| Partner 1 comparison sentence | `prompt_session.bridge_content.comparison.partner_1` |
+| Partner 2 comparison sentence | `prompt_session.bridge_content.comparison.partner_2` |
+| Comparison insight | `prompt_session.bridge_content.comparison.insight` |
+| Reflection questions | `prompt_session.session_content.reflections[]` (`partner`, `question`) — **always exactly 2**, even for solo/single-device |
+| Conversation starter | `prompt_session.session_content.conversation_starter.question` (text starts immediately; may be prefixed with “Conversation starter:” by the model) |
+| Challenge title | `prompt_session.session_content.challenge.title` |
+| Challenge steps | `prompt_session.session_content.challenge.steps[]` (`number`, `title`, `body`, optional `bullets`) — render in `number` order |
 | Session lifecycle | `prompt_session.status` (`prep` → `bridge` after generate; client may `PATCH` to `in_session` / `complete` / `abandoned`) |
 | Generation spinner / state | `prompt_session.generation.status` (`idle`/`running`/`succeeded`/`failed`) — show a spinner while `running` |
 | Failure hint | `prompt_session.generation.error` (string or null; mirrors `generation_error`); do not show `generation_prompt` |
 
-##### Example: successful `POST .../generate` response
+##### Example: successful `POST .../generate` response (solo / single-device)
 
 ```http
 POST /api/prompt-sessions/{id}/generate
@@ -695,31 +701,50 @@ Authorization: Bearer {access_token}
     "status": "bridge",
     "current_phase": null,
     "bridge_content": {
-      "summary": "Thank you for showing up…",
-      "shared_themes": [
-        "emotional connection",
-        "feeling seen after a hard stretch",
-        "gentle honesty"
-      ],
-      "transition": "When you are ready, we will move into a short guided Session…"
+      "psychoeducation": {
+        "body": "After a hard week, many couples try to reconnect…",
+        "references": [
+          {
+            "citation": "Gottman, J. M., & Levenson, R. W. (1992). Marital processes predictive of later dissolution…",
+            "note": "Classic work showing how interaction patterns and failed repair predict relationship distress."
+          }
+        ]
+      },
+      "comparison": {
+        "partner_1": "Alex is entering this session hopeful and a bit tender…",
+        "partner_2": "Partner may also be arriving with some sensitivity around the hard week…",
+        "insight": "Both of you seem to need this conversation to feel soft and team-oriented…"
+      }
     },
     "session_content": {
-      "title": "Same Team Tonight",
-      "phases": [
-        { "id": "open", "prompt": "Each of you name one feeling you brought into the room…" },
-        { "id": "deepen", "prompt": "Take turns answering: what would help your emotional tank…" },
-        { "id": "close", "prompt": "Share one appreciation and one small next step…" }
-      ]
+      "reflections": [
+        { "partner": "Alex", "question": "As you sit here feeling hopeful and tender…" },
+        { "partner": "Partner", "question": "As you join Alex in this gentle and honest conversation…" }
+      ],
+      "conversation_starter": {
+        "question": "Conversation starter: Looking at both of your reflections, what is one small thing…"
+      },
+      "challenge": {
+        "title": "The Same-Team Reset",
+        "steps": [
+          {
+            "number": 1,
+            "title": "Set the tone before the topic",
+            "body": "Sit facing each other and take one slow breath…",
+            "bullets": ["Examples: calm, honesty, warmth", "No problem-solving yet"]
+          }
+        ]
+      }
     },
     "llm_used": "gpt-5.4",
-    "seconds_to_generate": 1.2345,
+    "seconds_to_generate": 26.322,
     "generation_error": null,
-    "generation_prompt_used_at": "2026-08-09T16:00:00.000Z",
+    "generation_prompt_used_at": "2026-08-10T14:06:07.000Z",
     "generation": {
       "status": "succeeded",
       "error": null,
-      "started_at": "2026-08-09T16:00:00.000Z",
-      "finished_at": "2026-08-09T16:00:01.000Z",
+      "started_at": "2026-08-10T14:06:07.000Z",
+      "finished_at": "2026-08-10T14:06:34.000Z",
       "ready": true
     },
     "created_at": "…",
@@ -728,39 +753,63 @@ Authorization: Bearer {access_token}
 }
 ```
 
+Paired sessions use the same content shape; `pairing_id` is set and both partners’ display names typically appear in `comparison` / `reflections`.
+
 If content was already stored, same **200** shape with `"message": "Prompt session content already generated"`.
 
 `GET /api/prompt-sessions/:id` returns the same `prompt_session` object (including `bridge_content` / `session_content` when present).
 
 #### Generated content schema (strict)
 
-LLM output is rejected (and retried once) unless it matches this contract. The server then **normalizes** (trim strings, reorder phases to `open → deepen → close`, drop unknown keys) before save. API responses always use this shape on `bridge_content` / `session_content`:
+LLM output is rejected (and retried once) unless it matches this contract. The server then **normalizes** (trim strings, renumber challenge steps `1..n`, drop empty optional notes/bullets, drop unknown keys) before save. API responses always use this shape on `bridge_content` / `session_content`.
+
+Works for **solo/single-device** (1 completed prep) and **paired** (2 completed preps). **Output is always couple-shaped** (exactly two reflections; `partner_1` + `partner_2` + `insight`) so web/app can use one renderer for both modes.
 
 ```json
 {
   "bridge_content": {
-    "summary": "string (≥ 20 chars)",
-    "shared_themes": ["string", "..."],
-    "transition": "string (≥ 15 chars)"
+    "psychoeducation": {
+      "body": "string (≥ 40 chars)",
+      "references": [
+        { "citation": "string (≥ 8 chars)", "note": "string (optional)" }
+      ]
+    },
+    "comparison": {
+      "partner_1": "string (≥ 15 chars)",
+      "partner_2": "string (≥ 15 chars)",
+      "insight": "string (≥ 15 chars)"
+    }
   },
   "session_content": {
-    "title": "string (≥ 5 chars)",
-    "phases": [
-      { "id": "open", "prompt": "string (≥ 15 chars)" },
-      { "id": "deepen", "prompt": "string (≥ 15 chars)" },
-      { "id": "close", "prompt": "string (≥ 15 chars)" }
-    ]
+    "reflections": [
+      { "partner": "string", "question": "string (≥ 15 chars)" },
+      { "partner": "string", "question": "string (≥ 15 chars)" }
+    ],
+    "conversation_starter": { "question": "string (≥ 15 chars)" },
+    "challenge": {
+      "title": "string (≥ 5 chars)",
+      "steps": [
+        {
+          "number": 1,
+          "title": "string",
+          "body": "string (≥ 15 chars)",
+          "bullets": ["string"]
+        }
+      ]
+    }
   }
 }
 ```
 
 | Field | Rules |
 |-------|--------|
-| `bridge_content.summary` | required string |
-| `bridge_content.shared_themes` | required array, **1–5** non-empty strings |
-| `bridge_content.transition` | required string |
-| `session_content.title` | required string |
-| `session_content.phases` | exactly **3** objects; `id` must be `open`, `deepen`, `close` (each once); each has `prompt` |
+| `bridge_content.psychoeducation.body` | required string |
+| `bridge_content.psychoeducation.references` | required array, **≥ 1**; each has `citation`; `note` optional |
+| `bridge_content.comparison.partner_1` / `partner_2` / `insight` | required strings |
+| `session_content.reflections` | exactly **2** objects with `partner` + `question` |
+| `session_content.conversation_starter.question` | required string (starts with the starter text) |
+| `session_content.challenge.title` | required string |
+| `session_content.challenge.steps` | non-empty array; each has `number`, `title`, `body`; `bullets` optional |
 | Extra keys | stripped on normalize; not returned |
 
 Clients should bind UI to these fields only (not free-form prose blobs).
@@ -775,7 +824,7 @@ Clients should bind UI to these fields only (not free-form prose blobs).
 | POST | `/api/prompt-sessions/:id/prep` | Merge prep fields. Response: `prep`, `both_preps_complete` |
 | GET | `/api/prompt-sessions/:id/prep` | Own prep; partner answers only when both complete (paired). Solo: `partner_prep: null` |
 | PATCH | `/api/prompt-sessions/:id` | Body `status` and/or `current_phase` |
-| POST | `/api/prompt-sessions/:id/generate` | **Working.** **200** + full `prompt_session` with Bridge/Session · **409** `PREP_NOT_READY` or `GENERATION_RUNNING` (branch on `code`) · **503** LLM not configured · idempotent once `succeeded`; retries when `failed` |
+| POST | `/api/prompt-sessions/:id/generate` | **Working** (solo or paired). **200** + full `prompt_session` with Bridge/Session · **409** `PREP_NOT_READY` or `GENERATION_RUNNING` (branch on `code`) · **503** LLM not configured · idempotent once `succeeded`; retries when `failed` |
 
 #### Prep fields
 
@@ -792,7 +841,16 @@ Six required (all non-empty strings mark prep complete). API field names are sto
 
 Optional: `optional_focus` (appended to free-form line 6 when present).
 
-Display names in the prompt come from each user's `user_name` (else email local-part). Creator is Partner A; paired partner is Partner B.
+Display names in the prompt come from each user's `user_name` (else email local-part). Creator is Partner A; when paired, the other member is Partner B. In solo/single-device mode (one prep), Partner 2 is typically labeled `"Partner"` in generated content.
+
+##### Client checklist (web / app)
+
+1. Create solo (`{}`) or paired (`{ pairing_id }`) session.
+2. POST prep until `both_preps_complete === true`.
+3. Either wait for auto-generate or call `POST .../generate`.
+4. On **409 `GENERATION_RUNNING`**, poll `GET .../:id` until `generation.ready === true` (or `failed`).
+5. Render **only** the new `bridge_content` / `session_content` fields listed above — never the legacy `summary` / `shared_themes` / `phases` shape.
+6. Advance product UI with `PATCH` (`status`: `in_session` → `complete`, optional `current_phase`).
 
 #### Push (`data.kind`) for Sit Sessions
 
@@ -835,8 +893,8 @@ curl -s -X POST http://localhost:9000/api/prompt-sessions/$SESSION_ID/generate \
 #     "message": "Prompt session content generated successfully",
 #     "prompt_session": {
 #       "status": "bridge",
-#       "bridge_content": { "summary", "shared_themes", "transition" },
-#       "session_content": { "title", "phases": [open, deepen, close] },
+#       "bridge_content": { "psychoeducation", "comparison" },
+#       "session_content": { "reflections", "conversation_starter", "challenge" },
 #       "generation": { "status": "succeeded", "error": null, "started_at": "…", "finished_at": "…", "ready": true },
 #       …
 #     }
@@ -851,9 +909,9 @@ curl -s http://localhost:9000/api/prompt-sessions/$SESSION_ID \
 # → 200 { "prompt_session": { … bridge_content, session_content … } }
 ```
 
-##### Debug demo: full generate JSON (paired, two preps)
+##### Debug demo: generate JSON (solo create → prep → generate)
 
-Creates two users, pairs them, creates a session, submits both preps, calls generate, and prints the full HTTP JSON (plus a `bridge_content` / `session_content` extract):
+Creates a user, creates a **solo** Sit Session, submits prep, exercises auto-generate + concurrent generate, and prints `generation` state at each step:
 
 ```bash
 # Terminal 1 — mock LLM (stable schema, no OpenAI spend):
@@ -1127,7 +1185,7 @@ Test emails use **`@example.com`** so `npm run test:cleanup` can remove them saf
 | `npm run test:push` | `PushNotificationService` unit tests (mocked FCM) |
 | `npm run test:admin-push` | `POST /api/admin/push-test` integration |
 | `npm run test:prompt-sessions` | Sit Sessions: solo + paired + pending pairing, prep, generate |
-| `npm run test:prompt-session-generate-demo` | Paired create → both preps → generate; prints full JSON for debugging |
+| `npm run test:prompt-session-generate-demo` | Solo create → prep → generate demo; prints `generation` state for debugging |
 | `npm run test:cleanup` | Delete `@example.com` test rows |
 | `npm run purge:prompt-sessions` | Dry-run: count all Sit Sessions on target DB |
 | `npm run purge:prompt-sessions:confirm` | **Delete all** Sit Sessions + preps (see [Purge](#purge-all-sit-sessions-dev--env-reset)) |

@@ -334,9 +334,11 @@ class PromptSessionsTestRunner {
         `bridge: ${!!soloBridge}, session: ${!!soloSession}`
       );
       this.assert(
-        typeof soloBridge?.summary === 'string' && Array.isArray(soloSession?.phases) && soloSession.phases.length === 3,
-        'Solo generate uses strict schema',
-        `summary?: ${typeof soloBridge?.summary}, phases: ${soloSession?.phases?.length}`
+        typeof soloBridge?.psychoeducation?.body === 'string' &&
+          Array.isArray(soloSession?.reflections) &&
+          soloSession.reflections.length === 2,
+        'Solo generate uses strict couple-shaped schema',
+        `body?: ${typeof soloBridge?.psychoeducation?.body}, reflections: ${soloSession?.reflections?.length}`
       );
     } catch (error) {
       this.assert(
@@ -726,34 +728,37 @@ class PromptSessionsTestRunner {
       const bridge = session.bridge_content;
       const sess = session.session_content;
       this.assert(
-        typeof bridge?.summary === 'string' && bridge.summary.length >= 20,
-        'bridge_content.summary present',
-        `len: ${bridge?.summary?.length}`
+        typeof bridge?.psychoeducation?.body === 'string' && bridge.psychoeducation.body.length >= 40,
+        'bridge_content.psychoeducation.body present',
+        `len: ${bridge?.psychoeducation?.body?.length}`
       );
       this.assert(
-        Array.isArray(bridge?.shared_themes) && bridge.shared_themes.length >= 1,
-        'bridge_content.shared_themes is non-empty array',
-        `len: ${bridge?.shared_themes?.length}`
+        Array.isArray(bridge?.psychoeducation?.references) && bridge.psychoeducation.references.length >= 1,
+        'bridge_content.psychoeducation.references is non-empty array',
+        `len: ${bridge?.psychoeducation?.references?.length}`
       );
       this.assert(
-        typeof bridge?.transition === 'string' && bridge.transition.length >= 15,
-        'bridge_content.transition present',
-        `len: ${bridge?.transition?.length}`
+        typeof bridge?.comparison?.partner_1 === 'string' &&
+          typeof bridge?.comparison?.partner_2 === 'string' &&
+          typeof bridge?.comparison?.insight === 'string',
+        'bridge_content.comparison has partner_1, partner_2, insight'
       );
       this.assert(
-        typeof sess?.title === 'string' && sess.title.length >= 5,
-        'session_content.title present',
-        `title: ${sess?.title}`
+        Array.isArray(sess?.reflections) && sess.reflections.length === 2,
+        'session_content.reflections has 2 entries',
+        `len: ${sess?.reflections?.length}`
       );
       this.assert(
-        Array.isArray(sess?.phases) && sess.phases.length === 3,
-        'session_content.phases has 3 entries',
-        `len: ${sess?.phases?.length}`
+        typeof sess?.conversation_starter?.question === 'string' && sess.conversation_starter.question.length >= 15,
+        'session_content.conversation_starter.question present',
+        `len: ${sess?.conversation_starter?.question?.length}`
       );
       this.assert(
-        sess.phases.map(p => p.id).join(',') === 'open,deepen,close',
-        'phases ordered open,deepen,close',
-        `ids: ${sess.phases.map(p => p.id).join(',')}`
+        typeof sess?.challenge?.title === 'string' &&
+          Array.isArray(sess?.challenge?.steps) &&
+          sess.challenge.steps.length >= 1,
+        'session_content.challenge has title + steps',
+        `title: ${sess?.challenge?.title}, steps: ${sess?.challenge?.steps?.length}`
       );
       this.assert(
         session.status === 'bridge' || session.status === 'in_session' || session.status === 'prep',
@@ -811,10 +816,7 @@ class PromptSessionsTestRunner {
     this.log('Testing solo generate after one complete prep', 'section');
     const { user1 } = this.testData;
     try {
-      // Clear any active solo by completing previous if needed — create may 409.
-      // Use a fresh user so we do not collide with earlier solo session.
       const soloUser = await this.createUser('sologen');
-      // Set a real display name so LLM name validation is happy if used.
       await axios.put(
         `${this.baseURL}/api/users/${soloUser.id}`,
         { user_name: 'SoloGen' },
@@ -836,12 +838,6 @@ class PromptSessionsTestRunner {
       );
       this.assert(prepRes.data.both_preps_complete === true, 'Solo prep ready', `value: ${prepRes.data.both_preps_complete}`);
 
-      // The explicit call races the fire-and-forget auto-generate trigger
-      // kicked off by the prep response above — either can win the
-      // generation_status compare-and-swap. A 200 means this call generated
-      // (or found already-generated) content; a 409 means auto-generate got
-      // there first, in which case we fall back to polling GET .../:id,
-      // exactly as documented for clients.
       let generatedSession;
       try {
         const genRes = await axios.post(
@@ -869,11 +865,12 @@ class PromptSessionsTestRunner {
         `bridge: ${!!gBridge}, session: ${!!gSession}`
       );
       this.assert(
-        typeof gBridge?.summary === 'string' &&
-          Array.isArray(gBridge?.shared_themes) &&
-          gSession?.phases?.map(p => p.id).join(',') === 'open,deepen,close',
-        'Solo generate strict schema',
-        `summary?: ${typeof gBridge?.summary}, phases: ${gSession?.phases?.map(p => p.id).join(',')}`
+        typeof gBridge?.psychoeducation?.body === 'string' &&
+          Array.isArray(gBridge?.psychoeducation?.references) &&
+          Array.isArray(gSession?.reflections) &&
+          gSession.reflections.length === 2,
+        'Solo generate strict couple-shaped schema',
+        `body?: ${typeof gBridge?.psychoeducation?.body}, reflections: ${gSession?.reflections?.length}`
       );
       this.assert(
         generatedSession?.generation?.status === 'succeeded',
@@ -886,7 +883,6 @@ class PromptSessionsTestRunner {
         `generation.ready: ${generatedSession?.generation?.ready}`
       );
 
-      // Quiet unused
       void user1;
     } catch (error) {
       this.assert(
@@ -906,10 +902,44 @@ class PromptSessionsTestRunner {
     this.log('Testing generation_status state machine (idle/running/succeeded/failed, retry, concurrency)', 'section');
 
     let genStatusUser;
+    let genStatusPartner;
     let genStatusSessionId;
     try {
       genStatusUser = await this.createUser('genstatus');
-      const createRes = await axios.post(`${this.baseURL}/api/prompt-sessions`, {}, this.authHeader(genStatusUser.token));
+      genStatusPartner = await this.createUser('genstatus2');
+      await axios.put(
+        `${this.baseURL}/api/users/${genStatusUser.id}`,
+        { user_name: 'GenStatusA' },
+        this.authHeader(genStatusUser.token)
+      );
+      await axios.put(
+        `${this.baseURL}/api/users/${genStatusPartner.id}`,
+        { user_name: 'GenStatusB' },
+        this.authHeader(genStatusPartner.token)
+      );
+
+      const pairingReq = await axios.post(
+        `${this.baseURL}/api/pairing/request`,
+        {},
+        this.authHeader(genStatusUser.token)
+      );
+      const partnerCode = pairingReq.data.partner_code;
+      await axios.post(
+        `${this.baseURL}/api/pairing/accept`,
+        { partner_code: partnerCode },
+        this.authHeader(genStatusPartner.token)
+      );
+      const pairingsRes = await axios.get(`${this.baseURL}/api/pairings`, this.authHeader(genStatusUser.token));
+      const pairingId = (pairingsRes.data.pairings || []).find(p => p.status === 'accepted')?.id;
+      this.assert(!!pairingId, 'Generation-status lifecycle has accepted pairing', `pairingId: ${pairingId}`);
+
+      await this.sleep(200);
+
+      const createRes = await axios.post(
+        `${this.baseURL}/api/prompt-sessions`,
+        { pairing_id: pairingId },
+        this.authHeader(genStatusUser.token)
+      );
       const session = createRes.data.prompt_session;
       this.assert(
         session?.generation?.status === 'idle',
@@ -932,7 +962,7 @@ class PromptSessionsTestRunner {
       return;
     }
 
-    // Complete prep, then fire two generate calls back-to-back.
+    // Complete both preps, then fire two generate calls back-to-back.
     //
     // Three callers race here, not two: completing prep also kicks off the
     // fire-and-forget auto-generate. With an instant mock LLM whichever one wins
@@ -948,8 +978,13 @@ class PromptSessionsTestRunner {
     try {
       await axios.post(
         `${this.baseURL}/api/prompt-sessions/${genStatusSessionId}/prep`,
-        this.fullPrep(),
+        this.fullPrep({ bringing_text: 'GenStatus A prep.' }),
         this.authHeader(genStatusUser.token)
+      );
+      await axios.post(
+        `${this.baseURL}/api/prompt-sessions/${genStatusSessionId}/prep`,
+        this.fullPrep({ bringing_text: 'GenStatus B prep.' }),
+        this.authHeader(genStatusPartner.token)
       );
 
       const [res1, res2] = await Promise.allSettled([
@@ -1237,17 +1272,31 @@ class PromptSessionsTestRunner {
 
       await model.saveGeneratedContent(session.id, {
         bridgeContent: {
-          summary: 'x'.repeat(25),
-          shared_themes: ['unit test theme'],
-          transition: 'y'.repeat(20)
+          psychoeducation: {
+            body: 'x'.repeat(45),
+            references: [{ citation: 'Unit test citation study reference' }]
+          },
+          comparison: {
+            partner_1: 'Partner one is arriving ready to connect tonight.',
+            partner_2: 'Partner two is arriving needing more patience and care.',
+            insight: 'Both want closeness even though their energy levels differ.'
+          }
         },
         sessionContent: {
-          title: 'Model Unit Test Session',
-          phases: [
-            { id: 'open', prompt: 'p'.repeat(20) },
-            { id: 'deepen', prompt: 'p'.repeat(20) },
-            { id: 'close', prompt: 'p'.repeat(20) }
-          ]
+          reflections: [
+            { partner: 'Partner A', question: 'What feeling are you bringing into this session right now?' },
+            { partner: 'Partner B', question: 'What support would help your emotional tank feel fuller tonight?' }
+          ],
+          conversation_starter: {
+            question: 'Building on your reflections, where do you already feel on the same team tonight?'
+          },
+          challenge: {
+            title: 'Model Unit Test Challenge',
+            steps: [
+              { number: 1, title: 'Step one', body: 'p'.repeat(20) },
+              { number: 2, title: 'Step two', body: 'p'.repeat(20) }
+            ]
+          }
         },
         llmUsed: 'model-unit-test-mock',
         claimId: claim1
@@ -1330,17 +1379,31 @@ class PromptSessionsTestRunner {
       // Stale save must not overwrite content written by the new owner.
       await model.saveGeneratedContent(session2.id, {
         bridgeContent: {
-          summary: 'new owner '.repeat(5),
-          shared_themes: ['reclaim theme'],
-          transition: 'new owner transition text'
+          psychoeducation: {
+            body: 'new owner psychoeducation body text that is long enough.',
+            references: [{ citation: 'Reclaim owner citation study' }]
+          },
+          comparison: {
+            partner_1: 'New owner partner one sentence is long enough.',
+            partner_2: 'New owner partner two sentence is long enough.',
+            insight: 'New owner insight sentence is also long enough.'
+          }
         },
         sessionContent: {
-          title: 'Reclaim Owner Session',
-          phases: [
-            { id: 'open', prompt: 'p'.repeat(20) },
-            { id: 'deepen', prompt: 'p'.repeat(20) },
-            { id: 'close', prompt: 'p'.repeat(20) }
-          ]
+          reflections: [
+            { partner: 'Partner A', question: 'New owner reflection question for partner A here.' },
+            { partner: 'Partner B', question: 'New owner reflection question for partner B here.' }
+          ],
+          conversation_starter: {
+            question: 'New owner conversation starter question text goes here.'
+          },
+          challenge: {
+            title: 'Reclaim Owner Session',
+            steps: [
+              { number: 1, title: 'Open', body: 'p'.repeat(20) },
+              { number: 2, title: 'Close', body: 'p'.repeat(20) }
+            ]
+          }
         },
         llmUsed: 'reclaim-owner-mock',
         claimId: claimExpired
@@ -1350,17 +1413,31 @@ class PromptSessionsTestRunner {
       try {
         const staleSave = await model.saveGeneratedContent(session2.id, {
           bridgeContent: {
-            summary: 'stale owner '.repeat(5),
-            shared_themes: ['stale theme'],
-            transition: 'stale owner transition text'
+            psychoeducation: {
+              body: 'stale owner psychoeducation body text that is long enough.',
+              references: [{ citation: 'Stale owner citation study' }]
+            },
+            comparison: {
+              partner_1: 'Stale owner partner one sentence is long enough.',
+              partner_2: 'Stale owner partner two sentence is long enough.',
+              insight: 'Stale owner insight sentence is also long enough.'
+            }
           },
           sessionContent: {
-            title: 'Stale Owner Session',
-            phases: [
-              { id: 'open', prompt: 's'.repeat(20) },
-              { id: 'deepen', prompt: 's'.repeat(20) },
-              { id: 'close', prompt: 's'.repeat(20) }
-            ]
+            reflections: [
+              { partner: 'Partner A', question: 'Stale owner reflection question for partner A here.' },
+              { partner: 'Partner B', question: 'Stale owner reflection question for partner B here.' }
+            ],
+            conversation_starter: {
+              question: 'Stale owner conversation starter question text goes here.'
+            },
+            challenge: {
+              title: 'Stale Owner Session',
+              steps: [
+                { number: 1, title: 'Open', body: 's'.repeat(20) },
+                { number: 2, title: 'Close', body: 's'.repeat(20) }
+              ]
+            }
           },
           llmUsed: 'stale-owner-mock',
           claimId: claimRetry
@@ -1376,9 +1453,9 @@ class PromptSessionsTestRunner {
       );
       const afterStaleSave = await model.getPromptSessionById(session2.id);
       this.assert(
-        afterStaleSave.session_content?.title === 'Reclaim Owner Session',
+        afterStaleSave.session_content?.challenge?.title === 'Reclaim Owner Session',
         'Model: content after stale save still belongs to the reclaim owner',
-        `title: ${afterStaleSave.session_content?.title}`
+        `title: ${afterStaleSave.session_content?.challenge?.title}`
       );
 
       // A worker that finally reports failure after another worker already
