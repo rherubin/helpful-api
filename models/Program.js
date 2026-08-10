@@ -366,6 +366,26 @@ class Program {
     }
   }
 
+  // Compare-and-swap claim for the regeneration poller. Returns true when THIS
+  // caller won the flag (so multi-instance boots cannot both regenerate the
+  // same program). Unlike clearRegenerateFlag, a lost race is not an error —
+  // the loser simply skips.
+  async claimRegenerateFlag(programId) {
+    try {
+      const result = await this.query(
+        `UPDATE programs
+           SET regenerate_therapy_response = FALSE, updated_at = NOW()
+         WHERE id = ?
+           AND regenerate_therapy_response = TRUE
+           AND deleted_at IS NULL`,
+        [programId]
+      );
+      return (result?.affectedRows || 0) > 0;
+    } catch (err) {
+      throw new Error('Failed to claim regenerate flag');
+    }
+  }
+
   // Fetch all programs that have regenerate_therapy_response = TRUE
   async getProgramsFlaggedForRegeneration() {
     try {

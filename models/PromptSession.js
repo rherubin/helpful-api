@@ -682,6 +682,9 @@ class PromptSession {
       ownership += ` AND generation_claim_id = ?`;
       params.push(claimId);
     }
+    // Preserve terminal product statuses (`complete` / `abandoned`). A late
+    // generation finish must not resurrect a session the user already closed
+    // while the LLM call was in flight.
     const result = await this.query(
       `UPDATE prompt_sessions
          SET bridge_content = ?,
@@ -693,7 +696,7 @@ class PromptSession {
              generation_error = NULL,
              generation_status = 'succeeded',
              generation_finished_at = NOW(),
-             status = ?,
+             status = IF(status IN ('complete', 'abandoned'), status, ?),
              updated_at = NOW()
        WHERE id = ?${ownership}`,
       params

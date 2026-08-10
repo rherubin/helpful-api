@@ -35,12 +35,6 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       return;
     }
 
-    // For forced regeneration, delete existing steps so they can be recreated cleanly.
-    if (forceRegenerate && programStepModel && await hasProgramSteps(programId)) {
-      console.log(`${successLogPrefix} Force-regenerating: deleting existing steps for program:`, programId);
-      await programStepModel.deleteProgramSteps(programId);
-    }
-
     const generationStart = Date.now();
     const therapyResponse = await generateResponse();
     const secondsToLoad = parseFloat(((Date.now() - generationStart) / 1000).toFixed(4));
@@ -56,11 +50,16 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
       : null;
 
     // Persist raw response for backward compatibility and diagnostics.
+    // For forced regeneration, only swap steps AFTER a successful LLM response
+    // so a failed regenerate cannot CASCADE-delete messages on existing steps.
     await programModel.updateTherapyResponse(programId, therapyResponseString, secondsToLoad, generationPrompt);
 
     if (programStepModel) {
-      // Check again to avoid duplicate step creation in rare concurrent trigger races.
-      if (!(await hasProgramSteps(programId))) {
+      if (forceRegenerate) {
+        console.log(`${successLogPrefix} Force-regenerating: replacing steps for program:`, programId);
+        await programStepModel.replaceProgramSteps(programId, therapyResponseString);
+      } else if (!(await hasProgramSteps(programId))) {
+        // Best-effort skip for concurrent generators; unique_program_day is the hard guarantee.
         await programStepModel.createProgramSteps(programId, therapyResponseString);
       }
       console.log(`${successLogPrefix} Program steps created for program:`, programId);
@@ -116,6 +115,14 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
         }
         console.error(`${logPrefix} Follow-up generation attempt failed for program ${programId}:`, followUpError.message);
       }
+    }
+
+    // A concurrent generator (create + manual therapy_response, or follow-up
+    // racing a retry) may have already persisted steps. Do not stamp a false
+    // generation_error over a successful program.
+    if (!forceRegenerate && await hasProgramSteps(programId)) {
+      console.log(`${logPrefix} Skipping generation_error persist; program already has steps:`, programId);
+      return;
     }
 
     const combinedError = `Program generation failed after ${GENERATION_FOLLOWUP_ENABLED ? '2 attempts' : '1 attempt'} (${attemptLogs.join(' | ')})`;
@@ -735,26 +742,23 @@ function startRegenerationPoller(programModel, programStepModel, hopefulPromptSe
     console.log(`[regen_poller] Found ${flaggedPrograms.length} program(s) flagged for regeneration.`);
 
     for (const program of flaggedPrograms) {
-      // Clear the flag first so a crash mid-generation doesn't cause an infinite loop.
+      // Claim the flag first (CAS) so a crash mid-generation cannot loop forever
+      // and multi-instance pollers cannot both regenerate the same program.
+      // Existing steps/messages are preserved until a successful LLM response
+      // is ready to swap in — deleting first CASCADE-wiped messages on failure.
+      let claimed = false;
       try {
-        await programModel.clearRegenerateFlag(program.id);
+        claimed = await programModel.claimRegenerateFlag(program.id);
       } catch (err) {
-        console.error(`[regen_poller] Could not clear flag for program ${program.id}:`, err.message);
+        console.error(`[regen_poller] Could not claim flag for program ${program.id}:`, err.message);
+        continue;
+      }
+      if (!claimed) {
+        console.log(`[regen_poller] Skipping program ${program.id}: regenerate flag already claimed.`);
         continue;
       }
 
       console.log(`[regen_poller] Starting regeneration for program:`, program.id);
-
-      // Delete existing steps so they are recreated cleanly.
-      if (programStepModel && await hasProgramSteps(program.id)) {
-        try {
-          await programStepModel.deleteProgramSteps(program.id);
-          console.log(`[regen_poller] Deleted existing steps for program:`, program.id);
-        } catch (err) {
-          console.error(`[regen_poller] Failed to delete steps for program ${program.id}:`, err.message);
-          continue;
-        }
-      }
 
       // Resolve user name (and partner name when available — required by
       // HelpfulPromptService.generateInitialProgram for couples users).
@@ -817,13 +821,17 @@ function startRegenerationPoller(programModel, programStepModel, hopefulPromptSe
           ? (therapyResponse.__prompt || null)
           : null;
 
-        await programModel.updateTherapyResponse(program.id, therapyResponseString, secondsToLoad, generationPrompt);
-
+        // Swap steps in a transaction (validate payload → DELETE+INSERT) so a
+        // failed/malformed regenerate cannot CASCADE-wipe messages without a
+        // successful replacement.
+        let newSteps = [];
         if (programStepModel) {
-          await programStepModel.createProgramSteps(program.id, therapyResponseString);
+          newSteps = await programStepModel.replaceProgramSteps(program.id, therapyResponseString);
         }
 
-        console.log(`[regen_poller] Regeneration complete for program:`, program.id);
+        await programModel.updateTherapyResponse(program.id, therapyResponseString, secondsToLoad, generationPrompt);
+
+        console.log(`[regen_poller] Regeneration complete for program:`, program.id, `(${newSteps.length} steps)`);
       } catch (err) {
         console.error(`[regen_poller] Regeneration failed for program ${program.id}:`, err.message);
         try {
