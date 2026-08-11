@@ -893,6 +893,171 @@ class PromptSessionsTestRunner {
     }
   }
 
+  // Soft-deleting the pairing must not drop Partner B's completed prep from
+  // Sit Session generation. Previously loadPairing failed on deleted pairings,
+  // buildPartnersForGeneration kept only the creator, and generate succeeded
+  // with single-device prompt text despite two completed preps in the DB.
+  async testGenerateKeepsPartnerPrepAfterPairingSoftDelete() {
+    this.log('Testing generate keeps both preps after pairing soft-delete', 'section');
+    try {
+      const owner = await this.createUser('sdgen-a');
+      const partner = await this.createUser('sdgen-b');
+      await axios.put(
+        `${this.baseURL}/api/users/${owner.id}`,
+        { user_name: 'SoftDelGenA' },
+        this.authHeader(owner.token)
+      );
+      await axios.put(
+        `${this.baseURL}/api/users/${partner.id}`,
+        { user_name: 'SoftDelGenB' },
+        this.authHeader(partner.token)
+      );
+
+      const pairingReq = await axios.post(
+        `${this.baseURL}/api/pairing/request`,
+        {},
+        this.authHeader(owner.token)
+      );
+      await axios.post(
+        `${this.baseURL}/api/pairing/accept`,
+        { partner_code: pairingReq.data.partner_code },
+        this.authHeader(partner.token)
+      );
+      const pairingsRes = await axios.get(`${this.baseURL}/api/pairings`, this.authHeader(owner.token));
+      const pairingId = (pairingsRes.data.pairings || []).find(p => p.status === 'accepted')?.id;
+      this.assert(!!pairingId, 'Soft-delete generate test has accepted pairing', `pairingId: ${pairingId}`);
+
+      const createRes = await axios.post(
+        `${this.baseURL}/api/prompt-sessions`,
+        { pairing_id: pairingId },
+        this.authHeader(owner.token)
+      );
+      this.assert(createRes.status === 201, 'Paired session created for soft-delete generate test', `Status: ${createRes.status}`);
+      const sessionId = createRes.data.prompt_session.id;
+
+      const ownerBringing = 'OWNER_UNIQUE_BRINGING_TEXT_soft_delete_generate_regression';
+      const partnerBringing = 'PARTNER_UNIQUE_BRINGING_TEXT_soft_delete_generate_regression';
+
+      await axios.post(
+        `${this.baseURL}/api/prompt-sessions/${sessionId}/prep`,
+        this.fullPrep({ bringing_text: ownerBringing }),
+        this.authHeader(owner.token)
+      );
+      const partnerPrepRes = await axios.post(
+        `${this.baseURL}/api/prompt-sessions/${sessionId}/prep`,
+        this.fullPrep({ bringing_text: partnerBringing }),
+        this.authHeader(partner.token)
+      );
+      this.assert(
+        partnerPrepRes.data.both_preps_complete === true,
+        'Both preps complete before soft-delete',
+        `value: ${partnerPrepRes.data.both_preps_complete}`
+      );
+
+      // Let auto-generate finish (or fail) so we can reset and re-run under soft-delete.
+      await this.pollGenerationTerminal(owner.token, sessionId, { timeoutMs: 15000 });
+
+      const delRes = await axios.delete(
+        `${this.baseURL}/api/pairing/${pairingId}`,
+        this.authHeader(owner.token)
+      );
+      this.assert(delRes.status === 200, 'Soft-delete pairing before regenerate', `Status: ${delRes.status}`);
+
+      // Creator still has access; partner does not (pairing soft-deleted).
+      const ownerGet = await axios.get(
+        `${this.baseURL}/api/prompt-sessions/${sessionId}`,
+        this.authHeader(owner.token)
+      );
+      this.assert(ownerGet.status === 200, 'Creator can still GET session after pairing soft-delete', `Status: ${ownerGet.status}`);
+      try {
+        await axios.get(
+          `${this.baseURL}/api/prompt-sessions/${sessionId}`,
+          this.authHeader(partner.token)
+        );
+        this.assert(false, 'Partner GET after pairing soft-delete should fail', 'Request succeeded');
+      } catch (accessErr) {
+        this.assert(
+          accessErr.response?.status === 403,
+          'Partner loses access after pairing soft-delete',
+          `Status: ${accessErr.response?.status}`
+        );
+      }
+
+      const prepGet = await axios.get(
+        `${this.baseURL}/api/prompt-sessions/${sessionId}/prep`,
+        this.authHeader(owner.token)
+      );
+      this.assert(
+        prepGet.data.partner_prep?.bringing_text === partnerBringing,
+        'Creator GET prep still reveals partner answers after soft-delete',
+        `partner bringing: ${prepGet.data.partner_prep?.bringing_text}`
+      );
+
+      // Clear generated content so POST /generate runs again with the deleted pairing.
+      const pool = getPool();
+      await pool.execute(
+        `UPDATE prompt_sessions
+           SET bridge_content = NULL,
+               session_content = NULL,
+               generation_prompt = NULL,
+               generation_error = NULL,
+               generation_status = 'idle',
+               generation_started_at = NULL,
+               generation_finished_at = NULL,
+               generation_claim_id = NULL,
+               status = 'prep',
+               updated_at = NOW()
+         WHERE id = ?`,
+        [sessionId]
+      );
+
+      let regenerated;
+      try {
+        const genRes = await axios.post(
+          `${this.baseURL}/api/prompt-sessions/${sessionId}/generate`,
+          {},
+          this.authHeader(owner.token)
+        );
+        this.assert(genRes.status === 200, 'Generate after soft-delete returns 200', `Status: ${genRes.status}`);
+        regenerated = genRes.data.prompt_session;
+      } catch (genError) {
+        if (this.isGenerationRunning(genError)) {
+          regenerated = await this.pollGenerationTerminal(owner.token, sessionId);
+        } else {
+          throw genError;
+        }
+      }
+
+      this.assert(
+        regenerated?.generation?.status === 'succeeded' && !!regenerated?.bridge_content && !!regenerated?.session_content,
+        'Generate after soft-delete succeeds with content',
+        `generation.status: ${regenerated?.generation?.status}`
+      );
+
+      const [rows] = await pool.execute(
+        `SELECT generation_prompt FROM prompt_sessions WHERE id = ?`,
+        [sessionId]
+      );
+      const prompt = rows[0]?.generation_prompt || '';
+      this.assert(
+        prompt.includes(ownerBringing) && prompt.includes(partnerBringing),
+        'generation_prompt includes BOTH partners\' prep after pairing soft-delete',
+        `hasOwner=${prompt.includes(ownerBringing)} hasPartner=${prompt.includes(partnerBringing)}`
+      );
+      this.assert(
+        !/single-device Sit Session/i.test(prompt),
+        'generation_prompt is paired (not single-device) after soft-delete',
+        `prompt snippet: ${String(prompt).slice(0, 180)}`
+      );
+    } catch (error) {
+      this.assert(
+        false,
+        'Generate keeps partner prep after pairing soft-delete',
+        `Status: ${error.response?.status} Error: ${error.response?.data?.error || error.message}`
+      );
+    }
+  }
+
   // Exercises the generation_status state machine end-to-end over HTTP:
   //   idle right after create → concurrent generate calls don't double-run
   //   the LLM → succeeded with ready/started_at/finished_at set → forced
@@ -1559,6 +1724,8 @@ class PromptSessionsTestRunner {
       await this.testGenerateSuccess();
       console.log('');
       await this.testSoloGenerate();
+      console.log('');
+      await this.testGenerateKeepsPartnerPrepAfterPairingSoftDelete();
       console.log('');
       await this.testGenerationStatusLifecycle();
       console.log('');

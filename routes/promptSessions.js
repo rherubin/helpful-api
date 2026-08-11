@@ -59,6 +59,25 @@ function createPromptSessionRoutes(
     return !!(session && session.bridge_content && session.session_content);
   }
 
+  // Resolve pairing membership for a session even when the pairing was soft-
+  // deleted. Generation still needs both partners' prep answers; live-only
+  // lookup would silently drop Partner B after unpair.
+  async function loadPairingForGeneration(pairingId) {
+    try {
+      return await loadPairing(pairingId);
+    } catch {
+      // Soft-deleted (or momentarily missing) pairing: fall through.
+    }
+    if (typeof pairingModel.getPairingByIdIncludingDeleted === 'function') {
+      try {
+        return await pairingModel.getPairingByIdIncludingDeleted(pairingId);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
   // Build partners[] for HelpfulPromptService from session + completed preps.
   // Creator is Partner A; when paired, the other member is Partner B.
   async function buildPartnersForGeneration(session) {
@@ -74,16 +93,19 @@ function createPromptSessionRoutes(
     let partnerUserIds = [creatorId];
 
     if (session.pairing_id) {
-      let pairing = null;
-      try {
-        pairing = await loadPairing(session.pairing_id);
-      } catch {
-        pairing = null;
-      }
+      const pairing = await loadPairingForGeneration(session.pairing_id);
       if (pairing) {
         const otherId = partnerIdFor(pairing, creatorId);
         if (otherId) {
           partnerUserIds = [creatorId, otherId];
+        }
+      } else {
+        // Pairing row gone entirely: still include every other completed prep
+        // so we never discard answers that bothPrepsComplete already counted.
+        for (const prep of completedPreps) {
+          if (prep.user_id !== creatorId && !partnerUserIds.includes(prep.user_id)) {
+            partnerUserIds.push(prep.user_id);
+          }
         }
       }
     }
@@ -114,6 +136,11 @@ function createPromptSessionRoutes(
 
     if (partners.length === 0) {
       throw new Error('No completed preps available for generation');
+    }
+    // Paired sessions must not silently degrade to a single-prep generate when
+    // the second completed prep exists but membership resolution failed.
+    if (session.pairing_id && completedPreps.length >= 2 && partners.length < 2) {
+      throw new Error('Paired Sit Session generation requires both partners\' completed preps');
     }
     return partners;
   }
@@ -475,9 +502,9 @@ function createPromptSessionRoutes(
 
       let pairing = null;
       if (session.pairing_id) {
-        try {
-          pairing = await loadPairing(session.pairing_id);
-        } catch { /* non-fatal */ }
+        // Include soft-deleted pairings so the creator can still see partner
+        // answers after unpair once both preps were completed.
+        pairing = await loadPairingForGeneration(session.pairing_id);
       }
       const partnerId = partnerIdFor(pairing, userId);
 
