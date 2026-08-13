@@ -1270,6 +1270,10 @@ class PromptSessionsTestRunner {
         `status: ${runningSession.generation.status}, started_at: ${runningSession.generation.started_at}`
       );
 
+      // Advance to in_session while generation is running — late save must not
+      // demote the live experience back to bridge.
+      await model.updateStatus(session.id, 'in_session');
+
       await model.saveGeneratedContent(session.id, {
         bridgeContent: {
           psychoeducation: {
@@ -1298,6 +1302,7 @@ class PromptSessionsTestRunner {
             ]
           }
         },
+        status: 'bridge',
         llmUsed: 'model-unit-test-mock',
         claimId: claim1
       });
@@ -1307,6 +1312,11 @@ class PromptSessionsTestRunner {
         succeededSession.generation.status === 'succeeded' && !!succeededSession.generation.finished_at,
         'Model: saveGeneratedContent sets generation_status succeeded + finished_at',
         `status: ${succeededSession.generation.status}, finished_at: ${succeededSession.generation.finished_at}`
+      );
+      this.assert(
+        succeededSession.status === 'in_session',
+        'Model: saveGeneratedContent preserves in_session (does not demote to bridge)',
+        `status: ${succeededSession.status}`
       );
       this.assert(
         succeededSession.generation.ready === true,

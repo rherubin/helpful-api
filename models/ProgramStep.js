@@ -196,46 +196,92 @@ class ProgramStep {
     }
   }
 
-  // Parse therapy response and create individual program steps
+  // Parse therapy response and create individual program steps.
+  // Inserts run in a single transaction so a mid-loop failure (e.g. theme
+  // longer than VARCHAR(255), connection blip) cannot leave a partial day
+  // set. Partial sets are especially harmful because callers treat
+  // "any steps exist" as success and skip follow-up / retry.
   async createProgramSteps(programId, therapyResponse) {
+    let programData;
+
     try {
-      let programData;
-      
-      // Parse the therapy response
-      try {
-        programData = typeof therapyResponse === 'string' 
-          ? JSON.parse(therapyResponse) 
-          : therapyResponse;
-      } catch (parseError) {
-        console.error('Error parsing therapy response:', parseError.message);
-        throw new Error('Invalid therapy response format');
-      }
+      programData = typeof therapyResponse === 'string'
+        ? JSON.parse(therapyResponse)
+        : therapyResponse;
+    } catch (parseError) {
+      console.error('Error parsing therapy response:', parseError.message);
+      throw new Error('Invalid therapy response format');
+    }
+
+    const days = programData?.program?.days;
+    if (!Array.isArray(days) || days.length === 0) {
+      throw new Error('No structured days found in therapy response');
+    }
+
+    const connection = await this.db.getConnection();
+    try {
+      await connection.beginTransaction();
 
       const programSteps = [];
-      
-      if (programData.program && programData.program.days && Array.isArray(programData.program.days)) {
-        // Create a program step for each day
-        for (const dayData of programData.program.days) {
-          const step = await this.createProgramStep(
-            programId,
-            dayData.day,
-            dayData.theme,
-            dayData.conversation_starter || dayData.reflection,
-            dayData.science_behind_it || dayData.bible_verse
+      for (const dayData of days) {
+        const stepId = this.generateUniqueId();
+        const theme = dayData.theme;
+        const conversationStarter = dayData.conversation_starter || dayData.reflection;
+        const scienceBehindIt = dayData.science_behind_it || dayData.bible_verse;
+
+        try {
+          await connection.execute(
+            `INSERT INTO program_steps (id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+            [stepId, programId, dayData.day, theme, conversationStarter, scienceBehindIt]
           );
-
-          programSteps.push(step);
+          programSteps.push({
+            id: stepId,
+            program_id: programId,
+            day: dayData.day,
+            theme,
+            conversation_starter: conversationStarter,
+            science_behind_it: scienceBehindIt,
+            created_at: new Date().toISOString()
+          });
+        } catch (insertErr) {
+          // Concurrent generator already wrote this day — keep existing row.
+          if (insertErr && insertErr.code === 'ER_DUP_ENTRY') {
+            const [existingRows] = await connection.execute(
+              `SELECT id, program_id, day, theme, conversation_starter, science_behind_it, created_at
+               FROM program_steps WHERE program_id = ? AND day = ?`,
+              [programId, dayData.day]
+            );
+            const existing = existingRows[0];
+            if (existing) {
+              programSteps.push({
+                id: existing.id,
+                program_id: existing.program_id,
+                day: existing.day,
+                theme: existing.theme,
+                conversation_starter: existing.conversation_starter,
+                science_behind_it: existing.science_behind_it,
+                created_at: existing.created_at,
+                deduped: true
+              });
+              continue;
+            }
+          }
+          throw insertErr;
         }
-
-        console.log(`Created ${programSteps.length} program steps for program ${programId}`);
-        return programSteps;
-      } else {
-        console.log('No structured days found in therapy response');
-        return [];
       }
+
+      await connection.commit();
+      console.log(`Created ${programSteps.length} program steps for program ${programId}`);
+      return programSteps;
     } catch (err) {
+      try {
+        await connection.rollback();
+      } catch { /* non-fatal */ }
       console.error('Error creating program steps:', err.message);
       throw new Error('Failed to create program steps');
+    } finally {
+      connection.release();
     }
   }
 

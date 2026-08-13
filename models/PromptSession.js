@@ -682,6 +682,9 @@ class PromptSession {
       ownership += ` AND generation_claim_id = ?`;
       params.push(claimId);
     }
+    // Preserve terminal and in-progress product statuses. Late generation must
+    // not resurrect abandoned/complete (see also open regen/status work) and
+    // must not demote an active in_session experience back to bridge.
     const result = await this.query(
       `UPDATE prompt_sessions
          SET bridge_content = ?,
@@ -693,7 +696,7 @@ class PromptSession {
              generation_error = NULL,
              generation_status = 'succeeded',
              generation_finished_at = NOW(),
-             status = ?,
+             status = IF(status IN ('complete', 'abandoned', 'in_session'), status, ?),
              updated_at = NOW()
        WHERE id = ?${ownership}`,
       params

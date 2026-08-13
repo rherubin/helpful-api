@@ -508,7 +508,10 @@ class BasePromptService {
         const hasConversationFormat = typeof day.conversation_starter === 'string' && typeof day.science_behind_it === 'string';
         if (!hasReflectionFormat && !hasConversationFormat) return false;
 
-        if (day.theme.length < 3 || day.theme.length > 300) {
+        // Must stay within program_steps.theme VARCHAR(255). A higher ceiling
+        // let the LLM validator accept payloads that then fail (or silently
+        // truncate) on INSERT — leaving a partial step set and blocking retry.
+        if (day.theme.length < 3 || day.theme.length > 255) {
           console.warn(`Day ${day.day} theme length out of range: ${day.theme.length}`);
           return false;
         }

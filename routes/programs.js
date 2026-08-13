@@ -28,16 +28,36 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
     return Array.isArray(steps) && steps.length > 0;
   }
 
+  // True only when the program has a full validated day set (7 or 14 unique
+  // contiguous days). "Any rows exist" is not enough: a mid-insert failure can
+  // leave a partial set, and treating that as success skips follow-up forever.
+  async function hasCompleteProgramSteps(programId) {
+    if (!programStepModel) return false;
+    const steps = await programStepModel.getProgramSteps(programId);
+    if (!Array.isArray(steps) || steps.length === 0) return false;
+    const days = new Set(steps.map((s) => Number(s.day)));
+    const n = days.size;
+    if (n !== 7 && n !== 14) return false;
+    for (let d = 1; d <= n; d++) {
+      if (!days.has(d)) return false;
+    }
+    return true;
+  }
+
   async function generateAndPersistProgramContent({ programId, generateResponse, successLogPrefix, forceRegenerate = false }) {
-    // If steps already exist and this is not a forced regeneration, treat as already-completed work.
-    if (!forceRegenerate && await hasProgramSteps(programId)) {
+    // If a complete step set already exists and this is not a forced regeneration,
+    // treat as already-completed work.
+    if (!forceRegenerate && await hasCompleteProgramSteps(programId)) {
       console.log(`${successLogPrefix} Program steps already exist, skipping generation for:`, programId);
       return;
     }
 
-    // For forced regeneration, delete existing steps so they can be recreated cleanly.
-    if (forceRegenerate && programStepModel && await hasProgramSteps(programId)) {
-      console.log(`${successLogPrefix} Force-regenerating: deleting existing steps for program:`, programId);
+    // Clear incomplete leftovers before calling the LLM. Safe: a partial day
+    // set is not usable, and leaving it would make follow-up treat the program
+    // as done. Do NOT delete a complete set before LLM success (force path
+    // swaps only after a valid payload is in hand).
+    if (programStepModel && await hasProgramSteps(programId) && !(await hasCompleteProgramSteps(programId))) {
+      console.log(`${successLogPrefix} Clearing incomplete steps for program:`, programId);
       await programStepModel.deleteProgramSteps(programId);
     }
 
@@ -59,9 +79,22 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
     await programModel.updateTherapyResponse(programId, therapyResponseString, secondsToLoad, generationPrompt);
 
     if (programStepModel) {
-      // Check again to avoid duplicate step creation in rare concurrent trigger races.
-      if (!(await hasProgramSteps(programId))) {
+      if (forceRegenerate && await hasProgramSteps(programId)) {
+        // Only wipe a complete set after we have a valid replacement payload.
+        console.log(`${successLogPrefix} Force-regenerating: deleting existing steps for program:`, programId);
+        await programStepModel.deleteProgramSteps(programId);
+      } else if (!(await hasCompleteProgramSteps(programId))) {
+        // Another worker may have written a partial set while we generated.
+        if (await hasProgramSteps(programId)) {
+          await programStepModel.deleteProgramSteps(programId);
+        }
+      }
+
+      if (!(await hasCompleteProgramSteps(programId))) {
         await programStepModel.createProgramSteps(programId, therapyResponseString);
+      }
+      if (!(await hasCompleteProgramSteps(programId))) {
+        throw new Error('Program step persist incomplete: expected 7 or 14 contiguous days');
       }
       console.log(`${successLogPrefix} Program steps created for program:`, programId);
     }
@@ -96,9 +129,11 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
         console.log(`${logPrefix} Scheduling follow-up generation attempt in ${GENERATION_FOLLOWUP_DELAY_MS}ms for program:`, programId);
         await sleep(GENERATION_FOLLOWUP_DELAY_MS);
 
-        // For forced regeneration the follow-up should also force; otherwise skip if steps exist.
-        if (!forceRegenerate && await hasProgramSteps(programId)) {
-          console.log(`${logPrefix} Follow-up skipped; program already has steps:`, programId);
+        // Only skip follow-up when a complete day set is present. A partial
+        // set must retry — otherwise the program is stuck with no
+        // generation_error and POST .../therapy_response returns 409.
+        if (!forceRegenerate && await hasCompleteProgramSteps(programId)) {
+          console.log(`${logPrefix} Follow-up skipped; program already has complete steps:`, programId);
           return;
         }
 
@@ -325,16 +360,15 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
         });
       }
 
-      // Check if program already has program steps
-      if (programStepModel) {
+      // Block only when a complete day set already exists. A partial leftover
+      // from a failed persist must remain retryable.
+      if (programStepModel && await hasCompleteProgramSteps(program_id)) {
         const existingSteps = await programStepModel.getProgramSteps(program_id);
-        if (existingSteps && existingSteps.length > 0) {
-          return res.status(409).json({
-            error: 'Therapy response already exists for this program',
-            details: 'This program already has program steps. Delete the program and create a new one if you need to regenerate.',
-            existing_steps_count: existingSteps.length
-          });
-        }
+        return res.status(409).json({
+          error: 'Therapy response already exists for this program',
+          details: 'This program already has program steps. Delete the program and create a new one if you need to regenerate.',
+          existing_steps_count: existingSteps.length
+        });
       }
 
       // Check if at least one prompt service is configured
