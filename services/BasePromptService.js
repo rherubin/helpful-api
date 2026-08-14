@@ -452,6 +452,12 @@ class BasePromptService {
   validateAIResponse(response, minLength = 100) {
     if (typeof response !== 'string') return false;
 
+    // Keep jailbreak / role-injection checks, but do NOT bare-match words that
+    // appear in normal therapy copy. Broad `/system\s*:/i` and `/override/i`
+    // rejected legitimate Sit Session / program JSON that mentioned e.g.
+    // "nervous system: ..." or "override the urge to defend" — which the
+    // psychoeducation contract actively solicits — causing generation to fail
+    // after paid LLM retries.
     const dangerousPatterns = [
       /ignore\s+previous\s+instructions/i,
       /i'm\s+not\s+a\s+therapist/i,
@@ -460,12 +466,13 @@ class BasePromptService {
       /\[INST\]/i,
       /\[\/INST\]/i,
       /<\|.*?\|>/,
-      /system\s*:/i,
-      /assistant\s*:/i,
-      /human\s*:/i,
+      // Role markers only at line start (not mid-phrase like "nervous system:")
+      /(?:^|[\n\r])\s*system\s*:/i,
+      /(?:^|[\n\r])\s*assistant\s*:/i,
+      /(?:^|[\n\r])\s*human\s*:/i,
       /developer\s*mode/i,
       /jailbreak/i,
-      /override/i
+      /override\s+(?:previous\s+)?instructions/i
     ];
 
     for (const pattern of dangerousPatterns) {
