@@ -383,6 +383,28 @@ class StripeBillingService {
     }
 
     const fields = this.extractSubscriptionFields(stripeSubscription, plan);
+
+    // Stripe may deliver customer.subscription.updated after
+    // customer.subscription.deleted (retries / out-of-order). A canceled
+    // subscription cannot be reactivated on the same Stripe id — ignore any
+    // non-terminal payload so stale updates cannot resurrect premium.
+    const TERMINAL_STATUSES = new Set(['canceled', 'incomplete_expired']);
+    if (fields.stripe_subscription_id && TERMINAL_STATUSES.has(String(fields.status)) === false) {
+      const existing = await this.stripeSubscriptionModel.getByStripeSubscriptionId(
+        fields.stripe_subscription_id
+      );
+      if (existing && TERMINAL_STATUSES.has(String(existing.status))) {
+        console.warn(
+          '[stripe-billing] Ignoring stale non-terminal webhook for terminal subscription',
+          fields.stripe_subscription_id,
+          `existing=${existing.status}`,
+          `incoming=${fields.status}`
+        );
+        await this.syncPremiumForUser(resolvedUserId);
+        return existing;
+      }
+    }
+
     const row = await this.stripeSubscriptionModel.upsertByStripeSubscriptionId(resolvedUserId, fields);
     await this.syncPremiumForUser(resolvedUserId);
     return row;
