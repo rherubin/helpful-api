@@ -540,6 +540,95 @@ class StripeBillingTestRunner {
     }
   }
 
+  async testStaleSubscriptionUpdateDoesNotResurrectPremium() {
+    this.log('Testing stale subscription.updated cannot resurrect canceled premium', 'section');
+    const user = await this.createTestUser('stripe-stale-webhook');
+    if (!user) {
+      this.assert(false, 'Create user for stale webhook test');
+      return;
+    }
+
+    try {
+      const subId = `sub_stale_${Date.now()}`;
+      const activate = await this.postWebhook({
+        id: `evt_stale_act_${Date.now()}`,
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: `cs_stale_${Date.now()}`,
+            mode: 'subscription',
+            client_reference_id: user.id,
+            customer: null,
+            metadata: { user_id: user.id, plan: 'yearly' },
+            subscription: this.buildSubscriptionObject(user, { id: subId, status: 'active' })
+          }
+        }
+      });
+      this.assert(activate.status === 200, 'Activate webhook returns 200');
+
+      const cancel = await this.postWebhook({
+        id: `evt_stale_cancel_${Date.now()}`,
+        type: 'customer.subscription.deleted',
+        data: {
+          object: this.buildSubscriptionObject(user, { id: subId, status: 'canceled' })
+        }
+      });
+      this.assert(cancel.status === 200, 'Cancel webhook returns 200');
+
+      const statusAfterCancel = await axios.get(`${this.baseURL}/api/billing/status`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(statusAfterCancel.status === 200, 'Status after cancel returns 200');
+      this.assert(
+        statusAfterCancel.data.premium === false,
+        'Premium cleared after cancel',
+        `premium=${statusAfterCancel.data.premium} status=${statusAfterCancel.data.subscription?.status}`
+      );
+      this.assert(
+        statusAfterCancel.data.subscription?.status === 'canceled',
+        'Subscription remains canceled after delete webhook',
+        statusAfterCancel.data.subscription?.status
+      );
+
+      const staleUpdate = await this.postWebhook({
+        id: `evt_stale_upd_${Date.now()}`,
+        type: 'customer.subscription.updated',
+        data: {
+          object: this.buildSubscriptionObject(user, { id: subId, status: 'active' })
+        }
+      });
+      this.assert(staleUpdate.status === 200, 'Stale update webhook returns 200');
+
+      const statusAfterStale = await axios.get(`${this.baseURL}/api/billing/status`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(statusAfterStale.status === 200, 'Status after stale update returns 200');
+      this.assert(
+        statusAfterStale.data.subscription?.status === 'canceled',
+        'Canceled status not overwritten by stale active update',
+        statusAfterStale.data.subscription?.status
+      );
+      this.assert(
+        statusAfterStale.data.premium === false,
+        'Premium stays false after stale active update',
+        `premium=${statusAfterStale.data.premium}`
+      );
+      this.assert(
+        statusAfterStale.data.is_premium === false,
+        'users.is_premium stays false after stale active update',
+        `is_premium=${statusAfterStale.data.is_premium}`
+      );
+    } catch (error) {
+      this.assert(
+        false,
+        'Stale subscription update does not resurrect premium',
+        error.response?.data?.error || error.message
+      );
+    }
+  }
+
   async runAllTests() {
     this.log('Starting Stripe Billing tests', 'section');
 
@@ -565,6 +654,7 @@ class StripeBillingTestRunner {
     await this.testStripePremiumSurvivesIncompleteCustomOrg(user);
     await this.testOrgPremiumSurvivesStripeCancel();
     await this.testSoftDeleteCancelsStripeAndWebhookSyncWhileDeleted();
+    await this.testStaleSubscriptionUpdateDoesNotResurrectPremium();
 
     this.log(`Results: ${this.testResults.passed}/${this.testResults.total} passed`, 'info');
     return this.testResults.failed === 0;
