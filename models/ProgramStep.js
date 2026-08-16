@@ -29,7 +29,7 @@ class ProgramStep {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_program_id (program_id),
         INDEX idx_day (day),
-        INDEX idx_program_day (program_id, day),
+        UNIQUE KEY unique_program_day (program_id, day),
         INDEX idx_started (started),
         FOREIGN KEY (program_id) REFERENCES programs (id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -59,9 +59,53 @@ class ProgramStep {
       // Add migration support for existing databases
       await this.migrateStartedField();
       await this.migrateExistingContributions();
+      await this.ensureUniqueProgramDay();
     } catch (err) {
       console.error('Error creating program_steps table:', err.message);
       throw err;
+    }
+  }
+
+  // Concurrent generation workers can race past hasProgramSteps() and insert
+  // duplicate day rows. Enforce uniqueness at the schema level; dedupe first so
+  // older databases with accidental duplicates can still migrate.
+  async ensureUniqueProgramDay() {
+    try {
+      const existing = await this.query(`
+        SELECT INDEX_NAME
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'program_steps'
+          AND INDEX_NAME = 'unique_program_day'
+      `);
+      if (existing.length > 0) return;
+
+      // Keep the earliest row per (program_id, day); cascade deletes its messages.
+      await this.query(`
+        DELETE s1 FROM program_steps s1
+        INNER JOIN program_steps s2
+          ON s1.program_id = s2.program_id
+         AND s1.day = s2.day
+         AND (
+           s1.created_at > s2.created_at
+           OR (s1.created_at = s2.created_at AND s1.id > s2.id)
+         )
+      `);
+
+      // Drop the non-unique composite index if present so the unique key can replace it.
+      try {
+        await this.query('ALTER TABLE program_steps DROP INDEX idx_program_day');
+      } catch {
+        // Index may already be absent on some schemas.
+      }
+
+      await this.query(`
+        ALTER TABLE program_steps
+        ADD UNIQUE KEY unique_program_day (program_id, day)
+      `);
+      console.log('Added unique_program_day constraint to program_steps table.');
+    } catch (err) {
+      console.warn('Migration warning (program_steps.unique_program_day):', err.message);
     }
   }
 
@@ -170,6 +214,74 @@ class ProgramStep {
     }
   }
 
+  // Atomically replace all steps for a program from a therapy-response payload.
+  // Validates the payload first, then DELETE+INSERT in one transaction so a
+  // mid-write failure rolls back and cannot CASCADE-wipe messages without a
+  // successful replacement.
+  async replaceProgramSteps(programId, therapyResponse) {
+    let programData;
+    try {
+      programData = typeof therapyResponse === 'string'
+        ? JSON.parse(therapyResponse)
+        : therapyResponse;
+    } catch (parseError) {
+      console.error('Error parsing therapy response:', parseError.message);
+      throw new Error('Invalid therapy response format');
+    }
+
+    const days = programData?.program?.days;
+    if (!Array.isArray(days) || days.length === 0) {
+      throw new Error('No structured days found in therapy response');
+    }
+
+    const connection = await this.db.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.execute(
+        'DELETE FROM program_steps WHERE program_id = ?',
+        [programId]
+      );
+
+      const programSteps = [];
+      for (const dayData of days) {
+        const stepId = this.generateUniqueId();
+        await connection.execute(
+          `INSERT INTO program_steps (id, program_id, day, theme, conversation_starter, science_behind_it, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+          [
+            stepId,
+            programId,
+            dayData.day,
+            dayData.theme,
+            dayData.conversation_starter || dayData.reflection,
+            dayData.science_behind_it || dayData.bible_verse
+          ]
+        );
+        programSteps.push({
+          id: stepId,
+          program_id: programId,
+          day: dayData.day,
+          theme: dayData.theme,
+          conversation_starter: dayData.conversation_starter || dayData.reflection,
+          science_behind_it: dayData.science_behind_it || dayData.bible_verse,
+          created_at: new Date().toISOString()
+        });
+      }
+
+      await connection.commit();
+      console.log(`Replaced with ${programSteps.length} program steps for program ${programId}`);
+      return programSteps;
+    } catch (err) {
+      try {
+        await connection.rollback();
+      } catch { /* non-fatal */ }
+      console.error('Error replacing program steps:', err.message);
+      throw new Error('Failed to replace program steps');
+    } finally {
+      connection.release();
+    }
+  }
+
   async createProgramStep(programId, day, theme, conversationStarter, scienceBehindIt) {
     const stepId = this.generateUniqueId();
 
@@ -191,6 +303,25 @@ class ProgramStep {
         created_at: new Date().toISOString()
       };
     } catch (err) {
+      // Another concurrent generator already persisted this day — treat as success.
+      if (err && err.code === 'ER_DUP_ENTRY') {
+        const existing = await this.queryOne(
+          'SELECT id, program_id, day, theme, conversation_starter, science_behind_it, created_at FROM program_steps WHERE program_id = ? AND day = ?',
+          [programId, day]
+        );
+        if (existing) {
+          return {
+            id: existing.id,
+            program_id: existing.program_id,
+            day: existing.day,
+            theme: existing.theme,
+            conversation_starter: existing.conversation_starter,
+            science_behind_it: existing.science_behind_it,
+            created_at: existing.created_at,
+            deduped: true
+          };
+        }
+      }
       console.error('Error creating program step:', err.message);
       throw new Error('Failed to create program step');
     }
@@ -214,6 +345,9 @@ class ProgramStep {
       const programSteps = [];
       
       if (programData.program && programData.program.days && Array.isArray(programData.program.days)) {
+        if (programData.program.days.length === 0) {
+          throw new Error('Therapy response contained an empty days array');
+        }
         // Create a program step for each day
         for (const dayData of programData.program.days) {
           const step = await this.createProgramStep(
@@ -230,8 +364,7 @@ class ProgramStep {
         console.log(`Created ${programSteps.length} program steps for program ${programId}`);
         return programSteps;
       } else {
-        console.log('No structured days found in therapy response');
-        return [];
+        throw new Error('No structured days found in therapy response');
       }
     } catch (err) {
       console.error('Error creating program steps:', err.message);

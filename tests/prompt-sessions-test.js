@@ -1321,6 +1321,40 @@ class PromptSessionsTestRunner {
         `claim: ${claimAfterSucceeded}`
       );
 
+      // Late generation must not resurrect a session abandoned while the LLM ran.
+      const abandonedSession = await model.createPromptSession({ createdByUserId: ownerId });
+      createdIds.push(abandonedSession.id);
+      const abandonClaim = await model.beginGeneration(abandonedSession.id);
+      await model.updateStatus(abandonedSession.id, 'abandoned');
+      await model.saveGeneratedContent(abandonedSession.id, {
+        bridgeContent: {
+          summary: 'x'.repeat(25),
+          shared_themes: ['abandon preserve theme'],
+          transition: 'y'.repeat(20)
+        },
+        sessionContent: {
+          title: 'Abandoned Preserve Session',
+          phases: [
+            { id: 'open', prompt: 'p'.repeat(20) },
+            { id: 'deepen', prompt: 'p'.repeat(20) },
+            { id: 'close', prompt: 'p'.repeat(20) }
+          ]
+        },
+        status: 'bridge',
+        claimId: abandonClaim
+      });
+      const afterAbandonSave = await model.getPromptSessionById(abandonedSession.id);
+      this.assert(
+        afterAbandonSave.status === 'abandoned',
+        'Model: saveGeneratedContent preserves abandoned status (does not resurrect to bridge)',
+        `status: ${afterAbandonSave.status}`
+      );
+      this.assert(
+        afterAbandonSave.generation.status === 'succeeded' && !!afterAbandonSave.bridge_content,
+        'Model: abandoned session still receives generated content',
+        `generation: ${afterAbandonSave.generation.status}`
+      );
+
       // Isolated second session for the failed -> retry transition.
       const session2 = await model.createPromptSession({ createdByUserId: ownerId });
       createdIds.push(session2.id);
