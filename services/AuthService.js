@@ -202,11 +202,18 @@ class AuthService {
       const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 days from now
       await this.refreshTokenModel.createRefreshToken(user.id, refreshToken, expiresAt);
 
-      // Return user data (excluding password hash and database premium field) and tokens
-      // Premium should be set explicitly as a boolean for iOS/Swift compatibility
-      const { password_hash, premium: dbPremium, ...userData } = user;
-      
-      // Check if user has premium access (any premium pairings)
+      // Return user data (excluding secrets / internal premium columns) and tokens.
+      // Premium must include Stripe/org entitlement (users.is_premium), not only
+      // pairing.premium — otherwise web subscribers see premium:false on login
+      // while /profile and /billing/status correctly report true.
+      const {
+        password_hash,
+        premium: _legacyPremium,
+        bypass_password,
+        is_premium,
+        ...userData
+      } = user;
+
       let hasPremiumPairing = false;
       try {
         if (this.pairingModel) {
@@ -215,7 +222,7 @@ class AuthService {
       } catch (err) {
         console.warn('Failed to check premium pairing status:', err.message);
       }
-      
+
       return {
         message: restoredFromSoftDelete
           ? 'Login successful; soft-deleted account restored'
@@ -223,7 +230,7 @@ class AuthService {
         data: {
           user: {
             ...userData,
-            premium: hasPremiumPairing
+            premium: hasPremiumPairing || !!is_premium
           },
           access_token: accessToken,
           refresh_token: refreshToken,

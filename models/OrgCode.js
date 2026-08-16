@@ -137,6 +137,32 @@ class OrgCode {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 
+  // MySQL DATETIME rejects ISO-8601 with `T`/`Z` under common sql_modes.
+  // Normalize client timestamps so admin create/update does not 500.
+  toMysqlDateTime(value) {
+    if (value === null || value === undefined || value === '') return null;
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) {
+        throw new Error('Invalid date value');
+      }
+      return value.toISOString().slice(0, 19).replace('T', ' ');
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      // Already MySQL-shaped: YYYY-MM-DD HH:MM:SS[.fraction]
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(trimmed)) {
+        return trimmed.slice(0, 19);
+      }
+      const parsed = new Date(trimmed);
+      if (Number.isNaN(parsed.getTime())) {
+        throw new Error('Invalid date value');
+      }
+      return parsed.toISOString().slice(0, 19).replace('T', ' ');
+    }
+    throw new Error('Invalid date value');
+  }
+
   async createOrgCode(data) {
     const {
       org_code,
@@ -159,13 +185,16 @@ class OrgCode {
     }
 
     const id = this.generateUniqueId();
+    const normalizedExpiresAt = this.toMysqlDateTime(expires_at);
+    const normalizedDurationStart = this.toMysqlDateTime(duration_start);
+    const normalizedDurationEnd = this.toMysqlDateTime(duration_end);
 
     try {
       await this.query(
         `INSERT INTO org_codes
           (id, org_code, organization, address1, address2, city, state, postalCode, initial_program_prompt, next_program_prompt, therapy_response_prompt, expires_at, duration_start, duration_end, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-        [id, org_code, organization, address1, address2, city, state, postalCode, initial_program_prompt, next_program_prompt, therapy_response_prompt, expires_at, duration_start, duration_end]
+        [id, org_code, organization, address1, address2, city, state, postalCode, initial_program_prompt, next_program_prompt, therapy_response_prompt, normalizedExpiresAt, normalizedDurationStart, normalizedDurationEnd]
       );
 
       return this.getOrgCodeById(id);
@@ -215,10 +244,11 @@ class OrgCode {
     const fields = [];
     const values = [];
 
+    const dateFields = new Set(['expires_at', 'duration_start', 'duration_end']);
     for (const key of allowed) {
       if (Object.prototype.hasOwnProperty.call(updateData, key)) {
         fields.push(`${key} = ?`);
-        values.push(updateData[key]);
+        values.push(dateFields.has(key) ? this.toMysqlDateTime(updateData[key]) : updateData[key]);
       }
     }
 

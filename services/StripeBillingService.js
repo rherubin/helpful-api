@@ -14,6 +14,10 @@ const PREMIUM_STATUSES = new Set(['trialing', 'active']);
 
 function createMockStripe() {
   const customers = new Map();
+  const sessionsById = new Map();
+  // Include a process-unique prefix so restarts do not collide with leftover
+  // users.unique_stripe_customer_id rows from earlier mock runs (cus_mock_1…).
+  const runId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   let customerSeq = 0;
   let sessionSeq = 0;
   let subSeq = 0;
@@ -22,7 +26,7 @@ function createMockStripe() {
     customers: {
       create: async ({ email, metadata }) => {
         customerSeq += 1;
-        const id = `cus_mock_${customerSeq}`;
+        const id = `cus_mock_${runId}_${customerSeq}`;
         const customer = { id, email, metadata: metadata || {} };
         customers.set(id, customer);
         return customer;
@@ -42,36 +46,69 @@ function createMockStripe() {
         create: async (params) => {
           sessionSeq += 1;
           subSeq += 1;
-          return {
-            id: `cs_mock_${sessionSeq}`,
-            url: `https://checkout.stripe.com/c/pay/cs_mock_${sessionSeq}`,
+          const session = {
+            id: `cs_mock_${runId}_${sessionSeq}`,
+            url: `https://checkout.stripe.com/c/pay/cs_mock_${runId}_${sessionSeq}`,
             mode: params.mode,
+            status: 'open',
             client_reference_id: params.client_reference_id || null,
             metadata: params.metadata || {},
-            subscription: `sub_mock_${subSeq}`,
+            subscription: `sub_mock_${runId}_${subSeq}`,
             customer: params.customer
           };
+          sessionsById.set(session.id, session);
+          return session;
         },
-        retrieve: async (id, opts = {}) => ({
-          id,
-          mode: 'subscription',
-          client_reference_id: null,
-          metadata: {},
-          subscription: typeof opts.expand?.[0] === 'string'
-            ? {
-                id: `sub_mock_${subSeq || 1}`,
-                status: 'trialing',
-                items: {
-                  data: [{ price: { id: process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly' } }]
-                },
-                trial_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
-                current_period_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
-                cancel_at_period_end: false,
-                metadata: {}
-              }
-            : `sub_mock_${subSeq || 1}`,
-          customer: 'cus_mock_1'
-        })
+        list: async ({ customer, status, limit = 10 } = {}) => {
+          let data = [...sessionsById.values()].filter((s) => s.customer === customer);
+          if (status) data = data.filter((s) => s.status === status);
+          return { data: data.slice(0, limit) };
+        },
+        // Test helpers: mark sessions complete so later checkouts are not stuck
+        // behind forever-open mock sessions after webhook processing.
+        complete: async (id) => {
+          const stored = sessionsById.get(id);
+          if (stored) stored.status = 'complete';
+          return stored || null;
+        },
+        completeOpenForCustomer: async (customerId) => {
+          if (!customerId) return 0;
+          let count = 0;
+          for (const session of sessionsById.values()) {
+            if (session.customer === customerId && session.status === 'open') {
+              session.status = 'complete';
+              count += 1;
+            }
+          }
+          return count;
+        },
+        retrieve: async (id, opts = {}) => {
+          const stored = sessionsById.get(id);
+          const base = stored || {
+            id,
+            mode: 'subscription',
+            status: 'open',
+            client_reference_id: null,
+            metadata: {},
+            customer: `cus_mock_${runId}_fallback`
+          };
+          return {
+            ...base,
+            subscription: typeof opts.expand?.[0] === 'string'
+              ? {
+                  id: typeof base.subscription === 'string' ? base.subscription : `sub_mock_${runId}_${subSeq || 1}`,
+                  status: 'trialing',
+                  items: {
+                    data: [{ price: { id: process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly' } }]
+                  },
+                  trial_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
+                  current_period_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
+                  cancel_at_period_end: false,
+                  metadata: base.metadata || {}
+                }
+              : (base.subscription || `sub_mock_${runId}_${subSeq || 1}`)
+          };
+        }
       }
     },
     billingPortal: {
@@ -93,7 +130,7 @@ function createMockStripe() {
         current_period_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
         cancel_at_period_end: false,
         metadata: {},
-        customer: 'cus_mock_1'
+        customer: `cus_mock_${runId}_fallback`
       })
     },
     webhooks: {
@@ -237,47 +274,103 @@ class StripeBillingService {
     this.assertConfigured();
     const normalizedPlan = this.normalizePlan(plan);
     const { successUrl, cancelUrl } = this.resolveCheckoutUrls({ success_url, cancel_url });
-    const user = await this.userModel.getUserById(userId);
-
-    // Block a second Checkout while trialing/active — otherwise the client can
-    // open another paid subscription and double-charge. Manage plan changes via Portal.
-    const existingActive = await this.stripeSubscriptionModel.getActiveForUser(userId);
-    if (existingActive) {
-      throw new StripeBillingError(
-        'An active Stripe subscription already exists. Use the billing portal to manage it.',
-        { status: 409, code: 'subscription_already_active' }
-      );
-    }
-
-    const customerId = await this.ensureStripeCustomer(user);
     const priceId = this.priceIdForPlan(normalizedPlan);
 
-    const session = await this.stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer: customerId,
-      client_reference_id: userId,
-      line_items: [{ price: priceId, quantity: 1 }],
-      subscription_data: {
-        trial_period_days: this.trialPeriodDays,
+    // Serialize checkout creation per user. getActiveForUser alone is not enough:
+    // Checkout sessions exist before webhooks write stripe_subscriptions, so two
+    // POSTs before completion can both pass the DB check and double-bill.
+    const conn = await this.userModel.db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [userRows] = await conn.execute(
+        'SELECT * FROM users WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+        [userId]
+      );
+      const user = userRows[0];
+      if (!user) {
+        throw new StripeBillingError('User not found', { status: 404 });
+      }
+
+      const [activeRows] = await conn.execute(
+        `SELECT id FROM stripe_subscriptions
+         WHERE user_id = ? AND status IN ('trialing', 'active')
+         LIMIT 1`,
+        [userId]
+      );
+      if (activeRows.length > 0) {
+        throw new StripeBillingError(
+          'An active Stripe subscription already exists. Use the billing portal to manage it.',
+          { status: 409, code: 'subscription_already_active' }
+        );
+      }
+
+      let customerId = user.stripe_customer_id;
+      if (!customerId) {
+        const customer = await this.stripe.customers.create({
+          email: user.email,
+          metadata: { user_id: userId }
+        });
+        customerId = customer.id;
+        await conn.execute(
+          'UPDATE users SET stripe_customer_id = ?, updated_at = NOW() WHERE id = ?',
+          [customerId, userId]
+        );
+      }
+
+      // Block while Stripe still has an open Checkout for this customer.
+      if (typeof this.stripe.checkout?.sessions?.list === 'function') {
+        const openSessions = await this.stripe.checkout.sessions.list({
+          customer: customerId,
+          status: 'open',
+          limit: 1
+        });
+        if (openSessions?.data?.length) {
+          throw new StripeBillingError(
+            'A checkout session is already open. Complete or abandon it before starting another, or use the billing portal.',
+            { status: 409, code: 'checkout_already_open' }
+          );
+        }
+      }
+
+      const session = await this.stripe.checkout.sessions.create({
+        mode: 'subscription',
+        customer: customerId,
+        client_reference_id: userId,
+        line_items: [{ price: priceId, quantity: 1 }],
+        subscription_data: {
+          trial_period_days: this.trialPeriodDays,
+          metadata: {
+            user_id: userId,
+            plan: normalizedPlan
+          }
+        },
         metadata: {
           user_id: userId,
           plan: normalizedPlan
-        }
-      },
-      metadata: {
-        user_id: userId,
-        plan: normalizedPlan
-      },
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      allow_promotion_codes: true
-    });
+        },
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        allow_promotion_codes: true
+      });
 
-    return {
-      url: session.url,
-      session_id: session.id,
-      plan: normalizedPlan
-    };
+      await conn.commit();
+
+      return {
+        url: session.url,
+        session_id: session.id,
+        plan: normalizedPlan
+      };
+    } catch (error) {
+      try {
+        await conn.rollback();
+      } catch (_) {
+        /* ignore rollback errors */
+      }
+      throw error;
+    } finally {
+      conn.release();
+    }
   }
 
   async createPortalSession(userId, { return_url } = {}) {
@@ -391,6 +484,32 @@ class StripeBillingService {
   async handleCheckoutSessionCompleted(session) {
     const userId = session.client_reference_id || session.metadata?.user_id || null;
     const plan = session.metadata?.plan || null;
+
+    // Mark mock Checkout sessions complete so a later re-subscribe is not
+    // blocked by a forever-open session left over from the first checkout.
+    // Webhook fixtures may use a different session id than the one create()
+    // returned, so also clear by customer.
+    try {
+      if (session?.id && typeof this.stripe.checkout?.sessions?.complete === 'function') {
+        await this.stripe.checkout.sessions.complete(session.id);
+      }
+      const customerId = typeof session?.customer === 'string'
+        ? session.customer
+        : session?.customer?.id;
+      if (customerId && typeof this.stripe.checkout?.sessions?.completeOpenForCustomer === 'function') {
+        await this.stripe.checkout.sessions.completeOpenForCustomer(customerId);
+      }
+      // Fall back: complete open sessions for the mapped user customer.
+      const mappedUserId = session?.client_reference_id || session?.metadata?.user_id || null;
+      if (mappedUserId && typeof this.stripe.checkout?.sessions?.completeOpenForCustomer === 'function') {
+        const mappedUser = await this.userModel.getUserById(mappedUserId).catch(() => null);
+        if (mappedUser?.stripe_customer_id) {
+          await this.stripe.checkout.sessions.completeOpenForCustomer(mappedUser.stripe_customer_id);
+        }
+      }
+    } catch (_) {
+      /* non-fatal */
+    }
 
     let stripeSubscription = session.subscription;
     if (typeof stripeSubscription === 'string') {

@@ -67,8 +67,10 @@ function createPairingRoutes(pairingService, authService, pushNotificationServic
         return res.status(400).json({ error: error.message });
       } else if (error.message === 'You are already paired with this user') {
         return res.status(409).json({ error: error.message });
-      } else if (error.message.includes('reached your maximum number of pairings')) {
+      } else if (error.message.includes('maximum number of pairings')) {
         return res.status(400).json({ error: error.message });
+      } else if (error.message === 'User not found') {
+        return res.status(404).json({ error: error.message });
       } else {
         return res.status(500).json({ error: 'Failed to accept pairing' });
       }
@@ -187,61 +189,35 @@ function createPairingRoutes(pairingService, authService, pushNotificationServic
     }
   });
 
-  // Restore a soft deleted pairing — only a former member may restore
+  // Restore a soft deleted pairing — only a former member may restore.
+  // Cap checks run inside a transaction with row locks (see restorePairingAtomic).
   router.patch('/:pairingId/restore', authenticateToken, async (req, res) => {
     try {
       const { pairingId } = req.params;
       const userId = req.user.id;
-
-      // Active getPairingDetails excludes soft-deleted rows; load including deleted for authz.
       const pairingModel = pairingService.pairingModel;
-      let pairing;
-      try {
-        pairing = await pairingModel.getPairingByIdIncludingDeleted(pairingId);
-      } catch (lookupError) {
-        return res.status(404).json({ error: 'Pairing not found' });
-      }
 
-      if (pairing.user1_id !== userId && pairing.user2_id !== userId) {
-        return res.status(403).json({ error: 'You are not authorized to restore this pairing' });
-      }
-
-      if (!pairing.deleted_at) {
-        return res.status(404).json({ error: 'Pairing not found or not deleted' });
-      }
-
-      // Restoring an accepted pairing must not push either member over max_pairings
-      // (e.g. after cascade soft-delete freed a slot and they rematched).
-      if (pairing.status === 'accepted' && userModel) {
-        for (const memberId of [pairing.user1_id, pairing.user2_id].filter(Boolean)) {
-          let member;
-          try {
-            member = await userModel.getUserById(memberId);
-          } catch (memberError) {
-            if (memberError.message === 'User not found') {
-              return res.status(400).json({
-                error: 'Cannot restore pairing: a member account is deleted'
-              });
-            }
-            throw memberError;
-          }
-          const acceptedCount = await pairingModel.countAcceptedPairings(memberId);
-          if (acceptedCount >= member.max_pairings) {
-            return res.status(400).json({
-              error: 'Cannot restore pairing: a member has reached their maximum number of pairings'
-            });
-          }
-        }
-      }
-
-      const result = await pairingModel.restorePairing(pairingId);
+      const result = await pairingModel.restorePairingAtomic(pairingId, {
+        requireMemberUserId: userId
+      });
       res.status(200).json(result);
     } catch (error) {
-      if (error.message === 'Pairing not found' || error.message === 'Pairing not found or not deleted') {
-        return res.status(404).json({ error: error.message });
-      } else {
-        return res.status(500).json({ error: 'Failed to restore pairing' });
+      if (error.message === 'You are not authorized to restore this pairing') {
+        return res.status(403).json({ error: error.message });
       }
+      if (
+        error.message === 'Pairing not found' ||
+        error.message === 'Pairing not found or not deleted'
+      ) {
+        return res.status(404).json({ error: error.message });
+      }
+      if (
+        error.message.includes('maximum number of pairings') ||
+        error.message.includes('member account is deleted')
+      ) {
+        return res.status(400).json({ error: error.message });
+      }
+      return res.status(500).json({ error: 'Failed to restore pairing' });
     }
   });
 

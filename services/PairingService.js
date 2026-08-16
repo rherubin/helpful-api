@@ -100,72 +100,11 @@ class PairingService {
     }
   }
 
-  // Accept a pairing request by partner code
+  // Accept a pairing request by partner code.
+  // Cap checks + accept + leftover-invite cleanup run in one transaction so
+  // concurrent accepts cannot race past max_pairings.
   async acceptPairingByCode(userId, partnerCode) {
-    try {
-      // Find the pending pairing with the given partner code
-      const pairing = await this.pairingModel.getPendingPairingByPartnerCode(partnerCode);
-      
-      if (!pairing) {
-        throw new Error('No pending pairing found for this partner code');
-      }
-
-      // Check if user is trying to accept their own pairing request
-      if (pairing.user1_id === userId) {
-        throw new Error('You cannot accept your own pairing request');
-      }
-
-      // Get the accepting user
-      const acceptingUser = await this.userModel.getUserById(userId);
-      
-      // Check if accepting user has reached their max pairings
-      const acceptingUserPairings = await this.pairingModel.countAcceptedPairings(userId);
-      if (acceptingUserPairings >= acceptingUser.max_pairings) {
-        throw new Error('You have reached your maximum number of pairings');
-      }
-
-      // Also enforce the requester's cap. Signup auto-creates a pending partner
-      // code; if the requester later accepts someone else's code, their leftover
-      // pending invite must not still be redeemable past max_pairings.
-      const requester = await this.userModel.getUserById(pairing.user1_id);
-      const requesterPairings = await this.pairingModel.countAcceptedPairings(pairing.user1_id);
-      if (requesterPairings >= requester.max_pairings) {
-        throw new Error('The pairing requester has reached their maximum number of pairings');
-      }
-
-      // Check if they're already paired
-      const existingPairing = await this.pairingModel.checkExistingPairing(pairing.user1_id, userId);
-      if (existingPairing && existingPairing.id !== pairing.id) {
-        throw new Error('You are already paired with this user');
-      }
-
-      // Accept the pairing by partner code
-      await this.pairingModel.acceptPairingByPartnerCode(partnerCode, userId);
-
-      // Invalidate leftover open partner-code invites for both members so a
-      // second accept cannot push either side over max_pairings.
-      try {
-        await this.pairingModel.softDeleteOpenPartnerCodeRequests(userId);
-        await this.pairingModel.softDeleteOpenPartnerCodeRequests(pairing.user1_id);
-      } catch (cleanupError) {
-        console.warn('Warning: Failed to clear leftover partner codes after accept:', cleanupError.message);
-      }
-      
-      return {
-        message: 'Pairing accepted successfully',
-        pairing: {
-          id: pairing.id,
-          partner_code: partnerCode,
-          requester: {
-            id: pairing.user1_id,
-            user_name: pairing.user1_user_name,
-            email: pairing.user1_email
-          }
-        }
-      };
-    } catch (error) {
-      throw error;
-    }
+    return this.pairingModel.acceptPairingByPartnerCodeAtomic(partnerCode, userId);
   }
 
   // Reject a pairing request

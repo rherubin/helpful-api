@@ -26,9 +26,12 @@ function createAdminAuthRoutes(adminAuthService, adminUserModel) {
 
   // Admin login endpoint with security measures
   router.post('/login', loginLimiter, async (req, res) => {
-    try {
-      const { email, password } = req.body;
+    // Destructure outside try so the catch block can record failed attempts.
+    // Previously `const { email }` lived inside try; catch referenced `email` and
+    // threw ReferenceError → unhandledRejection → process.exit(1) (API DoS).
+    const { email, password } = req.body || {};
 
+    try {
       // Validation
       if (!email || !password) {
         return res.status(400).json({
