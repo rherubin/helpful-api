@@ -211,6 +211,42 @@ class SecurityTestRunner {
       isValidProgram.toString()
     );
 
+    // theme must fit program_steps.theme VARCHAR(255)
+    const themeAtLimit = {
+      program: {
+        title: '14-Day Connection Program',
+        days: Array.from({ length: 14 }, (_, i) => ({
+          day: i + 1,
+          theme: 'x'.repeat(255),
+          conversation_starter: "Let's talk about how we can better understand each other's needs and feelings in our relationship.",
+          science_behind_it: 'Research in couples therapy shows that when partners actively listen and validate each other\'s emotions, it strengthens their emotional bond and increases relationship satisfaction.'
+        }))
+      }
+    };
+    const themeTooLong = {
+      program: {
+        title: '14-Day Connection Program',
+        days: Array.from({ length: 14 }, (_, i) => ({
+          day: i + 1,
+          theme: 'x'.repeat(256),
+          conversation_starter: "Let's talk about how we can better understand each other's needs and feelings in our relationship.",
+          science_behind_it: 'Research in couples therapy shows that when partners actively listen and validate each other\'s emotions, it strengthens their emotional bond and increases relationship satisfaction.'
+        }))
+      }
+    };
+    this.assert(
+      this.chatService.validateProgramStructure(themeAtLimit) === true,
+      'Theme of 255 chars is accepted (VARCHAR(255) max)',
+      'true (valid)',
+      String(this.chatService.validateProgramStructure(themeAtLimit))
+    );
+    this.assert(
+      this.chatService.validateProgramStructure(themeTooLong) === false,
+      'Theme of 256 chars is rejected (exceeds VARCHAR(255))',
+      'false (invalid)',
+      String(this.chatService.validateProgramStructure(themeTooLong))
+    );
+
     invalidPrograms.forEach((program, index) => {
       const isValid = this.chatService.validateProgramStructure(program);
       this.assert(
