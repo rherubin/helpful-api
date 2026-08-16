@@ -386,6 +386,15 @@ function setupRoutes() {
           return res.status(400).json({ error: 'date must be a valid epoch integer' });
         }
 
+        // Ownership/membership gate — do not leak engagement stats across users.
+        if (!programModel || typeof programModel.checkProgramAccess !== 'function') {
+          return res.status(503).json({ error: 'Program access checks unavailable' });
+        }
+        const hasAccess = await programModel.checkProgramAccess(req.user.id, programId);
+        if (!hasAccess) {
+          return res.status(403).json({ error: 'Not authorized to access this program' });
+        }
+
         const stats = await messageModel.getMessageStatsSinceDate(epochTimestamp, programId);
         res.status(200).json(stats);
       } catch (error) {

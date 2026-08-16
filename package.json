@@ -26,6 +26,7 @@
     "test:prompt-session-generate-demo": "node tests/prompt-session-generate-demo.js",
     "test:pairing-lifecycle": "node tests/pairing-lifecycle-test.js",
     "test:user-soft-delete": "node tests/user-soft-delete-test.js",
+    "test:authz-idor": "node tests/authz-idor-regression-test.js",
     "purge:prompt-sessions": "node scripts/purge-prompt-sessions.js",
     "purge:prompt-sessions:confirm": "node scripts/purge-prompt-sessions.js --confirm"
   },

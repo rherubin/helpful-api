@@ -8,7 +8,7 @@ For API surface and product behavior, see the root [README.md](../README.md).
 
 ```bash
 # Terminal 1 — mock LLM + push
-TEST_MOCK_LLM=true TEST_MOCK_PUSH=true npm start
+TEST_MOCK_LLM=true TEST_MOCK_PUSH=true TEST_MOCK_IAP=true npm start
 
 # Terminal 2
 npm test                 # full suite
@@ -68,6 +68,7 @@ Skip categories with flags, e.g. `--no-load`, `--no-pairing-lifecycle`, `--no-us
 | `npm run test:therapy-trigger` | `therapy-trigger-test.js` |
 | `npm run test:pairing-lifecycle` | `pairing-lifecycle-test.js` |
 | `npm run test:user-soft-delete` | `user-soft-delete-test.js` |
+| `npm run test:authz-idor` | `authz-idor-regression-test.js` (pairing/user/messages-stats ownership + admin register gate) |
 | `npm run test:push` | `push-notification-service-test.js` |
 | `npm run test:admin-push` | `admin-push-test-test.js` |
 | `npm run test:prompt-sessions` | `prompt-sessions-test.js` (solo + paired + pending + `generation_status`) |
@@ -100,7 +101,7 @@ Run with `node tests/<file>.js` when needed.
 **Thin / untested product edges:**
 - Admin auth profile / refresh / logout as a dedicated suite (login/register used as setup elsewhere)
 - Org-codes admin GET-by-id and PUT as first-class cases
-- `POST /api/token-info`, `GET /api/messages-stats`
+- `POST /api/token-info`
 - `GET /api/users/deleted/all`, `GET /api/pairing/deleted/all`
 
 Do not add real OpenAI suites to `npm test` without an explicit decision to spend tokens.
@@ -113,6 +114,8 @@ Do not add real OpenAI suites to `npm test` without an explicit decision to spen
 |----------|------|
 | `TEST_MOCK_LLM=true` | Deterministic LLM mocks; also bypasses some rate limits |
 | `TEST_MOCK_PUSH=true` | Mock FCM for admin push-test / push paths |
+| `TEST_MOCK_IAP=true` | Required for `POST /api/subscription` receipt tests (otherwise **503**) |
+| `TEST_MOCK_STRIPE=true` | Mock Stripe Checkout/webhooks |
 | `TEST_MOCK_OPENAI=true` | Skip waiting for async step generation in some suites |
 | `TEST_BASE_URL` | Override default `http://127.0.0.1:9000` |
 | `TEST_REPORT_FILE` | If set, `run-all-tests.js` writes a JSON report |

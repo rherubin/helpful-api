@@ -114,6 +114,9 @@ OPENAI_API_KEY=your-openai-api-key
 | `TEST_MOCK_LLM_DELAY_MS` | No | `0` | Holds each mocked LLM call open this long, so tests can observe a generation mid-flight (concurrency assertions). Test-only |
 | `PROMPT_SESSION_GENERATION_LEASE_MS` | No | `600000` | How long a Sit Session `generation_status = 'running'` row is trusted before `POST .../generate` may reclaim it |
 | `TEST_MOCK_PUSH` | No | — | Mock FCM success |
+| `TEST_MOCK_IAP` | No | — | Trust client IAP receipt fields (`POST /api/subscription`). Required for subscription tests; otherwise **503** |
+| `ALLOW_ADMIN_REGISTRATION` | No | — | Opt-in open `POST /api/admin/auth/register`. Also allowed when `TEST_MOCK_LLM`/`TEST_MOCK_STRIPE` is true, or no admins exist yet |
+| `ADMIN_REGISTRATION_SECRET` | No | — | Alternate admin-register unlock (header `x-admin-registration-secret` or body `registration_secret`) |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` / `_PATH` | No | — | Real FCM |
 | `USER_UPDATE_RATE_LIMIT` | No | `3` | ≤0 disables |
 | `DEVICE_TOKEN_RATE_LIMIT` | No | `10` | ≤0 disables |
@@ -332,7 +335,7 @@ Also sets `Authorization: Bearer …` response header.
 
 #### GET `/api/users/:id`
 
-Auth required. Returns flat user + computed `premium` + org summary fields. **Not** restricted to self in code.
+Auth required; **must be self** (`req.user.id` must match `:id`). Returns flat user + computed `premium` + org summary fields. Outsiders get **403**.
 
 #### PUT `/api/users/:id`
 
@@ -362,7 +365,7 @@ Soft-delete / restore / list deleted. Delete and restore are **self-gated** (`re
 | GET | `/api/pairing/pending` | Pending only |
 | GET | `/api/pairing/accepted` | Accepted only |
 | GET | `/api/pairing/stats` | `max_pairings`, `current_pairings`, `available_slots`, `pending_requests` |
-| GET | `/api/pairing/:pairingId` | Detail (active only; soft-deleted → not found) |
+| GET | `/api/pairing/:pairingId` | Detail (**participant only**; soft-deleted → not found; **403** outsider) |
 | DELETE | `/api/pairing/:pairingId` | Soft-delete (**participant only**); **403** outsider |
 | PATCH | `/api/pairing/:pairingId/restore` | Restore soft-deleted pairing (**member only**). **400** if restoring would push a member over `max_pairings`, or a member account is deleted |
 | GET | `/api/pairing/deleted/all` | Soft-deleted list (**admin** JWT only; regular users **403**) |
@@ -438,7 +441,7 @@ Message types: `user_message`, `system`, legacy `openai_response`.
 
 #### POST `/api/subscription`
 
-Auth. Platform-specific body:
+Auth. Platform-specific body. Receipt fields are trusted only when `TEST_MOCK_IAP=true` (no App Store / Play verification is implemented yet); otherwise the endpoint returns **503**.
 
 **iOS:** `platform: "ios"`, `product_id`, `transaction_id`, `original_transaction_id`, `jws_receipt`, `environment` (`Production`|`Sandbox`), `purchase_date`, `expiration_date` (epoch **ms**).
 
@@ -500,7 +503,7 @@ Separate from app users (`admin_users` table). Same JWT secrets; access payload 
 | Method | Path | Auth | Notes |
 |--------|------|------|--------|
 | POST | `/api/admin/auth/login` | none | Body email/password; login limiter + lockout |
-| POST | `/api/admin/auth/register` | none | Creates admin — **protect/disable in production** |
+| POST | `/api/admin/auth/register` | gated | Creates admin — allowed only when `ALLOW_ADMIN_REGISTRATION=true`, or `ADMIN_REGISTRATION_SECRET` matches, or no admins exist yet (bootstrap) |
 | GET | `/api/admin/auth/profile` | admin | |
 | PUT | `/api/admin/auth/profile` | admin | email, names, children |
 | POST | `/api/admin/auth/refresh` | none | Body `refresh_token` |
@@ -990,7 +993,7 @@ Script: `scripts/purge-prompt-sessions.js`. This is a full wipe of Sit Session d
 
 #### GET `/api/messages-stats?date={epoch_seconds}&programId={id}`
 
-Auth required. `date` is Unix time in **seconds** (not ms).  
+Auth required; caller must have program access (`checkProgramAccess`) or **403**. `date` is Unix time in **seconds** (not ms).  
 Returns map: `{ "<step_id>": { "messageCount": N }, ... }`.
 
 ---
@@ -1159,7 +1162,7 @@ Sit Session create / prep / generate curls live under [Prompt sessions (“Sit S
 Requires a running API (unless `test:ci` / `--skip-server-check`) and MySQL. Prefer mock modes so CI does not spend OpenAI/FCM:
 
 ```bash
-TEST_MOCK_LLM=true TEST_MOCK_PUSH=true npm start
+TEST_MOCK_LLM=true TEST_MOCK_PUSH=true TEST_MOCK_IAP=true npm start
 # other terminal:
 npm test
 ```
@@ -1182,6 +1185,7 @@ Test emails use **`@example.com`** so `npm run test:cleanup` can remove them saf
 | `npm run test:therapy-trigger` | Auto therapy response when both partners post |
 | `npm run test:pairing-lifecycle` | Pairing reject / soft-delete / restore |
 | `npm run test:user-soft-delete` | User soft-delete / restore + pairing cascade |
+| `npm run test:authz-idor` | Pairing/user/messages-stats ownership + admin register gate |
 | `npm run test:push` | `PushNotificationService` unit tests (mocked FCM) |
 | `npm run test:admin-push` | `POST /api/admin/push-test` integration |
 | `npm run test:prompt-sessions` | Sit Sessions: solo + paired + pending pairing, prep, generate |

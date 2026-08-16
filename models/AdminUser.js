@@ -303,6 +303,18 @@ class AdminUser {
       throw new Error('Failed to fetch deleted admin users');
     }
   }
+
+  // Count active (non-deleted) admin users — used to allow first-admin bootstrap.
+  async countActiveAdminUsers() {
+    try {
+      const row = await this.queryOne(
+        'SELECT COUNT(*) AS count FROM admin_users WHERE deleted_at IS NULL'
+      );
+      return row?.count || 0;
+    } catch (err) {
+      throw new Error('Failed to count admin users');
+    }
+  }
 }
 
 module.exports = AdminUser;
