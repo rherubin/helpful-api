@@ -358,6 +358,29 @@ class User {
     );
   }
 
+  // Soft-deleted accounts still receive Stripe webhooks (cancel/renew). Look up by
+  // customer id including deleted rows so premium can be reconciled while deleted.
+  async getUserByStripeCustomerIdIncludingDeleted(stripeCustomerId) {
+    if (!stripeCustomerId) return null;
+    return this.queryOne(
+      'SELECT * FROM users WHERE stripe_customer_id = ?',
+      [stripeCustomerId]
+    );
+  }
+
+  // Write is_premium without requiring the user to be non-deleted (webhook sync
+  // during soft-delete) and without the getUserById round-trip in updateUser.
+  async setIsPremium(userId, isPremium) {
+    const result = await this.query(
+      'UPDATE users SET is_premium = ?, updated_at = NOW() WHERE id = ?',
+      [isPremium ? 1 : 0, userId]
+    );
+    if (result.affectedRows === 0) {
+      throw new Error('User not found');
+    }
+    return { id: userId, is_premium: !!isPremium };
+  }
+
   // Get user by email including soft-deleted rows (login/restore recovery)
   async getUserByEmailIncludingDeleted(email) {
     try {
@@ -454,12 +477,23 @@ class User {
       if (result.affectedRows === 0) {
         throw new Error('User not found');
       }
-      // Get updated user data
-      return await this.getUserById(id);
+      // Get updated user data (including soft-deleted when only internal fields changed)
+      try {
+        return await this.getUserById(id);
+      } catch (fetchErr) {
+        if (fetchErr.message === 'User not found') {
+          return this.getUserByIdIncludingDeleted(id);
+        }
+        throw fetchErr;
+      }
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
+        const detail = String(err.message || '');
+        if (detail.includes('stripe_customer_id') || detail.includes('unique_stripe_customer_id')) {
+          throw new Error('Stripe customer already linked to another user');
+        }
         throw new Error('Email already exists');
-      } else if (err.message === 'User not found') {
+      } else if (err.message === 'User not found' || err.message === 'Stripe customer already linked to another user') {
         throw err;
       } else {
         throw new Error('Failed to update user');

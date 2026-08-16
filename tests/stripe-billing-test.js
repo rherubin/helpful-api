@@ -437,6 +437,109 @@ class StripeBillingTestRunner {
     }
   }
 
+  /**
+   * Soft-delete must cancel active Stripe subscriptions and clear is_premium.
+   * Previously soft-delete left Stripe billing intact and webhook sync threw on
+   * getUserById (deleted_at set), so restores could keep free premium / miss paid premium.
+   */
+  async testSoftDeleteCancelsStripeAndWebhookSyncWhileDeleted() {
+    this.log('Testing soft-delete cancels Stripe + webhook sync while deleted', 'section');
+    const user = await this.createTestUser('stripe-billing-softdelete');
+    if (!user) {
+      this.assert(false, 'Create soft-delete billing test user');
+      return;
+    }
+
+    try {
+      const subId = `sub_softdelete_${Date.now()}`;
+      const customerId = `cus_sd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const activate = await this.postWebhook({
+        id: `evt_sd_act_${Date.now()}`,
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: `cs_sd_${Date.now()}`,
+            mode: 'subscription',
+            client_reference_id: user.id,
+            customer: customerId,
+            metadata: { user_id: user.id, plan: 'yearly' },
+            subscription: this.buildSubscriptionObject(user, {
+              id: subId,
+              status: 'trialing',
+              customer: customerId
+            })
+          }
+        }
+      });
+      this.assert(
+        activate.status === 200,
+        'Activate webhook before soft-delete returns 200',
+        `status=${activate.status} body=${JSON.stringify(activate.data)}`
+      );
+
+      const preStatus = await axios.get(`${this.baseURL}/api/billing/status`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(preStatus.data.premium === true, 'User is premium before soft-delete');
+
+      const delRes = await axios.delete(`${this.baseURL}/api/users/${user.id}`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(delRes.status === 200, 'Soft-delete returns 200');
+      this.assert(
+        Array.isArray(delRes.data.canceled_stripe_subscriptions)
+          && delRes.data.canceled_stripe_subscriptions.includes(subId),
+        'Soft-delete cancels the active Stripe subscription id',
+        JSON.stringify(delRes.data.canceled_stripe_subscriptions)
+      );
+
+      const cancelWhileDeleted = await this.postWebhook({
+        id: `evt_sd_cancel_${Date.now()}`,
+        type: 'customer.subscription.deleted',
+        data: {
+          object: this.buildSubscriptionObject(user, { id: subId, status: 'canceled' })
+        }
+      });
+      this.assert(
+        cancelWhileDeleted.status === 200,
+        'Cancel webhook while soft-deleted returns 200',
+        `status=${cancelWhileDeleted.status} body=${JSON.stringify(cancelWhileDeleted.data)}`
+      );
+
+      const loginRes = await axios.post(`${this.baseURL}/api/login`, {
+        email: user.email,
+        password: 'SecurePass987!'
+      }, { timeout: this.timeout });
+      this.assert(loginRes.status === 200, 'Login restores soft-deleted billing user');
+      const restoredToken = loginRes.data?.data?.access_token;
+      this.assert(!!restoredToken, 'Restored login returns access token');
+
+      const statusRes = await axios.get(`${this.baseURL}/api/billing/status`, {
+        headers: { Authorization: `Bearer ${restoredToken}` },
+        timeout: this.timeout
+      });
+      this.assert(statusRes.status === 200, 'Billing status after restore returns 200');
+      this.assert(
+        statusRes.data.premium === false,
+        'Restored user is not premium after soft-delete canceled Stripe',
+        `premium=${statusRes.data.premium} is_premium=${statusRes.data.is_premium} status=${statusRes.data.subscription?.status}`
+      );
+      this.assert(
+        statusRes.data.is_premium === false,
+        'users.is_premium is false after soft-delete cancel path',
+        `is_premium=${statusRes.data.is_premium}`
+      );
+    } catch (error) {
+      this.assert(
+        false,
+        'Soft-delete cancels Stripe + webhook sync while deleted',
+        error.response?.data?.error || error.message
+      );
+    }
+  }
+
   async runAllTests() {
     this.log('Starting Stripe Billing tests', 'section');
 
@@ -461,6 +564,7 @@ class StripeBillingTestRunner {
     await this.testPortalSession(user);
     await this.testStripePremiumSurvivesIncompleteCustomOrg(user);
     await this.testOrgPremiumSurvivesStripeCancel();
+    await this.testSoftDeleteCancelsStripeAndWebhookSyncWhileDeleted();
 
     this.log(`Results: ${this.testResults.passed}/${this.testResults.total} passed`, 'info');
     return this.testResults.failed === 0;

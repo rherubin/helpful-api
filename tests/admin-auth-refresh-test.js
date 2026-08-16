@@ -196,11 +196,50 @@ class AdminAuthRefreshTestRunner {
     );
   }
 
+  async runExpiresInSecondsCoercionTest() {
+    this.log('Admin JWT expiresIn uses seconds (not ms) when env is a string', 'section');
+
+    const prevAccess = process.env.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS;
+    const prevRefresh = process.env.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS;
+    process.env.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS = '86400';
+    process.env.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS = '1209600';
+
+    try {
+      const user = { id: 'admin-exp', email: 'adminexp@example.com' };
+      const refreshModel = this.buildRefreshModel();
+      const service = new AdminAuthService(this.buildAdminUserModel(user), refreshModel);
+      const access = service.generateAccessToken(user);
+      const refresh = service.generateRefreshToken(user);
+      const accessDecoded = jwt.decode(access);
+      const refreshDecoded = jwt.decode(refresh);
+      const accessTtl = accessDecoded.exp - accessDecoded.iat;
+      const refreshTtl = refreshDecoded.exp - refreshDecoded.iat;
+
+      // String "86400" without Number() would be ~86s (ms). Expect ~86400s.
+      this.assert(
+        accessTtl >= 86000 && accessTtl <= 87000,
+        'Access token TTL is ~86400 seconds when env is numeric string',
+        `ttl=${accessTtl}`
+      );
+      this.assert(
+        refreshTtl >= 1200000 && refreshTtl <= 1210000,
+        'Refresh token TTL is ~1209600 seconds when env is numeric string',
+        `ttl=${refreshTtl}`
+      );
+    } finally {
+      if (prevAccess === undefined) delete process.env.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS;
+      else process.env.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS = prevAccess;
+      if (prevRefresh === undefined) delete process.env.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS;
+      else process.env.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS = prevRefresh;
+    }
+  }
+
   async runAllTests() {
     this.log('Starting AdminAuthService refresh unit tests', 'section');
     try {
       await this.runRefreshRotationTests();
       await this.runLoginClearsPriorTokensTests();
+      await this.runExpiresInSecondsCoercionTest();
     } catch (error) {
       this.log(`Unexpected suite error: ${error.stack || error.message}`, 'fail');
       this.testResults.failed++;

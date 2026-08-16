@@ -131,6 +131,30 @@ function createMockStripe() {
         cancel_at_period_end: false,
         metadata: {},
         customer: `cus_mock_${runId}_fallback`
+      }),
+      cancel: async (id) => ({
+        id,
+        status: 'canceled',
+        items: {
+          data: [{ price: { id: process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly' } }]
+        },
+        trial_end: null,
+        current_period_end: Math.floor(Date.now() / 1000),
+        cancel_at_period_end: false,
+        metadata: {},
+        customer: `cus_mock_${runId}_fallback`
+      }),
+      update: async (id, params = {}) => ({
+        id,
+        status: 'active',
+        items: {
+          data: [{ price: { id: process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly' } }]
+        },
+        trial_end: null,
+        current_period_end: Math.floor(Date.now() / 1000) + 30 * 24 * 3600,
+        cancel_at_period_end: !!params.cancel_at_period_end,
+        metadata: {},
+        customer: `cus_mock_${runId}_fallback`
       })
     },
     webhooks: {
@@ -426,9 +450,12 @@ class StripeBillingService {
 
   async syncPremiumForUser(userId) {
     const active = await this.stripeSubscriptionModel.getActiveForUser(userId);
-    const user = await this.userModel.getUserById(userId);
+    // Soft-deleted users still own Stripe customers/subscriptions. Webhooks must
+    // reconcile is_premium while deleted_at IS NOT NULL — getUserById would throw
+    // and leave billed users without (or with stale) premium after restore.
+    const user = await this.userModel.getUserByIdIncludingDeleted(userId);
     const shouldBePremium = !!active || this.premiumEntitledFromOrg(user);
-    await this.userModel.updateUser(userId, { is_premium: shouldBePremium });
+    await this.userModel.setIsPremium(userId, shouldBePremium);
     return shouldBePremium;
   }
 
@@ -460,7 +487,7 @@ class StripeBillingService {
       ? stripeSubscription.customer
       : stripeSubscription.customer?.id;
     if (customerId) {
-      const user = await this.userModel.getUserByStripeCustomerId(customerId);
+      const user = await this.userModel.getUserByStripeCustomerIdIncludingDeleted(customerId);
       if (user) return user.id;
     }
 
@@ -537,6 +564,44 @@ class StripeBillingService {
     }
 
     return this.applyStripeSubscription(stripeSubscription, { userId, plan });
+  }
+
+  // Cancel every trialing/active Stripe subscription for a user. Used on account
+  // soft-delete so deleted accounts are not left billed with no in-app premium.
+  async cancelActiveSubscriptionsForUser(userId) {
+    let activeRows = [];
+    if (typeof this.stripeSubscriptionModel.getAllActiveForUser === 'function') {
+      activeRows = await this.stripeSubscriptionModel.getAllActiveForUser(userId);
+    } else {
+      const one = await this.stripeSubscriptionModel.getActiveForUser(userId);
+      activeRows = one ? [one] : [];
+    }
+
+    const canceledIds = [];
+    for (const row of activeRows) {
+      if (!row?.stripe_subscription_id) continue;
+      try {
+        let stripeSubscription;
+        if (typeof this.stripe.subscriptions.cancel === 'function') {
+          stripeSubscription = await this.stripe.subscriptions.cancel(row.stripe_subscription_id);
+        } else {
+          stripeSubscription = await this.stripe.subscriptions.retrieve(row.stripe_subscription_id);
+          stripeSubscription = { ...stripeSubscription, status: 'canceled' };
+        }
+        if (!stripeSubscription.metadata) stripeSubscription.metadata = {};
+        if (!stripeSubscription.metadata.user_id) {
+          stripeSubscription.metadata.user_id = userId;
+        }
+        await this.applyStripeSubscription(stripeSubscription, { userId, plan: row.plan });
+        canceledIds.push(row.stripe_subscription_id);
+      } catch (err) {
+        console.warn(
+          `[stripe-billing] Failed to cancel subscription ${row.stripe_subscription_id} for user ${userId}:`,
+          err.message
+        );
+      }
+    }
+    return canceledIds;
   }
 
   async handleSubscriptionEvent(stripeSubscription) {
