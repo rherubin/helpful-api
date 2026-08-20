@@ -824,7 +824,7 @@ Clients should bind UI to these fields only (not free-form prose blobs).
 | POST | `/api/prompt-sessions` | Body optional `{ "pairing_id" }` · **201** · **409** if an active session already exists |
 | GET | `/api/prompt-sessions` | Optional `?pairing_id=` · list; items include `bridge_content` / `session_content` when generated |
 | GET | `/api/prompt-sessions/:id` | Creator or pairing member · **primary read path** for Bridge/Session after generate or auto-generate |
-| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields. Response: `prep`, `both_preps_complete` |
+| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields. Strings only (≤2000 chars). Prompt-injection / jailbreak content → **400** `PREP_UNSAFE_INPUT`. Response: `prep`, `both_preps_complete` |
 | GET | `/api/prompt-sessions/:id/prep` | Own prep; partner answers only when both complete (paired). Solo: `partner_prep: null` |
 | PATCH | `/api/prompt-sessions/:id` | Body `status` and/or `current_phase` |
 | POST | `/api/prompt-sessions/:id/generate` | **Working** (solo or paired). **200** + full `prompt_session` with Bridge/Session · **409** `PREP_NOT_READY` or `GENERATION_RUNNING` (branch on `code`) · **503** LLM not configured · idempotent once `succeeded`; retries when `failed` |
@@ -843,6 +843,8 @@ Six required (all non-empty strings mark prep complete). API field names are sto
 | `bringing_text` | 6. In a free form text field, they've entered {{value}} |
 
 Optional: `optional_focus` (appended to free-form line 6 when present).
+
+Each field must be a string (or JSON `null` to clear). Control characters, code fences, role markers (`System:` / `Assistant:` at line start), and jailbreak/instruction-override phrases are rejected with **400** so they never enter `generation_prompt`. Generate-time sanitization in `HelpfulPromptService` remains as a second layer.
 
 Display names in the prompt come from each user's `user_name` (else email local-part). Creator is Partner A; when paired, the other member is Partner B. In solo/single-device mode (one prep), Partner 2 is typically labeled `"Partner"` in generated content.
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
 const PromptSession = require('../models/PromptSession');
+const { validatePrepAnswers } = require('../services/prepValidation');
 
 // Routes for "Sit Sessions" (internally `prompt_sessions`).
 //
@@ -436,15 +437,22 @@ function createPromptSessionRoutes(
         return res.status(403).json({ error: 'Not authorized to access this prompt session' });
       }
 
-      // Keep only recognized prep fields from the body.
-      const answers = {};
-      for (const field of PromptSession.PREP_FIELDS) {
-        if (Object.prototype.hasOwnProperty.call(req.body, field)) {
-          answers[field] = req.body[field];
-        }
+      // Keep only recognized prep fields and reject prompt-injection / unsafe
+      // payloads before they are stored or interpolated into Sit Session prompts.
+      const validation = validatePrepAnswers(req.body);
+      if (!validation.ok) {
+        return res.status(400).json({
+          error: validation.error,
+          field: validation.field || undefined,
+          code: validation.code
+        });
       }
 
-      const prep = await promptSessionModel.upsertPrep({ promptSessionId: id, userId, answers });
+      const prep = await promptSessionModel.upsertPrep({
+        promptSessionId: id,
+        userId,
+        answers: validation.answers
+      });
       const bothComplete = await promptSessionModel.bothPrepsComplete(id);
 
       res.status(200).json({
