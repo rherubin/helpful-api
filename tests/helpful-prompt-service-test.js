@@ -151,7 +151,15 @@ class HelpfulPromptServiceTestRunner {
 
     return {
       bridge: {
+        comparison: {
+          partner_1: 'Alex is arriving hopeful, wanting a gentle tone and more team energy.',
+          partner_2: 'Jordan is arriving honest about an empty tank and needing more patience.',
+          insight: 'Both want closeness, but they are entering with different energy levels tonight.',
+          ...(bridgeOverrides.comparison || {})
+        },
+        focus: bridgeOverrides.focus || 'Tonight is about slowing down enough to feel like a team again, even if your energy levels do not match.',
         psychoeducation: {
+          title: 'Turning Toward When Energy Is Uneven',
           body: 'When couples slow down and name what they feel, their nervous systems often settle enough for connection to return. Research on emotional attunement shows that brief, structured check-ins can reduce defensiveness and help partners feel safer reaching for each other.',
           references: [
             {
@@ -164,12 +172,6 @@ class HelpfulPromptServiceTestRunner {
             }
           ],
           ...(bridgeOverrides.psychoeducation || {})
-        },
-        comparison: {
-          partner_1: 'Alex is arriving hopeful, wanting a gentle tone and more team energy.',
-          partner_2: 'Jordan is arriving honest about an empty tank and needing more patience.',
-          insight: 'Both want closeness, but they are entering with different energy levels tonight.',
-          ...(bridgeOverrides.comparison || {})
         }
       },
       session: {
@@ -188,23 +190,23 @@ class HelpfulPromptServiceTestRunner {
           ...(sessionOverrides.conversation_starter || {})
         },
         challenge: {
-          title: 'Same Team Check-In',
+          title: 'The Hidden Team Token',
           steps: [
             {
               number: 1,
-              title: 'Face each other',
-              body: 'Sit close enough to make easy eye contact. Take one slow breath together before either of you speaks.',
-              bullets: ['Phones away', 'Knees or hands lightly touching if comfortable']
+              title: 'Choose an object',
+              body: 'Each of you silently pick a small object in the room that represents how you want to feel as a team tonight. Do not show it yet.',
+              bullets: ['Phones stay face-down', 'Any ordinary object is fine']
             },
             {
               number: 2,
-              title: 'Share reflections',
-              body: 'Take turns answering your reflection questions without interrupting. Listener only mirrors back one key feeling they heard.'
+              title: 'Exchange without speaking',
+              body: 'At the same time, place your object in your partner\'s hands. Hold theirs for ten seconds. No explaining yet.'
             },
             {
               number: 3,
-              title: 'Close with one next step',
-              body: 'Agree on one small action you can take together in the next 24 hours so you leave feeling more connected.'
+              title: 'Reveal with one gesture',
+              body: 'Still without words, make one physical gesture that shows what the object you received made you feel. Then set both objects together in the space between you.'
             }
           ],
           ...(sessionOverrides.challenge || {})
@@ -447,6 +449,14 @@ class HelpfulPromptServiceTestRunner {
 
       this.assert(!!result && !!result.bridge && !!result.session, 'Returns bridge + session objects');
       this.assert(
+        typeof result.bridge.focus === 'string' && result.bridge.focus.length >= 40,
+        'bridge.focus is a non-trivial paragraph'
+      );
+      this.assert(
+        typeof result.bridge.psychoeducation?.title === 'string' && result.bridge.psychoeducation.title.length >= 5,
+        'bridge.psychoeducation.title is present'
+      );
+      this.assert(
         typeof result.bridge.psychoeducation?.body === 'string' && result.bridge.psychoeducation.body.length >= 40,
         'bridge.psychoeducation.body is non-trivial text'
       );
@@ -500,9 +510,14 @@ class HelpfulPromptServiceTestRunner {
       this.assert(/Alex says:/.test(prompt), 'User prompt includes Partner A prep block');
       this.assert(/Jordan says:/.test(prompt), 'User prompt includes Partner B prep block');
       this.assert(/emotional tank is feeling somewhat full/i.test(prompt), 'User prompt fills tank selection from prep');
+      this.assert(/1\. A quick comparison/.test(prompt), 'User prompt starts session content with comparison');
+      this.assert(/focus of the session/i.test(prompt), 'User prompt requests a session-focus paragraph');
       this.assert(/psychoeducation/i.test(prompt), 'User prompt requests psychoeducation');
+      this.assert(/Give this section a title/.test(prompt), 'User prompt requests a psychoeducation title');
       this.assert(/"references"/i.test(prompt), 'User prompt requests references array');
       this.assert(/conversation.starter/i.test(prompt), 'User prompt requests conversation-starter');
+      this.assert(/should NOT be more talking/.test(prompt), 'User prompt requires a non-talking in-person challenge');
+      this.assert(/we've never done anything like this before/.test(prompt), 'User prompt asks for a novel tangible challenge');
       this.assert(
         this.lastCapturedBody?.response_format?.type === 'json_object',
         'Sit Session generation uses jsonMode'
@@ -587,6 +602,24 @@ class HelpfulPromptServiceTestRunner {
         }
       })) === null,
       'Empty psychoeducation.references is rejected'
+    );
+    this.assert(
+      service.normalizeSitSessionResponse(this.buildMockSitSession({
+        bridge: {
+          psychoeducation: {
+            title: '',
+            body: good.bridge.psychoeducation.body,
+            references: good.bridge.psychoeducation.references
+          }
+        }
+      })) === null,
+      'Empty psychoeducation.title is rejected'
+    );
+    this.assert(
+      service.normalizeSitSessionResponse(this.buildMockSitSession({
+        bridge: { focus: 'Too short.' }
+      })) === null,
+      'Short bridge.focus is rejected'
     );
     this.assert(
       service.normalizeSitSessionResponse(this.buildMockSitSession({

@@ -184,7 +184,14 @@ class BasePromptService {
   _buildSitSessionMockContent() {
     return {
       bridge: {
+        comparison: {
+          partner_1: 'Partner A is arriving with care for closeness and a clear hope for a warmer tone.',
+          partner_2: 'Partner B is arriving with honesty about their emotional tank and what topic feels useful.',
+          insight: 'Both want the session to feel safer and more connecting, even if their energy levels differ right now.'
+        },
+        focus: 'Tonight is about slowing down enough to feel like a team again, even if your energy levels do not match, and practicing one small way of turning toward each other in the room.',
         psychoeducation: {
+          title: 'Turning Toward When Energy Is Uneven',
           body: 'When couples slow down and name what they feel, their nervous systems often settle enough for connection to return. Research on emotional attunement shows that brief, structured check-ins can reduce defensiveness and help partners feel safer reaching for each other. Small shared rituals — like reflecting, then talking, then doing one concrete activity together — turn insight into lived repair.',
           references: [
             {
@@ -196,11 +203,6 @@ class BasePromptService {
               note: 'Supports creating a safe emotional bridge before problem-solving.'
             }
           ]
-        },
-        comparison: {
-          partner_1: 'Partner A is arriving with care for closeness and a clear hope for a warmer tone.',
-          partner_2: 'Partner B is arriving with honesty about their emotional tank and what topic feels useful.',
-          insight: 'Both want the session to feel safer and more connecting, even if their energy levels differ right now.'
         }
       },
       session: {
@@ -218,26 +220,26 @@ class BasePromptService {
           question: 'Building on what you each just named, where do you already feel on the same team — and where do you still feel a little apart?'
         },
         challenge: {
-          title: 'Same Team Check-In',
+          title: 'The Hidden Team Token',
           steps: [
             {
               number: 1,
-              title: 'Face each other',
-              body: 'Sit close enough to make easy eye contact. Take one slow breath together before either of you speaks.',
+              title: 'Choose an object',
+              body: 'Each of you silently pick a small object in the room that represents how you want to feel as a team tonight. Do not show it yet.',
               bullets: [
-                'Phones away',
-                'Knees or hands lightly touching if that feels comfortable'
+                'Phones stay face-down',
+                'Any ordinary object is fine — a mug, a key, a book'
               ]
             },
             {
               number: 2,
-              title: 'Share reflections',
-              body: 'Take turns answering your reflection questions without interrupting. Listener only mirrors back one key feeling they heard.'
+              title: 'Exchange without speaking',
+              body: 'At the same time, place your object in your partner\'s hands. Hold theirs for ten seconds. No explaining yet.'
             },
             {
               number: 3,
-              title: 'Close with one next step',
-              body: 'Agree on one small action you can take together in the next 24 hours so you leave feeling more connected.'
+              title: 'Reveal with one gesture',
+              body: 'Still without words, make one physical gesture that shows what the object you received made you feel. Then set both objects together in the space between you.'
             }
           ]
         }

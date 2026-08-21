@@ -37,7 +37,7 @@ High-level flow (paired):
 1. One partner initiates a Prompt Session (with or without an accepted pairing).
 2. Both partners independently complete **Prep** (six questions + optional focus area).
 3. Once both preps are complete → system generates the dynamic prompt → produces the Bridge + Session content.
-4. The couple moves through "The Bridge" (psychoeducation + comparison) → "The Session" (reflections, conversation starter, challenge).
+4. The couple moves through "The Bridge" (comparison + focus + psychoeducation) → "The Session" (reflections, conversation starter, challenge).
 5. The Prompt Session has a clear completion state.
 
 Solo flow: create without `pairing_id` → complete own prep → generate (or auto-generate) → same Bridge/Session schema as paired.

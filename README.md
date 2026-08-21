@@ -17,7 +17,7 @@ Node.js / Express REST API with MySQL for couples therapy programs: user account
   - **Helpful** (default) — secular EFT/Gottman-style
   - **Hopeful** — faith-based when the user has a linked org code or custom `org_name` / `org_city` / `org_state`
 - **Program steps + messages** — day steps, user messages, contributions tracking, unlock progress
-- **Sit Sessions** (`/api/prompt-sessions`) — solo (single-device) or paired prep → **working** `POST .../generate` (strict Bridge/Session JSON with psychoeducation + references, comparison, reflections, conversation-starter, challenge) with a first-class `generation_status` job state (`idle`/`running`/`succeeded`/`failed`) so clients can distinguish "not started" from "generating"; pairing is optional and can happen after the first Sit Session; full docs under [Prompt sessions (“Sit Sessions”)](#prompt-sessions-sit-sessions)
+- **Sit Sessions** (`/api/prompt-sessions`) — solo (single-device) or paired prep → **working** `POST .../generate` (strict Bridge/Session JSON with comparison, focus, psychoeducation + title/references, reflections, conversation-starter, challenge) with a first-class `generation_status` job state (`idle`/`running`/`succeeded`/`failed`) so clients can distinguish "not started" from "generating"; pairing is optional and can happen after the first Sit Session; full docs under [Prompt sessions (“Sit Sessions”)](#prompt-sessions-sit-sessions)
 
 ### Premium & orgs
 - **Pairing premium** — active iOS/Android subscription on either partner sets `pairings.premium`
@@ -600,7 +600,7 @@ Every `prompt_session` response includes a computed, non-persisted `generation` 
 
 > **Migrating an existing client:**
 > 1. `POST .../generate` can return **409 `GENERATION_RUNNING`** when auto-generate is still in flight — treat that as “keep polling `GET`”, not as an error to surface.
-> 2. **Generated content shape changed.** Do **not** bind UI to the old Bridge/Session fields (`summary`, `shared_themes`, `transition`, `title`, `phases` with `open`/`deepen`/`close`). Use the current contract below (`psychoeducation`, `comparison`, `reflections`, `conversation_starter`, `challenge`). Old rows may still exist in some DBs until purged; new generates always write the new shape.
+> 2. **Generated content shape changed.** Do **not** bind UI to the old Bridge/Session fields (`summary`, `shared_themes`, `transition`, `title`, `phases` with `open`/`deepen`/`close`). Use the current contract below (`comparison`, `focus`, `psychoeducation`, `reflections`, `conversation_starter`, `challenge`). Old rows may still exist in some DBs until purged; new generates always write the new shape.
 
 #### Generate endpoint — working state (app / web)
 
@@ -640,7 +640,7 @@ The two 409s mean opposite things, so **branch on `code`, not on the status**: `
   "generation": { "status": "running", "error": null, "started_at": "2026-08-09T16:00:00.000Z", "finished_at": null, "ready": false } } }
 
 // GET .../:id once generation succeeds
-{ "prompt_session": { "status": "bridge", "bridge_content": { "psychoeducation": { "body": "…", "references": [{ "citation": "…" }] }, "comparison": { "partner_1": "…", "partner_2": "…", "insight": "…" } }, "session_content": { "reflections": [ /* two */ ], "conversation_starter": { "question": "…" }, "challenge": { "title": "…", "steps": [ /* … */ ] } },
+{ "prompt_session": { "status": "bridge", "bridge_content": { "comparison": { "partner_1": "…", "partner_2": "…", "insight": "…" }, "focus": "…", "psychoeducation": { "title": "…", "body": "…", "references": [{ "citation": "…" }] } }, "session_content": { "reflections": [ /* two */ ], "conversation_starter": { "question": "…" }, "challenge": { "title": "…", "steps": [ /* … */ ] } },
   "generation": { "status": "succeeded", "error": null, "started_at": "2026-08-09T16:00:00.000Z", "finished_at": "2026-08-09T16:00:01.000Z", "ready": true } } }
 
 // GET .../:id after a failed attempt (safe to retry via POST .../generate)
@@ -674,11 +674,13 @@ If only auto-generate ran: after prep returns `both_preps_complete: true`, poll 
 
 | UI | Path |
 |----|------|
-| Psychoeducation body | `prompt_session.bridge_content.psychoeducation.body` |
-| Study / science references | `prompt_session.bridge_content.psychoeducation.references[]` (`citation`, optional `note`) |
 | Partner 1 comparison sentence | `prompt_session.bridge_content.comparison.partner_1` |
 | Partner 2 comparison sentence | `prompt_session.bridge_content.comparison.partner_2` |
 | Comparison insight | `prompt_session.bridge_content.comparison.insight` |
+| Session focus paragraph | `prompt_session.bridge_content.focus` |
+| Psychoeducation title | `prompt_session.bridge_content.psychoeducation.title` |
+| Psychoeducation body | `prompt_session.bridge_content.psychoeducation.body` |
+| Study / science references | `prompt_session.bridge_content.psychoeducation.references[]` (`citation`, optional `note`) |
 | Reflection questions | `prompt_session.session_content.reflections[]` (`partner`, `question`) — **always exactly 2**, even for solo/single-device |
 | Conversation starter | `prompt_session.session_content.conversation_starter.question` (text starts immediately; may be prefixed with “Conversation starter:” by the model) |
 | Challenge title | `prompt_session.session_content.challenge.title` |
@@ -704,7 +706,14 @@ Authorization: Bearer {access_token}
     "status": "bridge",
     "current_phase": null,
     "bridge_content": {
+      "comparison": {
+        "partner_1": "Alex is entering this session hopeful and a bit tender…",
+        "partner_2": "Partner may also be arriving with some sensitivity around the hard week…",
+        "insight": "Both of you seem to need this conversation to feel soft and team-oriented…"
+      },
+      "focus": "Tonight is about slowing down enough to feel like a team again, even if the week was hard.",
       "psychoeducation": {
+        "title": "Turning Toward After a Hard Week",
         "body": "After a hard week, many couples try to reconnect…",
         "references": [
           {
@@ -712,11 +721,6 @@ Authorization: Bearer {access_token}
             "note": "Classic work showing how interaction patterns and failed repair predict relationship distress."
           }
         ]
-      },
-      "comparison": {
-        "partner_1": "Alex is entering this session hopeful and a bit tender…",
-        "partner_2": "Partner may also be arriving with some sensitivity around the hard week…",
-        "insight": "Both of you seem to need this conversation to feel soft and team-oriented…"
       }
     },
     "session_content": {
@@ -771,16 +775,18 @@ Works for **solo/single-device** (1 completed prep) and **paired** (2 completed 
 ```json
 {
   "bridge_content": {
-    "psychoeducation": {
-      "body": "string (≥ 40 chars)",
-      "references": [
-        { "citation": "string (≥ 8 chars)", "note": "string (optional)" }
-      ]
-    },
     "comparison": {
       "partner_1": "string (≥ 15 chars)",
       "partner_2": "string (≥ 15 chars)",
       "insight": "string (≥ 15 chars)"
+    },
+    "focus": "string (≥ 40 chars)",
+    "psychoeducation": {
+      "title": "string (≥ 5 chars)",
+      "body": "string (≥ 40 chars)",
+      "references": [
+        { "citation": "string (≥ 8 chars)", "note": "string (optional)" }
+      ]
     }
   },
   "session_content": {
@@ -806,9 +812,11 @@ Works for **solo/single-device** (1 completed prep) and **paired** (2 completed 
 
 | Field | Rules |
 |-------|--------|
+| `bridge_content.comparison.partner_1` / `partner_2` / `insight` | required strings |
+| `bridge_content.focus` | required string (short paragraph) |
+| `bridge_content.psychoeducation.title` | required string |
 | `bridge_content.psychoeducation.body` | required string |
 | `bridge_content.psychoeducation.references` | required array, **≥ 1**; each has `citation`; `note` optional |
-| `bridge_content.comparison.partner_1` / `partner_2` / `insight` | required strings |
 | `session_content.reflections` | exactly **2** objects with `partner` + `question` |
 | `session_content.conversation_starter.question` | required string (starts with the starter text) |
 | `session_content.challenge.title` | required string |
@@ -898,7 +906,7 @@ curl -s -X POST http://localhost:9000/api/prompt-sessions/$SESSION_ID/generate \
 #     "message": "Prompt session content generated successfully",
 #     "prompt_session": {
 #       "status": "bridge",
-#       "bridge_content": { "psychoeducation", "comparison" },
+#       "bridge_content": { "comparison", "focus", "psychoeducation" },
 #       "session_content": { "reflections", "conversation_starter", "challenge" },
 #       "generation": { "status": "succeeded", "error": null, "started_at": "…", "finished_at": "…", "ready": true },
 #       …

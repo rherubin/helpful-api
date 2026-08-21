@@ -797,6 +797,16 @@ class PromptSessionsTestRunner {
       const bridge = session.bridge_content;
       const sess = session.session_content;
       this.assert(
+        typeof bridge?.focus === 'string' && bridge.focus.length >= 40,
+        'bridge_content.focus present',
+        `len: ${bridge?.focus?.length}`
+      );
+      this.assert(
+        typeof bridge?.psychoeducation?.title === 'string' && bridge.psychoeducation.title.length >= 5,
+        'bridge_content.psychoeducation.title present',
+        `title: ${bridge?.psychoeducation?.title}`
+      );
+      this.assert(
         typeof bridge?.psychoeducation?.body === 'string' && bridge.psychoeducation.body.length >= 40,
         'bridge_content.psychoeducation.body present',
         `len: ${bridge?.psychoeducation?.body?.length}`
