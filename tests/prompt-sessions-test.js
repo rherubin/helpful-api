@@ -797,6 +797,11 @@ class PromptSessionsTestRunner {
       const bridge = session.bridge_content;
       const sess = session.session_content;
       this.assert(
+        typeof bridge?.title === 'string' && bridge.title.length >= 8,
+        'bridge_content.title (session title) present',
+        `title: ${bridge?.title}`
+      );
+      this.assert(
         typeof bridge?.focus === 'string' && bridge.focus.length >= 40,
         'bridge_content.focus present',
         `len: ${bridge?.focus?.length}`

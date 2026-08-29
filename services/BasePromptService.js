@@ -180,19 +180,22 @@ class BasePromptService {
     };
   }
 
-  // Sit Session mock: strict Bridge + Session schema for prompt_sessions generation.
+  // Sit Session mock: matches the generateSitSession prompt contract
+  // (bridge_content / session_content). normalizeSitSessionResponse maps
+  // session_title → title, session_focus → focus, headline → psychoeducation.title.
   _buildSitSessionMockContent() {
     return {
-      bridge: {
+      bridge_content: {
         comparison: {
           partner_1: 'Partner A is arriving with care for closeness and a clear hope for a warmer tone.',
           partner_2: 'Partner B is arriving with honesty about their emotional tank and what topic feels useful.',
           insight: 'Both want the session to feel safer and more connecting, even if their energy levels differ right now.'
         },
-        focus: 'Tonight is about slowing down enough to feel like a team again, even if your energy levels do not match, and practicing one small way of turning toward each other in the room.',
+        session_title: 'Feeling like a team again',
+        session_focus: 'Tonight is about slowing down enough to feel like a team again, even if your energy levels do not match, and practicing one small way of turning toward each other in the room.',
         psychoeducation: {
-          title: 'Turning Toward When Energy Is Uneven',
-          body: 'When couples slow down and name what they feel, their nervous systems often settle enough for connection to return. Research on emotional attunement shows that brief, structured check-ins can reduce defensiveness and help partners feel safer reaching for each other. Small shared rituals — like reflecting, then talking, then doing one concrete activity together — turn insight into lived repair.',
+          headline: 'Turning Toward When Energy Is Uneven',
+          body: 'When couples slow down and name what they feel, their nervous systems often settle enough for connection to return. Research on emotional attunement shows that brief, structured check-ins can reduce defensiveness and help partners feel safer reaching for each other.\n\nSmall shared rituals — like reflecting, then talking, then doing one concrete activity together — turn insight into lived repair.',
           references: [
             {
               citation: 'Gottman, J. & Silver, N. — research on emotional bids and turning toward',
@@ -205,7 +208,7 @@ class BasePromptService {
           ]
         }
       },
-      session: {
+      session_content: {
         reflections: [
           {
             partner: 'Partner A',

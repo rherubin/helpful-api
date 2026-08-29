@@ -146,20 +146,21 @@ class HelpfulPromptServiceTestRunner {
   }
 
   buildMockSitSession(overrides = {}) {
-    const bridgeOverrides = overrides.bridge || {};
-    const sessionOverrides = overrides.session || {};
+    const bridgeOverrides = overrides.bridge_content || overrides.bridge || {};
+    const sessionOverrides = overrides.session_content || overrides.session || {};
 
     return {
-      bridge: {
+      bridge_content: {
         comparison: {
           partner_1: 'Alex is arriving hopeful, wanting a gentle tone and more team energy.',
           partner_2: 'Jordan is arriving honest about an empty tank and needing more patience.',
           insight: 'Both want closeness, but they are entering with different energy levels tonight.',
           ...(bridgeOverrides.comparison || {})
         },
-        focus: bridgeOverrides.focus || 'Tonight is about slowing down enough to feel like a team again, even if your energy levels do not match.',
+        session_title: bridgeOverrides.session_title || bridgeOverrides.title || 'Feeling like a team again',
+        session_focus: bridgeOverrides.session_focus || bridgeOverrides.focus || 'Tonight is about slowing down enough to feel like a team again, even if your energy levels do not match.',
         psychoeducation: {
-          title: 'Turning Toward When Energy Is Uneven',
+          headline: 'Turning Toward When Energy Is Uneven',
           body: 'When couples slow down and name what they feel, their nervous systems often settle enough for connection to return. Research on emotional attunement shows that brief, structured check-ins can reduce defensiveness and help partners feel safer reaching for each other.',
           references: [
             {
@@ -174,7 +175,7 @@ class HelpfulPromptServiceTestRunner {
           ...(bridgeOverrides.psychoeducation || {})
         }
       },
-      session: {
+      session_content: {
         reflections: sessionOverrides.reflections || [
           {
             partner: 'Alex',
@@ -449,6 +450,10 @@ class HelpfulPromptServiceTestRunner {
 
       this.assert(!!result && !!result.bridge && !!result.session, 'Returns bridge + session objects');
       this.assert(
+        typeof result.bridge.title === 'string' && result.bridge.title.length >= 8,
+        'bridge.title (from session_title) is a non-trivial session title'
+      );
+      this.assert(
         typeof result.bridge.focus === 'string' && result.bridge.focus.length >= 40,
         'bridge.focus is a non-trivial paragraph'
       );
@@ -511,9 +516,18 @@ class HelpfulPromptServiceTestRunner {
       this.assert(/Jordan says:/.test(prompt), 'User prompt includes Partner B prep block');
       this.assert(/emotional tank is feeling somewhat full/i.test(prompt), 'User prompt fills tank selection from prep');
       this.assert(/1\. A quick comparison/.test(prompt), 'User prompt starts session content with comparison');
-      this.assert(/focus of the session/i.test(prompt), 'User prompt requests a session-focus paragraph');
+      this.assert(/focus of tonight's session/i.test(prompt), 'User prompt requests a session-focus paragraph');
+      this.assert(/When the Motions Feel Hollow/.test(prompt), 'User prompt gives a human-register session-title example');
       this.assert(/psychoeducation/i.test(prompt), 'User prompt requests psychoeducation');
       this.assert(/Give this section a title/.test(prompt), 'User prompt requests a psychoeducation title');
+      this.assert(/going through the motions lately/.test(prompt), 'User prompt calibrates reflection questions against a concrete example');
+      this.assert(/2-4 of each partner's own words/.test(prompt), 'User prompt requires working partner words into reflections');
+      this.assert(/"bridge_content"/.test(prompt), 'User prompt asks for bridge_content top-level key');
+      this.assert(/"session_content"/.test(prompt), 'User prompt asks for session_content top-level key');
+      this.assert(/"session_title"/.test(prompt), 'User prompt asks for session_title');
+      this.assert(/"session_focus"/.test(prompt), 'User prompt asks for session_focus');
+      this.assert(/"headline"/.test(prompt), 'User prompt asks for psychoeducation.headline');
+      this.assert(/<strong>/.test(prompt), 'User prompt allows <strong> emphasis in psychoeducation');
       this.assert(/"references"/i.test(prompt), 'User prompt requests references array');
       this.assert(/conversation.starter/i.test(prompt), 'User prompt requests conversation-starter');
       this.assert(/should NOT be more talking/.test(prompt), 'User prompt requires a non-talking in-person challenge');
@@ -568,12 +582,12 @@ class HelpfulPromptServiceTestRunner {
     const normalized = service.normalizeSitSessionResponse({
       ...good,
       extra_top: true,
-      bridge: { ...good.bridge, extra_bridge: 1 },
-      session: {
-        ...good.session,
+      bridge_content: { ...good.bridge_content, extra_bridge: 1 },
+      session_content: {
+        ...good.session_content,
         challenge: {
-          ...good.session.challenge,
-          steps: [...good.session.challenge.steps].reverse(),
+          ...good.session_content.challenge,
+          steps: [...good.session_content.challenge.steps].reverse(),
           extra_challenge: 'x'
         },
         extra_session: 'x'
@@ -583,8 +597,24 @@ class HelpfulPromptServiceTestRunner {
     this.assert(!('extra_top' in normalized), 'Top-level extras stripped');
     this.assert(!('extra_bridge' in normalized.bridge), 'Bridge extras stripped');
     this.assert(
+      normalized.bridge.title === good.bridge_content.session_title,
+      'session_title maps to stored bridge.title'
+    );
+    this.assert(
+      normalized.bridge.focus === good.bridge_content.session_focus,
+      'session_focus maps to stored bridge.focus'
+    );
+    this.assert(
+      normalized.bridge.psychoeducation.title === good.bridge_content.psychoeducation.headline,
+      'headline maps to stored psychoeducation.title'
+    );
+    this.assert(
+      !('session_title' in normalized.bridge) && !('session_focus' in normalized.bridge),
+      'Prompt-contract aliases are not stored on the normalized bridge'
+    );
+    this.assert(
       normalized.session.challenge.steps.map(s => s.number).join(',') ===
-        Array.from({ length: good.session.challenge.steps.length }, (_, i) => i + 1).join(','),
+        Array.from({ length: good.session_content.challenge.steps.length }, (_, i) => i + 1).join(','),
       'Challenge steps renumbered 1..n regardless of LLM order'
     );
 
@@ -596,7 +626,7 @@ class HelpfulPromptServiceTestRunner {
       service.normalizeSitSessionResponse(this.buildMockSitSession({
         bridge: {
           psychoeducation: {
-            body: good.bridge.psychoeducation.body,
+            body: good.bridge_content.psychoeducation.body,
             references: []
           }
         }
@@ -607,19 +637,25 @@ class HelpfulPromptServiceTestRunner {
       service.normalizeSitSessionResponse(this.buildMockSitSession({
         bridge: {
           psychoeducation: {
-            title: '',
-            body: good.bridge.psychoeducation.body,
-            references: good.bridge.psychoeducation.references
+            headline: '',
+            body: good.bridge_content.psychoeducation.body,
+            references: good.bridge_content.psychoeducation.references
           }
         }
       })) === null,
-      'Empty psychoeducation.title is rejected'
+      'Empty psychoeducation.headline is rejected'
     );
     this.assert(
       service.normalizeSitSessionResponse(this.buildMockSitSession({
-        bridge: { focus: 'Too short.' }
+        bridge: { session_focus: 'Too short.' }
       })) === null,
-      'Short bridge.focus is rejected'
+      'Short session_focus is rejected'
+    );
+    this.assert(
+      service.normalizeSitSessionResponse(this.buildMockSitSession({
+        bridge: { session_title: 'Hi' }
+      })) === null,
+      'Short session_title is rejected'
     );
     this.assert(
       service.normalizeSitSessionResponse(this.buildMockSitSession({
@@ -635,12 +671,33 @@ class HelpfulPromptServiceTestRunner {
       service.normalizeSitSessionResponse(this.buildMockSitSession({
         session: {
           challenge: {
-            title: good.session.challenge.title,
+            title: good.session_content.challenge.title,
             steps: []
           }
         }
       })) === null,
       'Empty challenge.steps is rejected'
+    );
+
+    const legacyShape = {
+      bridge: {
+        comparison: good.bridge_content.comparison,
+        title: 'Feeling like a team again',
+        focus: good.bridge_content.session_focus,
+        psychoeducation: {
+          title: good.bridge_content.psychoeducation.headline,
+          body: good.bridge_content.psychoeducation.body,
+          references: good.bridge_content.psychoeducation.references
+        }
+      },
+      session: good.session_content
+    };
+    const legacyNormalized = service.normalizeSitSessionResponse(legacyShape);
+    this.assert(!!legacyNormalized, 'Older bridge/session aliases still normalize');
+    this.assert(
+      legacyNormalized.bridge.title === 'Feeling like a team again' &&
+        legacyNormalized.bridge.psychoeducation.title === good.bridge_content.psychoeducation.headline,
+      'Older title / focus / psychoeducation.title aliases map to the stored shape'
     );
   }
 

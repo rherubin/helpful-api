@@ -269,12 +269,20 @@ class HelpfulPromptService extends BasePromptService {
       const partnerB = sanitizedPartners[1] || { name: "Partner" };
 
       const comparisonInstructions = isSingleDevice
-        ? `1. A quick comparison of how they are entering into the session. Only ${partnerA.name}'s prep answers are available (single-device / shared-phone flow — pairing may happen later). Still write: one sentence for Partner 1 (${partnerA.name}), one sentence for Partner 2 (their partner in the room — label partner as "${partnerB.name}"), and one insight sentence. Infer Partner 2 carefully from how ${partnerA.name} described closeness, tone, and topic; do not invent private facts about Partner 2.`
-        : `1. A quick comparison of how the partner is entering into the session, based on what they said in their onboarding. The format should be: one sentence for Partner 1 (${partnerA.name}), one sentence for Partner 2 (${partnerB.name}), and one sentence for the insight. For the insight, analyze what they say and pull out something interesting, either a commonality or difference.`;
+        ? `1. A quick comparison of how each partner is entering the session, based on what they shared above. Only ${partnerA.name}'s prep answers are available (single-device / shared-phone flow — pairing may happen later). Still write one sentence for ${partnerA.name}, one sentence for the second partner (their partner in the room — label them as "${partnerB.name}"), and one sentence of insight. Infer the second partner carefully from how ${partnerA.name} described closeness, tone, and topic; do not invent private facts about them. For the insight, analyze what was shared and pull out something interesting — either a commonality or a difference between them.`
+        : `1. A quick comparison of how each partner is entering the session, based on what they shared above. One sentence for ${partnerA.name}, one sentence for the second partner, and one sentence of insight. For the insight, analyze what they each said and pull out something interesting — either a commonality or a difference between them.`;
 
       const reflectionInstructions = isSingleDevice
-        ? `4. Two reflections — one for ${partnerA.name} and one for their partner (${partnerB.name}). Return each as a structured question the app can pull in. Partner 2's reflection should invite the other person in based on ${partnerA.name}'s prep, without assuming unstated details.`
-        : `4. Two reflections, one for each person. Return this as a structured question that I can pull into an app.`;
+        ? `5. Two reflection questions, one primarily for ${partnerA.name} and one for their partner (${partnerB.name}) — this is where personalization matters most, since these are the exact words that partner will read and answer out loud. Before writing either one, find the single most specific, concrete detail in ${partnerA.name}'s own free-form note — a specific incident, complaint, image, or turn of phrase they actually used, not their mood/tone/topic selections, which are shared multiple-choice categories and too generic to build a question from. Partner 2's question should still invite them in from that note, without inventing private facts.
+
+Calibrate against this example. Say a partner wrote: "I feel like I'm just going through the motions lately." A weak question drifts back to generic therapist framing: "Reflect on a moment when you felt disconnected — what would help you feel more present?" A strong question stays inside their own words and gets more specific from there, not more general: "You said you're going through the motions lately — what's one motion this week that felt the most hollow, and what would have made it feel real instead?" The weak version could belong to any couple; the strong version could only follow from that exact sentence. Match the strong style for both questions, working 2-4 of ${partnerA.name}'s own words in directly.
+
+Vary the shape of the two questions against each other (a specific-moment question, a somatic/body question about where this lands physically, a hope or values question, a hypothetical, a "what you wish they understood" question) so they don't read like the same template with a different name dropped in — but the shape is secondary to staying inside the partner's own words first.`
+        : `5. Two reflection questions, one primarily for each partner — this is where personalization matters most, since these are the exact words that partner will read and answer out loud. Before writing either one, find the single most specific, concrete detail in that partner's own free-form note — a specific incident, complaint, image, or turn of phrase they actually used, not their mood/tone/topic selections, which are shared multiple-choice categories and too generic to build a question from.
+
+Calibrate against this example. Say a partner wrote: "I feel like I'm just going through the motions lately." A weak question drifts back to generic therapist framing: "Reflect on a moment when you felt disconnected — what would help you feel more present?" A strong question stays inside their own words and gets more specific from there, not more general: "You said you're going through the motions lately — what's one motion this week that felt the most hollow, and what would have made it feel real instead?" The weak version could belong to any couple; the strong version could only follow from that exact sentence. Match the strong style for both questions, working 2-4 of each partner's own words in directly.
+
+Vary the shape of the two questions against each other (a specific-moment question, a somatic/body question about where this lands physically, a hope or values question, a hypothetical, a "what you wish they understood" question) so they don't read like the same template with a different name dropped in — but the shape is secondary to staying inside each partner's own words first.`;
 
       const availabilityNote = isSingleDevice
         ? `\nNote: This is a single-device Sit Session. Only one prep block is provided below, but both people are (or will be) together in person for the session. Create a full couple experience anyway.\n`
@@ -286,66 +294,66 @@ Your job is to take in information from the couple, bridge their perspectives an
 
 ${availabilityNote}
 
-Here's the session content:
-
-${comparisonInstructions}
-
-2. A short paragraph about what the focus of the session is.
-
-3. A few short paragraphs of psychoeducation, with references to studies and science (can be others besides Gottman and Johnson, but you can also use them if it fits best). Give this section a title. Also return a structured references array the app can render separately (citation + optional note) — do not only name-drop studies inline.
-
-${reflectionInstructions}
-
-5. One conversation-starter for the couple. Return this as a structured question that I can pull into an app. Ensure that the conversation-starter builds on the reflection questions they just did together, and start immediately with the conversation-starter text.
-
-6. One in-person challenge or activity for the couple — this is the one part of the session that should NOT be more talking. Steps 4 and 5 already have them speaking and listening out loud, so this needs to be genuinely tangible: something they do with their hands, their bodies, or an object in the room, not another round of "share and listen." Draw on things like a small physical ritual or gesture, a short improvised game, something they each write down and then physically exchange or reveal, a sensory or movement-based exercise, or a playful challenge with a bit of surprise to it — invent something specific to what this couple brought rather than defaulting to the safest, most conventional option. The goal is for them to think "we've never done anything like this before." Structure it in steps (1, 2, 3, ...), each with a title, a body, and optional bullets for any sub-steps. Return this as a structured exercise that I can pull into an app.
-
 Here's what each person has said:
 
 ${prepBlock}
+
+Create tonight's session with the following content:
+
+${comparisonInstructions}
+
+2. A short paragraph naming what the focus of tonight's session is.
+
+3. A short, warm title (4-6 words) for tonight's session that captures what makes it specific to this couple — something they'd recognize later in a list of past sessions, not a generic label. Draw it from the most distinctive thing about what they brought (a theme, a phrase, an image), not a restatement of the focus paragraph or a description of the session format. Say it the way a close friend would, not a therapy-journal headline: plain, warm words over clinical or literary ones. "Unearthing the Roots of Disconnection" is exactly the wrong register — something like "When the Motions Feel Hollow" is closer, still specific but human.
+
+4. A few short paragraphs of psychoeducation, citing real studies and research — Gottman and Johnson are welcome if they fit best, but so are other relationship-science researchers when they're a better fit for what this couple brought. Give this section a title.
+
+${reflectionInstructions}
+
+6. One conversation-starter question for the couple to discuss together. It must build on the two reflection questions they just did, and its text must start immediately with the question itself — no lead-in phrase.
+
+7. One in-person challenge or activity for the couple — this is the one part of the session that should NOT be more talking. Steps 5 and 6 already have them speaking and listening out loud, so this needs to be genuinely tangible: something they do with their hands, their bodies, or an object in the room, not another round of "share and listen." Draw on things like a small physical ritual or gesture, a short improvised game, something they each write down and then physically exchange or reveal, a sensory or movement-based exercise, or a playful challenge with a bit of surprise to it — invent something specific to what this couple brought rather than defaulting to the safest, most conventional option. The goal is for them to think "we've never done anything like this before." Structure it in steps (1, 2, 3, ...), each with a title, a body, and optional bullets for any sub-steps.
 
 Make this feel genuinely novel and specific to this couple, not generic — the goal is for them to think "wow, this is unique to us," and to leave feeling better than when they sat down. Do not invent details about their relationship that are not implied by their check-ins.
 
 Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exactly this shape and these field names:
 
 {
-  "bridge": {
+  "bridge_content": {
     "comparison": {
-      "partner_1": "string (one sentence about ${partnerA.name})",
-      "partner_2": "string (one sentence about ${partnerB.name})",
-      "insight": "string (one sentence commonality or difference)"
+      "partner_1": "Exactly one sentence describing how the FIRST partner (${partnerA.name}) is entering the session, based on what they shared.",
+      "partner_2": "Exactly one sentence describing how the SECOND partner (${partnerB.name}) is entering the session, based on what they shared.",
+      "insight": "Exactly one sentence naming something interesting across both of their check-ins — either a commonality or a difference between them."
     },
-    "focus": "string (short paragraph about the session focus)",
+    "session_title": "A short, warm title (4-6 words) for tonight's session, capturing what makes it unique to this couple — evocative enough that they'd recognize it later in a list of past sessions, not a generic label like 'Evening Check-in'. Write it the way a close friend would say it out loud, not a therapy-journal headline — plain, warm words over clinical or literary ones (avoid 'unearthing', 'navigating', 'disconnection', 'repair', and similar textbook language).",
+    "session_focus": "One short paragraph naming what the focus of tonight's session is, given what both partners brought.",
     "psychoeducation": {
-      "title": "string",
-      "body": "string (a few short paragraphs)",
+      "headline": "A short title for this section.",
+      "body": "A few short paragraphs (separated by a blank line) of psychoeducation, citing real studies and research — Gottman and Johnson are welcome when they fit best, but other relationship-science researchers are welcome too when they're a better fit for this couple. Plain, accessible language — no jargon. You may wrap a word or phrase in <strong> for emphasis.",
       "references": [
-        { "citation": "string", "note": "string (optional)" }
+        { "citation": "e.g. Gottman, J. M. (1999). The Marriage Clinic.", "note": "One short sentence on what this citation supports here (optional)." }
       ]
     }
   },
-  "session": {
+  "session_content": {
     "reflections": [
-      { "partner": "${partnerA.name}", "question": "string" },
-      { "partner": "${partnerB.name}", "question": "string" }
+      { "partner": "${partnerA.name}", "question": "A personalized reflection question for ${partnerA.name} to answer aloud." },
+      { "partner": "${partnerB.name}", "question": "A personalized reflection question for ${partnerB.name} to answer aloud." }
     ],
-    "conversation_starter": { "question": "string (start immediately with the conversation-starter text)" },
+    "conversation_starter": {
+      "question": "One question for the couple to discuss together, building on both reflection questions they just did. Start immediately with the question text itself — no lead-in like 'Conversation starter:'."
+    },
     "challenge": {
-      "title": "string",
+      "title": "A short title for an in-person shared activity or challenge.",
       "steps": [
-        {
-          "number": 1,
-          "title": "string",
-          "body": "string",
-          "bullets": ["string"]
-        }
+        { "number": 1, "title": "Step title", "body": "What to do in this step.", "bullets": ["Optional bullet for a sub-step", "Optional bullet"] }
       ]
     }
   }
 }`;
 
       systemPrompt =
-        "You are a relationship expert facilitating an in-person couples Sit Session. Respond only with valid JSON matching the exact schema requested. Required: bridge.comparison.partner_1/partner_2/insight (strings), bridge.focus (string), bridge.psychoeducation.title (string), bridge.psychoeducation.body (string), bridge.psychoeducation.references (non-empty array of {citation, optional note}), session.reflections (exactly two {partner, question}), session.conversation_starter.question (string that starts with the starter text), session.challenge.title (string), session.challenge.steps (non-empty array of {number, title, body, optional bullets}). The challenge must be a tangible in-person activity, not more talking. Do not include markdown, commentary, or extra top-level keys.";
+        "You are a relationship expert facilitating an in-person couples Sit Session. Respond only with valid JSON matching the exact schema requested. Required: bridge_content.comparison.partner_1/partner_2/insight (strings), bridge_content.session_title (string), bridge_content.session_focus (string), bridge_content.psychoeducation.headline (string), bridge_content.psychoeducation.body (string), bridge_content.psychoeducation.references (non-empty array of {citation, optional note}), session_content.reflections (exactly two {partner, question}), session_content.conversation_starter.question (string that starts with the question text), session_content.challenge.title (string), session_content.challenge.steps (non-empty array of {number, title, body, optional bullets}). The challenge must be a tangible in-person activity, not more talking. Do not include markdown, commentary, or extra top-level keys.";
 
       const llmResult = await this.callLLM(systemPrompt, prompt, {
         temperature: 0.7,
@@ -470,6 +478,7 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
       psychoeducationTitle: 5,
       psychoeducationBody: 40,
       focus: 40,
+      sessionTitle: 8,
       citation: 8,
       comparisonSentence: 15,
       partner: 1,
@@ -488,12 +497,19 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
   // Validate + normalize LLM output into the canonical API/DB shape.
   // Drops unknown keys. Returns null if required fields are missing/invalid.
   //
-  // Canonical shape:
+  // Prompt contract (what we ask the model for):
+  //   bridge_content.{ comparison, session_title, session_focus,
+  //                    psychoeducation.{ headline, body, references } }
+  //   session_content.{ reflections, conversation_starter, challenge }
+  //
+  // Canonical stored/API shape:
   // {
   //   bridge: {
   //     comparison: { partner_1, partner_2, insight },
-  //     focus: string,
+  //     title: string,   // from session_title
+  //     focus: string,   // from session_focus
   //     psychoeducation: { title, body, references: [{ citation, note? }] }
+  //                      // title from headline
   //   },
   //   session: {
   //     reflections: [{ partner, question }, { partner, question }],
@@ -501,25 +517,37 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
   //     challenge: { title, steps: [{ number, title, body, bullets? }] }
   //   }
   // }
+  //
+  // Also accepts the older aliases (bridge / session / title / focus /
+  // psychoeducation.title) so TEST_MOCK_LLM and stored fixtures still parse.
   normalizeSitSessionResponse(parsed) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
       return null;
-    if (
-      !parsed.bridge ||
-      typeof parsed.bridge !== "object" ||
-      Array.isArray(parsed.bridge)
-    )
+
+    const pickTrimmed = (...values) => {
+      for (const value of values) {
+        if (typeof value === "string") {
+          const trimmed = value.trim();
+          if (trimmed) return trimmed;
+        }
+      }
+      return "";
+    };
+
+    const rawBridge = parsed.bridge_content || parsed.bridge;
+    const rawSession = parsed.session_content || parsed.session;
+    if (!rawBridge || typeof rawBridge !== "object" || Array.isArray(rawBridge))
       return null;
     if (
-      !parsed.session ||
-      typeof parsed.session !== "object" ||
-      Array.isArray(parsed.session)
+      !rawSession ||
+      typeof rawSession !== "object" ||
+      Array.isArray(rawSession)
     )
       return null;
 
     const mins = HelpfulPromptService.SIT_SESSION_MIN_LENGTHS;
-    const psycho = parsed.bridge.psychoeducation;
-    const comparison = parsed.bridge.comparison;
+    const psycho = rawBridge.psychoeducation;
+    const comparison = rawBridge.comparison;
     if (!psycho || typeof psycho !== "object" || Array.isArray(psycho))
       return null;
     if (
@@ -529,8 +557,7 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
     )
       return null;
 
-    const psychoTitle =
-      typeof psycho.title === "string" ? psycho.title.trim() : "";
+    const psychoTitle = pickTrimmed(psycho.headline, psycho.title);
     if (psychoTitle.length < mins.psychoeducationTitle) return null;
     const body = typeof psycho.body === "string" ? psycho.body.trim() : "";
     if (body.length < mins.psychoeducationBody) return null;
@@ -563,18 +590,20 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
     if (partner2.length < mins.comparisonSentence) return null;
     if (insight.length < mins.comparisonSentence) return null;
 
-    const focus =
-      typeof parsed.bridge.focus === "string" ? parsed.bridge.focus.trim() : "";
+    const sessionTitle = pickTrimmed(rawBridge.session_title, rawBridge.title);
+    if (sessionTitle.length < mins.sessionTitle) return null;
+
+    const focus = pickTrimmed(rawBridge.session_focus, rawBridge.focus);
     if (focus.length < mins.focus) return null;
 
     if (
-      !Array.isArray(parsed.session.reflections) ||
-      parsed.session.reflections.length !== 2
+      !Array.isArray(rawSession.reflections) ||
+      rawSession.reflections.length !== 2
     ) {
       return null;
     }
     const reflections = [];
-    for (const reflection of parsed.session.reflections) {
+    for (const reflection of rawSession.reflections) {
       if (
         !reflection ||
         typeof reflection !== "object" ||
@@ -592,14 +621,14 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
       reflections.push({ partner, question });
     }
 
-    const starter = parsed.session.conversation_starter;
+    const starter = rawSession.conversation_starter;
     if (!starter || typeof starter !== "object" || Array.isArray(starter))
       return null;
     const starterQuestion =
       typeof starter.question === "string" ? starter.question.trim() : "";
     if (starterQuestion.length < mins.question) return null;
 
-    const challenge = parsed.session.challenge;
+    const challenge = rawSession.challenge;
     if (!challenge || typeof challenge !== "object" || Array.isArray(challenge))
       return null;
     const challengeTitle =
@@ -648,6 +677,7 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
           partner_2: partner2,
           insight,
         },
+        title: sessionTitle,
         focus,
         psychoeducation: { title: psychoTitle, body, references },
       },
