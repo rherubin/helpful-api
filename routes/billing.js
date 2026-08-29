@@ -8,6 +8,7 @@ function createBillingRoutes(stripeBillingService, authService) {
 
   // POST /api/billing/checkout
   // Body: { plan: 'monthly' | 'yearly', success_url?, cancel_url? }
+  // Hosted Checkout redirect (legacy / optional). Prefer /subscription-intent for in-app Elements.
   router.post('/checkout', authenticateToken, async (req, res) => {
     try {
       const { plan, success_url, cancel_url } = req.body || {};
@@ -24,6 +25,27 @@ function createBillingRoutes(stripeBillingService, authService) {
       console.error('Billing checkout error:', error.message);
       const status = error instanceof StripeBillingError ? error.status : 500;
       return res.status(status).json({ error: error.message || 'Failed to create checkout session' });
+    }
+  });
+
+  // POST /api/billing/subscription-intent
+  // Body: { plan: 'monthly' | 'yearly' }
+  // Returns client_secret for Stripe Payment Element (no hosted redirect).
+  router.post('/subscription-intent', authenticateToken, async (req, res) => {
+    try {
+      const { plan } = req.body || {};
+      const result = await stripeBillingService.createSubscriptionIntent(req.user.id, { plan });
+      return res.status(200).json({
+        message: 'Subscription intent created',
+        ...result
+      });
+    } catch (error) {
+      console.error('Billing subscription-intent error:', error.message);
+      const status = error instanceof StripeBillingError ? error.status : 500;
+      return res.status(status).json({
+        error: error.message || 'Failed to create subscription intent',
+        ...(error.code ? { code: error.code } : {})
+      });
     }
   });
 

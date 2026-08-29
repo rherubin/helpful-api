@@ -173,6 +173,20 @@ class StripeSubscription {
       [userId]
     );
   }
+
+  /**
+   * Rows the reconcile cron should re-check against Stripe.
+   * Includes past_due/unpaid/incomplete so failed renewals clear premium.
+   */
+  async listForReconcile(limit = 100) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+    return this.query(
+      `SELECT * FROM stripe_subscriptions
+       WHERE status IN ('trialing', 'active', 'past_due', 'unpaid', 'incomplete')
+       ORDER BY updated_at ASC
+       LIMIT ${safeLimit}`
+    );
+  }
 }
 
 module.exports = StripeSubscription;

@@ -112,6 +112,42 @@ class StripeBillingTestRunner {
     }
   }
 
+  async testSubscriptionIntentCreatesClientSecret(user) {
+    this.log('Testing in-app subscription intent (Payment Element)', 'section');
+    // Use a fresh user so an active sub from earlier tests does not 409.
+    const intentUser = await this.createTestUser('stripe-intent');
+    if (!intentUser) {
+      this.assert(false, 'Create subscription-intent test user');
+      return null;
+    }
+    try {
+      const res = await axios.post(`${this.baseURL}/api/billing/subscription-intent`, {
+        plan: 'monthly'
+      }, {
+        headers: { Authorization: `Bearer ${intentUser.token}` },
+        timeout: this.timeout
+      });
+
+      this.assert(res.status === 200, 'Subscription intent returns 200');
+      this.assert(
+        typeof res.data.client_secret === 'string' && res.data.client_secret.length > 0,
+        'Returns client_secret',
+        res.data.client_secret
+      );
+      this.assert(
+        res.data.mode === 'setup' || res.data.mode === 'payment',
+        'Returns mode setup|payment',
+        res.data.mode
+      );
+      this.assert(!!res.data.subscription_id, 'Returns subscription_id');
+      this.assert(res.data.plan === 'monthly', 'Echoes plan monthly');
+      return { user: intentUser, ...res.data };
+    } catch (error) {
+      this.assert(false, 'Subscription intent creation', error.response?.data?.error || error.message);
+      return null;
+    }
+  }
+
   async testStatusBeforeWebhook(user) {
     this.log('Testing billing status before webhook', 'section');
     try {
@@ -643,6 +679,7 @@ class StripeBillingTestRunner {
     await this.testCheckoutValidation(user);
     // Reject bad return URLs before any subscription exists (otherwise 409 masks 400).
     await this.testRejectedReturnOrigin(user);
+    await this.testSubscriptionIntentCreatesClientSecret(user);
     await this.testCheckoutCreatesSession(user);
     await this.testCheckoutBlockedWhileSessionOpen(user);
     await this.testStatusBeforeWebhook(user);

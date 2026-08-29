@@ -120,6 +120,51 @@ function createMockStripe() {
       }
     },
     subscriptions: {
+      _store: new Map(),
+      create: async (params = {}) => {
+        subSeq += 1;
+        const id = `sub_mock_${runId}_${subSeq}`;
+        const setupId = `seti_mock_${runId}_${subSeq}`;
+        const priceId = params.items?.[0]?.price || process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly';
+        const trialDays = Number(params.trial_period_days) || 0;
+        const now = Math.floor(Date.now() / 1000);
+        const sub = {
+          id,
+          status: trialDays > 0 ? 'incomplete' : 'incomplete',
+          items: { data: [{ price: { id: priceId } }] },
+          trial_end: trialDays > 0 ? now + trialDays * 24 * 3600 : null,
+          current_period_end: now + (trialDays > 0 ? trialDays : 30) * 24 * 3600,
+          cancel_at_period_end: false,
+          metadata: params.metadata || {},
+          customer: params.customer,
+          pending_setup_intent: trialDays > 0
+            ? {
+                id: setupId,
+                object: 'setup_intent',
+                client_secret: `${setupId}_secret_mock`,
+                status: 'requires_payment_method'
+              }
+            : null,
+          latest_invoice: trialDays > 0
+            ? null
+            : {
+                id: `in_mock_${runId}_${subSeq}`,
+                payment_intent: {
+                  id: `pi_mock_${runId}_${subSeq}`,
+                  client_secret: `pi_mock_${runId}_${subSeq}_secret_mock`,
+                  status: 'requires_payment_method'
+                }
+              }
+        };
+        return sub;
+      },
+      list: async ({ customer, status, limit = 10 } = {}) => {
+        // Minimal list support for canceling incompletes; empty in mock by default.
+        void customer;
+        void status;
+        void limit;
+        return { data: [] };
+      },
       retrieve: async (id) => ({
         id,
         status: 'trialing',
@@ -397,6 +442,139 @@ class StripeBillingService {
     }
   }
 
+  /**
+   * Create an incomplete Stripe subscription and return a client_secret for
+   * Payment Element (SetupIntent during trial, PaymentIntent otherwise).
+   * Keeps the buyer on the Sit Together UI — no hosted Checkout redirect.
+   */
+  async createSubscriptionIntent(userId, { plan } = {}) {
+    this.assertConfigured();
+    const normalizedPlan = this.normalizePlan(plan);
+    const priceId = this.priceIdForPlan(normalizedPlan);
+
+    const conn = await this.userModel.db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [userRows] = await conn.execute(
+        'SELECT * FROM users WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+        [userId]
+      );
+      const user = userRows[0];
+      if (!user) {
+        throw new StripeBillingError('User not found', { status: 404 });
+      }
+
+      const [activeRows] = await conn.execute(
+        `SELECT id FROM stripe_subscriptions
+         WHERE user_id = ? AND status IN ('trialing', 'active')
+         LIMIT 1`,
+        [userId]
+      );
+      if (activeRows.length > 0) {
+        throw new StripeBillingError(
+          'An active Stripe subscription already exists. Use the billing portal to manage it.',
+          { status: 409, code: 'subscription_already_active' }
+        );
+      }
+
+      let customerId = user.stripe_customer_id;
+      if (!customerId) {
+        const customer = await this.stripe.customers.create({
+          email: user.email,
+          metadata: { user_id: userId }
+        });
+        customerId = customer.id;
+        await conn.execute(
+          'UPDATE users SET stripe_customer_id = ?, updated_at = NOW() WHERE id = ?',
+          [customerId, userId]
+        );
+      }
+
+      // Cancel leftover incomplete subscriptions so Elements can start clean.
+      if (typeof this.stripe.subscriptions?.list === 'function') {
+        try {
+          const incomplete = await this.stripe.subscriptions.list({
+            customer: customerId,
+            status: 'incomplete',
+            limit: 10
+          });
+          for (const sub of incomplete.data || []) {
+            try {
+              await this.stripe.subscriptions.cancel(sub.id);
+            } catch (_) {
+              /* best-effort */
+            }
+          }
+        } catch (_) {
+          /* list may be unavailable on older mocks */
+        }
+      }
+
+      const createParams = {
+        customer: customerId,
+        items: [{ price: priceId }],
+        payment_behavior: 'default_incomplete',
+        payment_settings: {
+          save_default_payment_method: 'on_subscription'
+        },
+        metadata: {
+          user_id: userId,
+          plan: normalizedPlan
+        },
+        expand: ['latest_invoice.payment_intent', 'pending_setup_intent']
+      };
+      if (this.trialPeriodDays > 0) {
+        createParams.trial_period_days = this.trialPeriodDays;
+      }
+
+      const subscription = await this.stripe.subscriptions.create(createParams);
+
+      await conn.commit();
+
+      // Persist incomplete row so webhooks/cron have a record (after commit).
+      try {
+        await this.stripeSubscriptionModel.upsertByStripeSubscriptionId(userId, {
+          stripe_subscription_id: subscription.id,
+          stripe_price_id: priceId,
+          plan: normalizedPlan,
+          status: subscription.status || 'incomplete',
+          trial_end: subscription.trial_end || null,
+          current_period_end: subscription.current_period_end || null,
+          cancel_at_period_end: !!subscription.cancel_at_period_end
+        });
+      } catch (persistErr) {
+        console.warn('[stripe-billing] failed to persist incomplete subscription row:', persistErr.message);
+      }
+
+      const setupSecret = subscription.pending_setup_intent?.client_secret || null;
+      const paymentSecret = subscription.latest_invoice?.payment_intent?.client_secret || null;
+      const clientSecret = setupSecret || paymentSecret;
+      if (!clientSecret) {
+        throw new StripeBillingError(
+          'Stripe did not return a client_secret for Payment Element',
+          { status: 502 }
+        );
+      }
+
+      return {
+        client_secret: clientSecret,
+        mode: setupSecret ? 'setup' : 'payment',
+        subscription_id: subscription.id,
+        plan: normalizedPlan
+      };
+    } catch (error) {
+      try {
+        await conn.rollback();
+      } catch (_) {
+        /* ignore */
+      }
+      throw error;
+    } finally {
+      conn.release();
+    }
+  }
+
   async createPortalSession(userId, { return_url } = {}) {
     this.assertConfigured();
     const returnUrl = this.resolvePortalReturnUrl(return_url);
@@ -640,6 +818,52 @@ class StripeBillingService {
     return this.applyStripeSubscription(stripeSubscription);
   }
 
+  async handleInvoicePaid(invoice) {
+    const subscriptionId = typeof invoice.subscription === 'string'
+      ? invoice.subscription
+      : invoice.subscription?.id;
+    if (!subscriptionId) return null;
+
+    const stripeSubscription = await this.stripe.subscriptions.retrieve(subscriptionId);
+    return this.applyStripeSubscription(stripeSubscription);
+  }
+
+  /**
+   * Re-fetch open/local subscriptions from Stripe and sync premium.
+   * Safety net when webhooks are delayed or missed (failed renewals, cancels).
+   */
+  async reconcileSubscriptions({ limit = 50 } = {}) {
+    if (!this.isConfigured() && process.env.TEST_MOCK_STRIPE !== 'true') {
+      return { checked: 0, updated: 0, skipped: true };
+    }
+
+    const rows = await this.stripeSubscriptionModel.listForReconcile(limit);
+    let updated = 0;
+    let errors = 0;
+
+    for (const row of rows) {
+      try {
+        const stripeSubscription = await this.stripe.subscriptions.retrieve(
+          row.stripe_subscription_id
+        );
+        await this.applyStripeSubscription(stripeSubscription, {
+          userId: row.user_id,
+          plan: row.plan
+        });
+        updated += 1;
+      } catch (err) {
+        errors += 1;
+        console.warn(
+          '[stripe-billing] reconcile failed for',
+          row.stripe_subscription_id,
+          err.message
+        );
+      }
+    }
+
+    return { checked: rows.length, updated, errors };
+  }
+
   constructEvent(rawBody, signature) {
     // Mock Stripe (used when STRIPE_SECRET_KEY is unset) does not verify signatures.
     // Only allow that insecure path when tests explicitly opt in via TEST_MOCK_STRIPE.
@@ -671,6 +895,8 @@ class StripeBillingService {
         return this.handleSubscriptionEvent(event.data.object);
       case 'invoice.payment_failed':
         return this.handleInvoicePaymentFailed(event.data.object);
+      case 'invoice.paid':
+        return this.handleInvoicePaid(event.data.object);
       default:
         return null;
     }

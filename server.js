@@ -157,6 +157,41 @@ function startDeviceTokenCleanupJob(deviceTokenModel) {
   console.log(`[push-cleanup] scheduled every ${intervalHours}h (threshold: ${DAYS_OLD} days)`);
 }
 
+/**
+ * Periodically re-sync local stripe_subscriptions with Stripe so missed webhooks
+ * (failed renewals, cancels) still clear or restore users.is_premium correctly.
+ * Set STRIPE_RECONCILE_INTERVAL_HOURS=0 to disable.
+ */
+function startStripeSubscriptionReconcileJob(stripeBillingService) {
+  const intervalHours = parseInt(process.env.STRIPE_RECONCILE_INTERVAL_HOURS || '6', 10);
+  if (!intervalHours || intervalHours <= 0) {
+    console.log('[stripe-reconcile] disabled via STRIPE_RECONCILE_INTERVAL_HOURS');
+    return;
+  }
+
+  const intervalMs = intervalHours * 60 * 60 * 1000;
+  const batchLimit = parseInt(process.env.STRIPE_RECONCILE_BATCH_LIMIT || '50', 10);
+
+  const run = async (label) => {
+    try {
+      const result = await stripeBillingService.reconcileSubscriptions({ limit: batchLimit });
+      if (result.skipped) {
+        console.log(`[stripe-reconcile] ${label}: skipped (Stripe not configured)`);
+        return;
+      }
+      console.log(
+        `[stripe-reconcile] ${label}: checked=${result.checked} updated=${result.updated} errors=${result.errors || 0}`
+      );
+    } catch (e) {
+      console.warn(`[stripe-reconcile] ${label} failed:`, e.message);
+    }
+  };
+
+  setTimeout(() => run('initial'), 5 * 60 * 1000);
+  setInterval(() => run('periodic'), intervalMs);
+  console.log(`[stripe-reconcile] scheduled every ${intervalHours}h (batch ${batchLimit})`);
+}
+
 // Middleware
 app.use(cors());
 app.use(securityHeaders); // Apply security headers to all responses
@@ -285,6 +320,10 @@ async function initializeApp() {
     // Runs every PUSH_TOKEN_CLEANUP_INTERVAL_HOURS (default 24). Set to 0 to disable.
     if (deviceTokenModelInstance) {
       startDeviceTokenCleanupJob(deviceTokenModelInstance);
+    }
+
+    if (stripeBillingService) {
+      startStripeSubscriptionReconcileJob(stripeBillingService);
     }
     
     console.log('Application initialized successfully.');
