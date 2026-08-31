@@ -192,6 +192,65 @@ function startStripeSubscriptionReconcileJob(stripeBillingService) {
   console.log(`[stripe-reconcile] scheduled every ${intervalHours}h (batch ${batchLimit})`);
 }
 
+/**
+ * Periodically cancel abandoned free-trial subscriptions: a placeholder account
+ * (trial.*@sit-together.local) is created silently the moment someone reaches
+ * the checkout screen, and a live Stripe subscription is created with it before
+ * any payment method is ever entered. Most of the time that's just someone who
+ * bailed before finishing checkout — this cancels the Stripe subscription and
+ * soft-deletes the placeholder account once it has sat untouched for
+ * ORPHANED_CLEANUP_AGE_HOURS.
+ *
+ * Defaults to dry-run (log-only, no cancellations or deletes) until
+ * ORPHANED_CLEANUP_DRY_RUN=false is set explicitly, so the first deploys can be
+ * sanity-checked against production before it acts on anything.
+ * Set ORPHANED_CLEANUP_INTERVAL_HOURS=0 to disable.
+ */
+function startOrphanedTrialCleanupJob(stripeBillingService, pairingModel, refreshTokenModel) {
+  const intervalHours = parseInt(process.env.ORPHANED_CLEANUP_INTERVAL_HOURS || '24', 10);
+  if (!intervalHours || intervalHours <= 0) {
+    console.log('[orphaned-trial-cleanup] disabled via ORPHANED_CLEANUP_INTERVAL_HOURS');
+    return;
+  }
+
+  const intervalMs = intervalHours * 60 * 60 * 1000;
+  const ageHours = parseInt(process.env.ORPHANED_CLEANUP_AGE_HOURS || '48', 10);
+  const batchLimit = parseInt(process.env.ORPHANED_CLEANUP_BATCH_LIMIT || '50', 10);
+  // Opt-in to live deletes: anything other than the literal string 'false' stays dry-run.
+  const dryRun = String(process.env.ORPHANED_CLEANUP_DRY_RUN ?? 'true').toLowerCase() !== 'false';
+
+  const run = async (label) => {
+    try {
+      const result = await stripeBillingService.cleanupOrphanedTrials({
+        olderThanHours: ageHours,
+        limit: batchLimit,
+        dryRun,
+        pairingModel,
+        refreshTokenModel
+      });
+      if (result.skipped) {
+        console.log(`[orphaned-trial-cleanup] ${label}: skipped (Stripe not configured)`);
+        return;
+      }
+      console.log(
+        `[orphaned-trial-cleanup] ${label}: checked=${result.checked} `
+        + `canceled=${result.canceled} wouldCancel=${result.wouldCancel} `
+        + `noLongerEligible=${result.noLongerEligible} errors=${result.errors} `
+        + `dryRun=${result.dryRun}`
+      );
+    } catch (e) {
+      console.warn(`[orphaned-trial-cleanup] ${label} failed:`, e.message);
+    }
+  };
+
+  setTimeout(() => run('initial'), 10 * 60 * 1000);
+  setInterval(() => run('periodic'), intervalMs);
+  console.log(
+    `[orphaned-trial-cleanup] scheduled every ${intervalHours}h `
+    + `(age > ${ageHours}h, batch ${batchLimit}, dryRun=${dryRun})`
+  );
+}
+
 // Middleware
 app.use(cors());
 app.use(securityHeaders); // Apply security headers to all responses
@@ -324,6 +383,7 @@ async function initializeApp() {
 
     if (stripeBillingService) {
       startStripeSubscriptionReconcileJob(stripeBillingService);
+      startOrphanedTrialCleanupJob(stripeBillingService, pairingModel, refreshTokenModel);
     }
     
     console.log('Application initialized successfully.');

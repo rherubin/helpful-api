@@ -187,6 +187,35 @@ class StripeSubscription {
        LIMIT ${safeLimit}`
     );
   }
+
+  /**
+   * Candidates for the orphaned-trial cleanup cron: subscriptions still sitting
+   * in trialing/incomplete status whose owning account is still the throwaway
+   * placeholder created silently at the start of checkout (see helpful-web
+   * generateDevEmail('trial') in lib/api/passwordPolicy.js) and that were created
+   * more than `olderThanHours` ago. Age gate keeps this from touching someone
+   * mid-checkout who just hasn't finished yet.
+   *
+   * This is a first-pass local filter only — the service re-verifies each
+   * candidate against live Stripe (status + default_payment_method) before
+   * canceling anything, since local status can lag a few hours behind Stripe.
+   */
+  async listOrphanedTrialsForCleanup({ olderThanHours = 48, limit = 50 } = {}) {
+    const safeHours = Math.min(Math.max(Number(olderThanHours) || 48, 1), 24 * 30);
+    const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 500);
+    return this.query(
+      `SELECT s.*, u.email AS user_email
+       FROM stripe_subscriptions s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.status IN ('trialing', 'incomplete')
+         AND u.deleted_at IS NULL
+         AND u.email LIKE 'trial.%@sit-together.local'
+         AND s.created_at < (NOW() - INTERVAL ? HOUR)
+       ORDER BY s.created_at ASC
+       LIMIT ${safeLimit}`,
+      [safeHours]
+    );
+  }
 }
 
 module.exports = StripeSubscription;

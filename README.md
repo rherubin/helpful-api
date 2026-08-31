@@ -1,12 +1,63 @@
 # Helpful API
 
-Node.js / Express REST API with MySQL for couples therapy programs: user accounts, JWT auth, partner pairing, AI-generated multi-day programs (Helpful vs Hopeful tracks), step messaging with optional therapy responses, org-code premium, iOS/Android subscriptions, **Stripe web billing**, FCM push registration, admin tooling, and Sit Sessions (prompt sessions).
+Express REST API (MySQL) for **Sit Together** and the Helpful mobile apps: accounts, JWT auth, partner pairing, AI Sit Sessions, 14-day programs, org-code / Stripe / IAP premium, FCM push, and admin tooling.
 
-**Stack:** Node ≥16, Express 4, MySQL 8, JWT + bcrypt, OpenAI Chat Completions (via `BasePromptService`), optional Firebase Admin (FCM).
+**Clients**
+
+| Client | Repo / product | What it uses here |
+|--------|----------------|-------------------|
+| Sit Together web | [`helpful-web`](https://github.com/rherubin/helpful-web) · [sittogether.org](https://www.sittogether.org) | Auth, pairing, Sit Sessions, Stripe Payment Element + Customer Portal |
+| Helpful mobile | iOS / Android | Auth, pairing, Sit Sessions, 14-day programs, IAP receipts, FCM device tokens |
+
+There is no password-reset, email, or magic-link flow. LLM calls are **OpenAI only** (Helpful vs Hopeful are prompt tracks, not vendors).
+
+**Stack:** Node **18** in production (Dockerfile / Nixpacks; `package.json` engines `>=16`), Express 4, MySQL 8, JWT + bcrypt, OpenAI Chat Completions (`BasePromptService`), Stripe, optional Firebase Admin (FCM). Railway-first: `PORT` is required; `MYSQL_URL` is supported.
+
+Deeper docs (this README is the client contract):
+
+- Sit Sessions — [Prompt sessions (“Sit Sessions”)](#prompt-sessions-sit-sessions) and [`docs/prompt-sessions-design.md`](./docs/prompt-sessions-design.md)
+- Stripe — [`docs/stripe-billing.md`](./docs/stripe-billing.md)
+- Tests — [`tests/README.md`](./tests/README.md)
+
+## Contents
+
+1. [What this API does](#what-this-api-does)
+2. [Features (detail)](#features-detail)
+3. [Setup](#setup)
+4. [Quick reference](#quick-reference)
+5. [Cross-cutting behavior](#cross-cutting-behavior)
+6. [API endpoints](#api-endpoints)
+7. [Database schema](#database-schema)
+8. [Error handling](#error-handling)
+9. [Example workflows](#example-workflows)
+10. [Testing](#testing)
+11. [Project structure](#project-structure)
+12. [Deployment](#deployment-notes)
+13. [Removed / obsolete](#removed--obsolete-do-not-use)
 
 ---
 
-## Features
+## What this API does
+
+| Area | Capability | Typical client |
+|------|------------|----------------|
+| **Users & auth** | Email/password accounts; access + refresh JWTs (rotation, sliding refresh); `GET /api/profile`; self-gated update / soft-delete / restore; login auto-restores a soft-deleted account | Web + mobile |
+| **Pairing** | 6-character partner codes; request / accept / reject; soft-delete / restore; `max_pairings` | Web + mobile |
+| **Sit Sessions** | Solo or paired `prompt_sessions`: prep → generate Bridge + Session JSON; `generation` job state (`idle` / `running` / `succeeded` / `failed`) | **Web (primary)** + mobile |
+| **14-day programs** | Async AI generation of day steps; user messages; couples therapy system replies; unlock tracking | **Mobile** (web does not call these) |
+| **Helpful vs Hopeful** | Same OpenAI model; Hopeful (faith-based) when the user has an org code or custom org name/city/state | Any client |
+| **Stripe (web)** | `POST /api/billing/subscription-intent` for in-app Payment Element; Customer Portal; webhooks; reconcile + orphaned-trial jobs | **Web** |
+| **IAP (mobile)** | `POST /api/subscription` iOS/Android receipts — **503** unless `TEST_MOCK_IAP=true` (no App Store / Play verification yet) | **Mobile** |
+| **Org codes** | Admin CRUD + audit; app users may list (secrets stripped); linking sets `users.is_premium` | Admin + mobile |
+| **Push** | Device-token CRUD; FCM send is a no-op if Firebase is unconfigured | **Mobile** |
+| **Admin** | Separate `admin_users` JWT (`type: "admin"`); org-code mutations; push-test | Internal |
+| **Ops** | Auto schema on boot; in-process background jobs; rate limits; Railway `PORT` / `MYSQL_URL` | — |
+
+**Premium** on profile, user GET/PUT, and **login** is pairing premium **or** `users.is_premium` (org code, Stripe `trialing`/`active`, or IAP-driven pairing premium). Prefer `GET /api/profile` as the canonical user payload.
+
+---
+
+## Features (detail)
 
 ### Core
 - **Users** — create, profile update, soft-delete / restore; bcrypt passwords with validation
@@ -22,16 +73,17 @@ Node.js / Express REST API with MySQL for couples therapy programs: user account
 ### Premium & orgs
 - **Pairing premium** — active iOS/Android subscription on either partner sets `pairings.premium`
 - **Org premium** — valid `org_code` (or full custom org name/city/state) sets `users.is_premium`
-- **Stripe web billing** — Checkout + Customer Portal + webhooks; persists `stripe_subscriptions` and sets `users.is_premium` when status is `trialing`/`active` (see [`docs/stripe-billing.md`](./docs/stripe-billing.md))
-- **Computed `premium`** on profile / GET-PUT user: `hasPremiumPairing || is_premium`  
-  **Note:** login response `premium` currently reflects **pairing premium only** (does not OR `is_premium`)
+- **Stripe web billing** — **Payment Element** via `POST /api/billing/subscription-intent` (primary); hosted Checkout (`POST /api/billing/checkout`) is legacy; Customer Portal + webhooks; persists `stripe_subscriptions` and sets `users.is_premium` when status is `trialing`/`active` (see [`docs/stripe-billing.md`](./docs/stripe-billing.md))
+- **Computed `premium`** on login, profile, and GET/PUT user: pairing premium **or** `is_premium`
 
 ### Ops
 - **Push** — device token CRUD; FCM soft no-op when Firebase is not configured
 - **Admin** — separate `admin_users` JWT (`type: "admin"`) for org-code CRUD, audit, push-test
 - **Rate limits** — global API, login, user update, device tokens, admin push-test
+- **CORS** — `cors()` default (reflects any `Origin`; no allowlist). Stripe **return URLs** are a separate check (`STRIPE_CHECKOUT_ALLOWED_ORIGINS` / `WEB_APP_ORIGIN`)
 - **Auto schema** — tables + incremental column migrations on startup
 - **Railway-friendly** — `PORT` required, `MYSQL_URL` supported
+- **Background jobs** — regeneration poller, device-token cleanup, Stripe subscription reconcile, orphaned-trial cleanup all run in-process on a timer; see [Background jobs](#background-jobs)
 
 ---
 
@@ -96,6 +148,19 @@ OPENAI_API_KEY=your-openai-api-key
 # TEST_MOCK_LLM=true
 # NODE_ENV=test
 # SKIP_RATE_LIMITS=true
+
+# Stripe (web billing — see docs/stripe-billing.md). Omit or TEST_MOCK_STRIPE=true for local/CI.
+# STRIPE_SECRET_KEY=sk_test_...
+# STRIPE_WEBHOOK_SECRET=whsec_...
+# STRIPE_PRICE_MONTHLY=price_...
+# STRIPE_PRICE_YEARLY=price_...
+# STRIPE_TRIAL_PERIOD_DAYS=7
+# STRIPE_CHECKOUT_ALLOWED_ORIGINS=http://localhost:8080,https://www.sittogether.org
+# WEB_APP_ORIGIN=http://localhost:8080
+# TEST_MOCK_STRIPE=true
+
+# IAP receipts (POST /api/subscription) — 503 unless this is set (no store verification yet)
+# TEST_MOCK_IAP=true
 ```
 
 | Variable | Required | Default | Notes |
@@ -124,6 +189,20 @@ OPENAI_API_KEY=your-openai-api-key
 | `DEFAULT_STEPS_REQUIRED_FOR_UNLOCK` | No | `0` | Create/next program body default |
 | `REGENERATION_POLL_INTERVAL_MS` | No | `30000` | Poller for `regenerate_therapy_response` |
 | `PUSH_TOKEN_CLEANUP_INTERVAL_HOURS` | No | `24` | Stale device tokens (>180 days) |
+| `STRIPE_RECONCILE_INTERVAL_HOURS` | No | `6` | Re-check local `stripe_subscriptions` against Stripe (safety net for missed webhooks); `0` disables |
+| `STRIPE_RECONCILE_BATCH_LIMIT` | No | `50` | Rows checked per reconcile run |
+| `ORPHANED_CLEANUP_INTERVAL_HOURS` | No | `24` | Cancel abandoned free-trial subscriptions + soft-delete their placeholder accounts; `0` disables |
+| `ORPHANED_CLEANUP_AGE_HOURS` | No | `48` | Minimum age of a stalled trial before it's a cleanup candidate |
+| `ORPHANED_CLEANUP_BATCH_LIMIT` | No | `50` | Rows checked per cleanup run |
+| `ORPHANED_CLEANUP_DRY_RUN` | No | `true` | Logs candidates only; set `false` to actually cancel/delete |
+| `STRIPE_SECRET_KEY` | For live Stripe | — | Test `sk_test_` / `rk_test_` on develop; live keys on production. Missing key or `TEST_MOCK_STRIPE=true` → in-process mock |
+| `STRIPE_WEBHOOK_SECRET` | For webhooks | — | Signing secret for `/api/billing/webhook` |
+| `STRIPE_PRICE_MONTHLY` / `STRIPE_PRICE_YEARLY` | For Stripe | — | Price IDs; catalog in [`docs/stripe-billing.md`](./docs/stripe-billing.md) |
+| `STRIPE_TRIAL_PERIOD_DAYS` | No | `7` | Trial length on new subscriptions |
+| `STRIPE_CHECKOUT_ALLOWED_ORIGINS` | For Checkout/Portal URLs | — | Comma-separated origins; fallback `WEB_APP_ORIGIN` (default `http://localhost:3000`) |
+| `WEB_APP_ORIGIN` | No | `http://localhost:3000` | Fallback origin for Stripe return URLs (web local default is **8080**) |
+| `TEST_MOCK_STRIPE` | No | — | In-process Stripe mock (local/CI; never on Railway) |
+| `RAILWAY_ENVIRONMENT` / `RAILWAY_ENVIRONMENT_NAME` | No | — | If production, logs an error when Stripe keys are test-mode |
 
 **LLM provider:** OpenAI only (`BasePromptService`). There is no Anthropic/Gemini client in this codebase. Helpful vs Hopeful are **prompt product tracks**, not different vendors.
 
@@ -177,7 +256,7 @@ npm run dev        # nodemon
 | Programs | `POST/GET/DELETE /api/programs…`, next, therapy_response, metrics |
 | Steps | `/api/programs/:id/programSteps`, `/api/programSteps/...` |
 | Subscriptions | `POST/GET /api/subscription`, `GET .../receipts` |
-| Stripe billing | `POST /api/billing/checkout`, `POST /api/billing/portal`, `GET /api/billing/status`, `POST /api/billing/webhook` |
+| Stripe billing | `POST /api/billing/subscription-intent` (Payment Element, **primary**), `POST /api/billing/checkout` (legacy hosted), `POST /api/billing/portal`, `GET /api/billing/status`, `POST /api/billing/webhook` |
 | Org codes | `/api/org-codes` (admin for mutations) |
 | Admin | `/api/admin/auth/*`, `POST /api/admin/push-test` |
 | Push devices | `/api/device-tokens` |
@@ -201,6 +280,7 @@ Auth header: `Authorization: Bearer {access_token}` unless noted.
 
 - Missing/invalid/expired access → **401** + `WWW-Authenticate`
 - Account lockout (login only, in-memory): **5** failed attempts in **15 min** → **423** for **5 min** (per process; not shared across replicas)
+- Soft-deleted accounts: login with the same email/password **restores** the user and returns `data.restored: true` (pairings stay cascade-deleted until explicitly restored)
 - `bypass_password` on a user row skips password check at login (not settable via public user API)
 
 ### Rate limits (`middleware/security.js`)
@@ -217,7 +297,7 @@ Skipped when `NODE_ENV=test`, `TEST_MOCK_LLM=true`, `TEST_MOCK_OPENAI=true`, `TE
 
 ### Security headers
 
-On all responses: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`. HSTS only when request is HTTPS / `x-forwarded-proto: https`. CORS is enabled (`cors()` default).
+On all responses: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`. HSTS only when request is HTTPS / `x-forwarded-proto: https`. CORS is `cors()` with **no origin allowlist** (reflects the request `Origin`). Stripe Checkout/Portal **return URLs** are validated separately against `STRIPE_CHECKOUT_ALLOWED_ORIGINS` / `WEB_APP_ORIGIN` — that is not CORS.
 
 ### Helpful vs Hopeful
 
@@ -242,19 +322,37 @@ Both use the same OpenAI key/model.
 
 | Source | Effect |
 |--------|--------|
-| Active iOS/Android sub | Updates accepted pairings’ `premium`; partners see pairing-based premium |
+| Active iOS/Android IAP | Updates accepted pairings’ `premium`; partners see pairing-based premium |
+| Stripe `trialing` / `active` | Sets `users.is_premium` (web Payment Element / webhooks / reconcile) |
 | Valid `org_code` on profile update | Links org, `is_premium = true` |
-| Detach / clear org | May clear premium fields per update logic |
+| Detach / clear org | May clear org premium; **Stripe premium is preserved** if the user still has an active Stripe sub |
 | Custom org name+city+state (no code) | Creates/links org path; premium when all three present after merge |
 
-Profile: `premium = pairingPremium || is_premium`.  
-Login: `premium` = pairing premium only (implementation quirk — prefer `/api/profile` for full premium).
+Login, profile, and GET/PUT user all compute `premium` as pairing premium **or** `is_premium` (org or Stripe). Prefer `GET /api/profile` as the canonical payload.
 
 ### Push
 
 - Unconfigured Firebase → sends return `{ skipped: true }` (no-op); API stays up.
 - Exception: `POST /api/admin/push-test` → **503** if not configured.
 - Dead FCM tokens pruned on send; periodic cleanup of tokens idle >180 days.
+
+### Background jobs
+
+All four run **in-process** (`setInterval`/`setTimeout` in `server.js`, plus the poller's own loop in `routes/programs.js`) — there is no external cron/worker process or queue. Each is started once at boot inside `initializeApp()`, guarded by whether the service it depends on is configured. All logs are prefixed with the job's tag below.
+
+| Job | Log tag | Runs when | Interval env var | Default | Other env vars |
+|-----|---------|-----------|-------------------|---------|-----------------|
+| Program regeneration poller | `[regen_poller]` | An LLM service is configured (`OPENAI_API_KEY`, or `TEST_MOCK_LLM`) | `REGENERATION_POLL_INTERVAL_MS` | `30000` (30s) | — (always on while configured; no `0`-disables switch) |
+| Device token cleanup | `[push-cleanup]` | Always | `PUSH_TOKEN_CLEANUP_INTERVAL_HOURS` | `24` | Age threshold fixed at 180 days in code (not configurable) |
+| Stripe subscription reconcile | `[stripe-reconcile]` | Stripe billing configured (`STRIPE_SECRET_KEY` or `TEST_MOCK_STRIPE`) | `STRIPE_RECONCILE_INTERVAL_HOURS` | `6` | `STRIPE_RECONCILE_BATCH_LIMIT` (default `50`) |
+| Orphaned-trial cleanup | `[orphaned-trial-cleanup]` | Stripe billing configured | `ORPHANED_CLEANUP_INTERVAL_HOURS` | `24` | `ORPHANED_CLEANUP_AGE_HOURS` (default `48`), `ORPHANED_CLEANUP_BATCH_LIMIT` (default `50`), `ORPHANED_CLEANUP_DRY_RUN` (default `true`) |
+
+Any job with an `_INTERVAL_HOURS` env var is disabled by setting it to `0` (logged at boot, e.g. `[stripe-reconcile] disabled via STRIPE_RECONCILE_INTERVAL_HOURS`). The regeneration poller has no such switch — it runs whenever an LLM backend is configured at all.
+
+- **Program regeneration poller** (`routes/programs.js` — `startRegenerationPoller`) — polls for programs with `regenerate_therapy_response = true`, claims each with a compare-and-swap flag (so a crash mid-run or multiple instances can't double-process or loop forever), regenerates via the Helpful/Hopeful prompt service, and pushes `program_ready` on success. See [Program generation](#program-generation).
+- **Device token cleanup** (`server.js` — `startDeviceTokenCleanupJob`) — deletes FCM device tokens whose `last_used_at` (falling back to `updated_at`) is older than 180 days. First run 4 minutes after boot, then on the configured interval.
+- **Stripe subscription reconcile** (`services/StripeBillingService.js` — `reconcileSubscriptions`, scheduled by `startStripeSubscriptionReconcileJob`) — re-fetches local `trialing`/`active`/`past_due`/`unpaid`/`incomplete` subscriptions from Stripe and re-applies them, so a missed or delayed webhook (failed renewal, cancellation) still clears or restores `users.is_premium`. First run 5 minutes after boot. See [`docs/stripe-billing.md`](./docs/stripe-billing.md).
+- **Orphaned-trial cleanup** (`services/StripeBillingService.js` — `cleanupOrphanedTrials`, scheduled by `startOrphanedTrialCleanupJob`) — `helpful-web` silently creates a placeholder account (`trial.*@sit-together.local`) and a real Stripe trial subscription the moment someone reaches the checkout screen, before any payment method is entered; most abandoned checkouts never come back to finish. This job finds trials still `trialing`/`incomplete`, owned by an un-claimed placeholder account, older than `ORPHANED_CLEANUP_AGE_HOURS`, double-checks each against **live** Stripe (status + no `default_payment_method`/`default_source`) immediately before acting so an in-progress checkout is never touched, then cancels the Stripe subscription (via the same `cancelActiveSubscriptionsForUser` used on manual account delete — the Stripe **customer** object is left alone) and soft-deletes the placeholder user (`softDeleteUser`, cascades pairings, revokes refresh tokens). Ships with `ORPHANED_CLEANUP_DRY_RUN=true` — logs candidates without acting until explicitly set to `false`. First run 10 minutes after boot.
 
 ### Push kinds (`data.kind`)
 
@@ -295,11 +393,14 @@ Body: `{ "email", "password" }`
     "access_token": "...",
     "refresh_token": "...",
     "expires_in": 86400,
-    "refresh_expires_in": 1209600
+    "refresh_expires_in": 1209600,
+    "restored": false
   }
 }
 ```
 
+`user.premium` is pairing **or** `users.is_premium` (org / Stripe).  
+`restored` is `true` when login auto-restored a soft-deleted account (`message` becomes `"Login successful; soft-deleted account restored"`).  
 `expires_in` / `refresh_expires_in` are **seconds** (from env or defaults).  
 **400** missing fields · **401** bad credentials · **423** locked · **500** server.
 
@@ -319,7 +420,7 @@ Body: `{ "access_token" }` — **decodes without verifying signature** (local de
 
 Returns profile without `password_hash`, with:
 
-- `premium` (pairing **or** org)
+- `premium` (pairing **or** `is_premium` — org code / Stripe)
 - `pairings[]` (accepted + pending; pending have `partner: null`)
 - `pairing_codes[]`
 - `org_id`, `org_name`, `org_city`, `org_state` (from linked org code or custom fields)
@@ -344,14 +445,15 @@ Auth; **must be self**. Rate-limited. Optional body: `email`, `user_name`, `part
 **Org premium paths:**
 - `org_code` string → lookup; not expired → link + premium; **400** invalid/expired code
 - Without `org_code`, all three of `org_name`, `org_city`, `org_state` → self-register org premium path
+- Clearing org fields does **not** drop Stripe-based `is_premium` while a `trialing`/`active` subscription exists
 
 #### DELETE `/api/users/:id` · PATCH `/api/users/:id/restore` · GET `/api/users/deleted/all`
 
 Soft-delete / restore / list deleted. Delete and restore are **self-gated** (`req.user.id` must match `:id`). `GET .../deleted/all` requires an **admin** JWT (`type=admin`); regular user tokens get **403**.
 
-**Cascade:** soft-deleting a user soft-deletes that user’s pairings and revokes refresh tokens. Restoring the user does **not** automatically restore those pairings — restore pairings separately via `PATCH /api/pairing/:id/restore` if needed.
+**Cascade:** soft-deleting a user best-effort **cancels Stripe subscriptions** (response includes `canceled_stripe_subscriptions`), then soft-deletes that user’s pairings and revokes refresh tokens. Restoring the user does **not** automatically restore those pairings or recreate Stripe subs — restore pairings separately via `PATCH /api/pairing/:id/restore` if needed.
 
-**Recovery:** after soft-delete, `POST /api/login` with the same email/password restores the account (so the UNIQUE email is not permanently locked once access tokens expire). Pairings remain cascade-deleted until explicitly restored.
+**Recovery:** after soft-delete, `POST /api/login` with the same email/password restores the account (so the UNIQUE email is not permanently locked once access tokens expire) and sets `data.restored: true`. Pairings remain cascade-deleted until explicitly restored.
 
 ### Pairing
 
@@ -479,6 +581,22 @@ Conflict if receipt belongs to another user (**409** via `SubscriptionError`).
 #### GET `/api/subscription/receipts`
 
 `{ "message", "data": { "ios_receipts", "android_receipts", "total_receipts" } }`
+
+### Stripe billing (web)
+
+Canonical setup (price IDs, webhooks, Railway env matrix): [`docs/stripe-billing.md`](./docs/stripe-billing.md). Sit Together web uses **Payment Element in-app**; hosted Checkout is legacy.
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| POST | `/api/billing/subscription-intent` | Bearer | Body `{ "plan": "monthly" \| "yearly" }` → `{ client_secret, mode: "setup" \| "payment", subscription_id, plan }`. **Primary** purchase path. **409** if already `trialing`/`active` |
+| POST | `/api/billing/checkout` | Bearer | Hosted Checkout session URL. **Legacy / optional** — web does not call this |
+| POST | `/api/billing/portal` | Bearer | Body `{ "return_url"? }` → `{ url }` for Stripe Customer Portal |
+| GET | `/api/billing/status` | Bearer | Premium + latest `stripe_subscriptions` row |
+| POST | `/api/billing/webhook` | Stripe signature | Raw body (mounted **before** `express.json()`). Updates `stripe_subscriptions` and `users.is_premium` |
+
+Return URLs for hosted Checkout/Portal must match an origin in `STRIPE_CHECKOUT_ALLOWED_ORIGINS` (or `WEB_APP_ORIGIN`). Webhook events: `checkout.session.completed`, `customer.subscription.created|updated|deleted`, `invoice.paid`, `invoice.payment_failed`.
+
+`TEST_MOCK_STRIPE=true` (or missing `STRIPE_SECRET_KEY`) uses an in-process mock — local/CI only, never on Railway.
 
 ### Organization codes
 
@@ -1200,6 +1318,8 @@ Test emails use **`@example.com`** so `npm run test:cleanup` can remove them saf
 | `npm run test:pairing-lifecycle` | Pairing reject / soft-delete / restore |
 | `npm run test:user-soft-delete` | User soft-delete / restore + pairing cascade |
 | `npm run test:authz-idor` | Pairing/user/messages-stats ownership + admin register gate |
+| `npm run test:stripe-billing` | Stripe intent / portal / webhook mock (`stripe-billing-test.js`) |
+| `npm run test:admin-auth-refresh` | Admin refresh/logout (`admin-auth-refresh-test.js`) |
 | `npm run test:push` | `PushNotificationService` unit tests (mocked FCM) |
 | `npm run test:admin-push` | `POST /api/admin/push-test` integration |
 | `npm run test:prompt-sessions` | Sit Sessions: solo + paired + pending pairing, prep, generate |
@@ -1208,7 +1328,7 @@ Test emails use **`@example.com`** so `npm run test:cleanup` can remove them saf
 | `npm run purge:prompt-sessions` | Dry-run: count all Sit Sessions on target DB |
 | `npm run purge:prompt-sessions:confirm` | **Delete all** Sit Sessions + preps (see [Purge](#purge-all-sit-sessions-dev--env-reset)) |
 
-Useful flags on the main runner: `--no-load`, `--no-security`, `--no-pairing-lifecycle`, `--no-user-soft-delete`, `--url=…`, `--timeout=…`, `--skip-server-check`.
+Useful flags on the main runner: `--no-load`, `--no-security`, `--no-pairing-lifecycle`, `--no-user-soft-delete`, `--no-stripe-billing`, `--no-admin-auth-refresh`, `--url=…`, `--timeout=…`, `--skip-server-check`.
 
 ### Coverage map (`npm test`)
 
@@ -1228,13 +1348,13 @@ What the default suite exercises vs thinner / standalone areas:
 | Therapy auto-trigger / chime-in / welcome | Yes | `therapy-trigger-test` |
 | Helpful vs Hopeful routing + prompt unit tests | Yes | `program-org-context-test`, `helpful-prompt-service-test`, `hopeful-prompt-service-test` |
 | Subscriptions + pairing premium | Yes | `subscription-test` |
-| Stripe billing (Checkout/Portal/webhook mock) | Yes | `stripe-billing-test` |
+| Stripe billing (subscription-intent / Portal / webhook mock) | Yes | `stripe-billing-test` |
 | Device tokens | Yes | `device-tokens-test` |
 | Sit Sessions (solo, paired, pending pairing; prep visibility; generate) | Yes | `prompt-sessions-test` |
 | Push unit + admin push-test | Yes | `push-notification-service-test`, `admin-push-test-test` |
 | Security (prompt injection helpers) | Yes | `security-test` |
 | Load | Yes (skip with `test:quick`) | `load-test` |
-| Admin auth full lifecycle (profile/refresh/logout) | Thin (login/register as setup) | — |
+| Admin auth full lifecycle (profile/refresh/logout) | Partial | `admin-auth-refresh-test` (refresh/logout); login/register still used as setup elsewhere |
 | Org-codes GET `/:id` / PUT as first-class | Thin (create/delete fixtures + list/audit) | `user-org-code-test` |
 | `POST /api/token-info`, `GET /api/messages-stats` | Not covered | — |
 | Real OpenAI / load benchmarks | **Excluded** from `npm test` | `openai-test.js`, `openai-load-benchmark.js` (manual) |
@@ -1260,40 +1380,44 @@ helpful-api/
 │   └── security.js
 ├── models/          # User, Pairing, Program, ProgramStep, Message,
 │                    # OrgCode, AdminUser, DeviceToken, PromptSession,
-│                    # RefreshToken, Ios/AndroidSubscription, …
+│                    # RefreshToken, Ios/AndroidSubscription, StripeSubscription, …
 ├── services/
 │   ├── AuthService.js
 │   ├── AdminAuthService.js
 │   ├── PairingService.js
-│   ├── SubscriptionService.js
+│   ├── SubscriptionService.js        # iOS/Android IAP
+│   ├── StripeBillingService.js       # web Payment Element + Portal + webhooks
 │   ├── PushNotificationService.js
-│   ├── BasePromptService.js      # OpenAI + TEST_MOCK_LLM
+│   ├── BasePromptService.js          # OpenAI + TEST_MOCK_LLM
 │   ├── HelpfulPromptService.js
-│   └── HopefulPromptService.js
+│   ├── HopefulPromptService.js
+│   └── prepValidation.js             # Sit Session prep injection checks
 ├── routes/
 │   ├── users.js
 │   ├── auth.js
 │   ├── pairing.js
 │   ├── programs.js
 │   ├── programSteps.js
-│   ├── subscription.js
+│   ├── subscription.js               # IAP
+│   ├── billing.js                    # Stripe web
 │   ├── org-codes.js
 │   ├── device-tokens.js
 │   ├── promptSessions.js
 │   ├── admin-auth.js
-│   └── admin.js                 # push-test
+│   └── admin.js                      # push-test
 ├── scripts/
 │   ├── seed-local-org-codes.js
 │   ├── query-mysql-database.js
-│   └── purge-prompt-sessions.js   # wipe all Sit Sessions (--confirm)
+│   └── purge-prompt-sessions.js
 ├── docs/
-│   └── prompt-sessions-design.md
+│   ├── prompt-sessions-design.md
+│   └── stripe-billing.md
 ├── tests/
 ├── server.js
 ├── package.json
-├── Dockerfile
+├── Dockerfile                        # node:18-alpine
 ├── railway.json
-├── nixpacks.toml
+├── nixpacks.toml                     # Node 18
 └── .env.example
 ```
 
@@ -1301,10 +1425,13 @@ helpful-api/
 
 ## Deployment notes
 
-- **Railway / containers:** set `PORT`, `MYSQL_URL` (or MySQL vars), `JWT_*`, `OPENAI_API_KEY`, optional Firebase JSON.
+- **Runtime:** Node **18** (Dockerfile + Nixpacks). `package.json` engines allow `>=16`.
+- **Railway / containers:** set `PORT`, `MYSQL_URL` (or MySQL vars), `JWT_*`, `OPENAI_API_KEY`. Optional: Firebase JSON, Stripe (`STRIPE_SECRET_KEY`, webhook secret, price IDs, `STRIPE_CHECKOUT_ALLOWED_ORIGINS`).
 - Schema auto-creates; no separate migrate step.
 - Health checks should hit `GET /health` (plain text).
-- Multi-instance note: login lockout is **in-process memory** only.
+- Multi-instance: login lockout is **in-process memory** only. Background jobs also run in-process on **every** instance — disable extras with interval `0` if you scale out.
+- Production Stripe: live keys (`rk_live_` / `sk_live_`) + live prices. `RAILWAY_ENVIRONMENT*` logs an error if production is still on test keys.
+- Staging / prod URLs: [`docs/stripe-billing.md`](./docs/stripe-billing.md) (Railway environments table).
 
 ---
 
@@ -1317,6 +1444,8 @@ helpful-api/
 | `RAILWAY_SETUP.md` | **Not in repo** — use this README + Railway dashboard |
 | Password “exactly 8 characters” | **Wrong** — min 8, max 128 |
 | Documenting `strictLoginLimiter` as active | **Exported but not mounted** |
+| Login `premium` as pairing-only | **Fixed** — login ORs `users.is_premium` (org / Stripe) |
+| Hosted Stripe Checkout as the web purchase path | **Legacy** — web uses `POST /api/billing/subscription-intent` |
 
 ---
 

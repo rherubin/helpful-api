@@ -2,6 +2,8 @@
 
 Sit Together web purchase uses **Stripe Payment Element** (in-app) + **Customer Portal** (hosted) for manage/cancel, with durable records in MySQL. Mobile IAP continues to use `/api/subscription` (iOS/Android receipts).
 
+Account: **Helpful Labs, Inc.** (`acct_1RT5H2HhC3Kq8LCh`).
+
 ## Flow
 
 1. Web onboarding: plan picker → create account → Checkout UI
@@ -22,7 +24,7 @@ Sit Together web purchase uses **Stripe Payment Element** (in-app) + **Customer 
 | GET | `/api/billing/status` | Bearer | Premium + latest subscription row |
 | POST | `/api/billing/webhook` | Stripe signature | Raw body; updates DB |
 
-Return URLs for hosted Checkout/Portal must match an origin in `STRIPE_CHECKOUT_ALLOWED_ORIGINS` (or `WEB_APP_ORIGIN`).
+Return URLs for hosted Checkout/Portal must match an origin in `STRIPE_CHECKOUT_ALLOWED_ORIGINS` (or `WEB_APP_ORIGIN`). The web app sends `window.location.origin` for portal returns.
 
 ## Database
 
@@ -33,28 +35,55 @@ Return URLs for hosted Checkout/Portal must match an origin in `STRIPE_CHECKOUT_
 
 - Premium when subscription status is `trialing` or `active` **or** org entitlement
 - `invoice.payment_failed` / `customer.subscription.updated|deleted` + reconcile cron clear Stripe-based premium when entitlement lapses (org premium preserved)
+- Orphaned-trial cleanup cron cancels abandoned trials (placeholder `trial.*@sit-together.local` account, `ORPHANED_CLEANUP_AGE_HOURS` old, still no `default_payment_method`) and soft-deletes the placeholder account — see `startOrphanedTrialCleanupJob` in `server.js`
 
 ## Env vars
 
 See [`.env.example`](../.env.example):
 
-- `STRIPE_SECRET_KEY`
-- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_SECRET_KEY` — test `sk_test_` / `rk_test_` on develop; live `rk_live_` (preferred) or `sk_live_` on production
+- `STRIPE_WEBHOOK_SECRET` — signing secret for that environment’s webhook endpoint
 - `STRIPE_PRICE_MONTHLY` / `STRIPE_PRICE_YEARLY`
 - `STRIPE_TRIAL_PERIOD_DAYS` (default `7`)
 - `STRIPE_CHECKOUT_ALLOWED_ORIGINS`
 - `STRIPE_RECONCILE_INTERVAL_HOURS` (default `6`; `0` disables)
 - `STRIPE_RECONCILE_BATCH_LIMIT` (default `50`)
-- `TEST_MOCK_STRIPE=true` — in-process mock client
+- `ORPHANED_CLEANUP_INTERVAL_HOURS` (default `24`; `0` disables)
+- `ORPHANED_CLEANUP_AGE_HOURS` (default `48`)
+- `ORPHANED_CLEANUP_BATCH_LIMIT` (default `50`)
+- `ORPHANED_CLEANUP_DRY_RUN` (default `true` — logs candidates only; set `false` to actually cancel/delete)
+- `TEST_MOCK_STRIPE=true` — in-process mock client (local/CI only; never on Railway)
 
-Web needs `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (publishable only).
+Web needs `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (publishable only). It must be the same mode as the API secret: `pk_test_` with develop, `pk_live_` with production.
+
+## Stripe catalog
+
+Product **Sit Together Premium** — $14.99 / month, $79.99 / year, 7-day trial (trial is set in API env, not on the Price).
+
+| Mode | Monthly price | Yearly price | Product |
+|------|---------------|--------------|---------|
+| Test | `price_1U6aNZHhC3Kq8LChHGPhfBo9` | `price_1U6aRxHhC3Kq8LChrmrfJbis` | `prod_V6nzrCnzmDlmZr` (monthly), `prod_V6o4j5aqUUDugq` (yearly) |
+| Live | `price_1U6wpMHhC3Kq8LChFNA328Z7` | `price_1U6wydHhC3Kq8LChlholGwTL` | `prod_V7BBaMIcKILQYo` |
+
+## Railway environments
+
+| | Develop | Production |
+|--|---------|------------|
+| API | `https://helpful-api-dev.up.railway.app` | `https://helpful-api-prod.up.railway.app` |
+| Web | `https://dev.sittogether.org` | `https://www.sittogether.org` |
+| API Stripe mode | Test | **Live** (`rk_live_` / `sk_live_` + live prices) |
+| Web publishable key | `pk_test_…` on `helpful-web-dev` | `pk_live_…` on `helpful-web-prod` |
+| Webhook | `https://helpful-api-dev.up.railway.app/api/billing/webhook` | `https://helpful-api-prod.up.railway.app/api/billing/webhook` |
+
+Webhook events (both endpoints): `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`.
 
 ## Stripe Dashboard setup
 
-1. Create Product **Sit Together Premium** with Prices: monthly **$11.99**, yearly **$71.99**
-2. Copy Price IDs into env
-3. Enable Customer Portal
-4. Webhook events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`, `invoice.paid`
+1. Product + Prices as in the catalog table above
+2. Copy the matching Price IDs into that environment’s API vars
+3. Enable Customer Portal (test and live): [test portal](https://dashboard.stripe.com/test/settings/billing/portal) / [live portal](https://dashboard.stripe.com/settings/billing/portal) — allow payment method update, invoice history, and cancel-at-period-end
+4. Webhook endpoints as in the Railway table
+5. Prefer a [restricted API key](https://dashboard.stripe.com/apikeys) (`rk_live_` / `rk_test_`) with Customers, Subscriptions, Checkout Sessions, Billing Portal, Invoices, PaymentIntents, SetupIntents, Payment Methods, Products, and Prices
 
 ## Local
 
@@ -69,9 +98,8 @@ For real Elements testing, set real Stripe test keys + publishable key on web, a
 stripe listen --forward-to localhost:9000/api/billing/webhook
 ```
 
-## Staging (Railway)
+Use [test cards](https://docs.stripe.com/testing#cards) such as `4242 4242 4242 4242`.
 
-1. Set Stripe env vars on the API service
-2. Webhook endpoint: `https://<api-host>/api/billing/webhook`
-3. Set `STRIPE_CHECKOUT_ALLOWED_ORIGINS` to web origin(s)
-4. Set web `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+## Tax
+
+Stripe Tax is **not** enabled (`automatic_tax` is off) and there are no tax registrations. Do not turn on `automatic_tax` until there is an active registration for each jurisdiction where you must collect tax — otherwise Stripe calculates nothing and does not error. See [Collect taxes for recurring payments](https://docs.stripe.com/billing/taxes/collect-taxes).

@@ -245,6 +245,18 @@ class StripeBillingService {
       console.warn('[stripe-billing] STRIPE_SECRET_KEY unset — using mock Stripe client');
     }
 
+    const railwayEnv = String(
+      process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || ''
+    ).toLowerCase();
+    const secretKey = process.env.STRIPE_SECRET_KEY || '';
+    if (railwayEnv === 'production' && /^(sk|rk)_test_/.test(secretKey)) {
+      console.error(
+        '[stripe-billing] Production is using a Stripe TEST secret key. '
+        + 'Live Payment Element confirmation will fail until STRIPE_SECRET_KEY, '
+        + 'STRIPE_PRICE_* and STRIPE_WEBHOOK_SECRET are live-mode values.'
+      );
+    }
+
     this.stripe = options.stripeClient
       || (useMock && !process.env.STRIPE_SECRET_KEY
         ? createMockStripe()
@@ -864,6 +876,92 @@ class StripeBillingService {
     return { checked: rows.length, updated, errors };
   }
 
+  /**
+   * Cancel abandoned free-trial subscriptions: still trialing/incomplete,
+   * never got a payment method attached, and owned by a placeholder account
+   * that never finished onboarding (see listOrphanedTrialsForCleanup).
+   *
+   * Each candidate is re-checked against live Stripe immediately before acting
+   * (status still non-terminal AND no default_payment_method) so a customer who
+   * added a card moments ago — before the next reconcile sync — is never touched.
+   *
+   * dryRun logs what would happen without canceling anything or touching the DB.
+   */
+  async cleanupOrphanedTrials({
+    olderThanHours = 48,
+    limit = 50,
+    dryRun = true,
+    pairingModel = null,
+    refreshTokenModel = null
+  } = {}) {
+    if (!this.isConfigured() && process.env.TEST_MOCK_STRIPE !== 'true') {
+      return { checked: 0, canceled: 0, skipped: true };
+    }
+
+    const rows = await this.stripeSubscriptionModel.listOrphanedTrialsForCleanup({
+      olderThanHours,
+      limit
+    });
+
+    let canceled = 0;
+    let stillEligibleButSkippedDryRun = 0;
+    let noLongerEligible = 0;
+    let errors = 0;
+
+    for (const row of rows) {
+      try {
+        const live = await this.stripe.subscriptions.retrieve(row.stripe_subscription_id);
+
+        const NON_TERMINAL = new Set(['trialing', 'incomplete']);
+        const stillOrphaned = NON_TERMINAL.has(String(live.status))
+          && !live.default_payment_method
+          && !live.default_source;
+
+        if (!stillOrphaned) {
+          noLongerEligible += 1;
+          console.log(
+            `[orphaned-trial-cleanup] skip ${row.stripe_subscription_id} (user ${row.user_id}): `
+            + `no longer eligible (status=${live.status}, has_payment_method=${!!live.default_payment_method})`
+          );
+          continue;
+        }
+
+        if (dryRun) {
+          stillEligibleButSkippedDryRun += 1;
+          console.log(
+            `[orphaned-trial-cleanup] DRY RUN would cancel ${row.stripe_subscription_id} `
+            + `(user ${row.user_id}, email ${row.user_email}, plan ${row.plan}, `
+            + `created_at ${row.created_at})`
+          );
+          continue;
+        }
+
+        await this.cancelActiveSubscriptionsForUser(row.user_id);
+        await this.userModel.softDeleteUser(row.user_id, pairingModel, refreshTokenModel);
+        canceled += 1;
+        console.log(
+          `[orphaned-trial-cleanup] canceled ${row.stripe_subscription_id} and soft-deleted user ${row.user_id}`
+        );
+      } catch (err) {
+        errors += 1;
+        console.warn(
+          '[orphaned-trial-cleanup] failed for',
+          row.stripe_subscription_id,
+          err.message
+        );
+      }
+    }
+
+    return {
+      checked: rows.length,
+      canceled,
+      wouldCancel: stillEligibleButSkippedDryRun,
+      noLongerEligible,
+      errors,
+      dryRun: !!dryRun
+    };
+  }
+
   constructEvent(rawBody, signature) {
     // Mock Stripe (used when STRIPE_SECRET_KEY is unset) does not verify signatures.
     // Only allow that insecure path when tests explicitly opt in via TEST_MOCK_STRIPE.
@@ -890,6 +988,7 @@ class StripeBillingService {
     switch (event.type) {
       case 'checkout.session.completed':
         return this.handleCheckoutSessionCompleted(event.data.object);
+      case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted':
         return this.handleSubscriptionEvent(event.data.object);
