@@ -575,6 +575,55 @@ class HelpfulPromptServiceTestRunner {
     }
   }
 
+  async testSamplingTemperatureByModel(service) {
+    this.log('Testing GPT-5 family omits temperature; gpt-4o keeps it', 'section');
+    const partners = [
+      {
+        name: 'Alex',
+        prep: {
+          gratitude: 'hopeful',
+          energy_level: 'somewhat full',
+          boundary: 'somewhat close',
+          intention: 'gentle',
+          curiosity: 'reconnect',
+          bringing_text: 'I want us on the same team.'
+        }
+      }
+    ];
+    const originalModel = service.model;
+
+    const originalFetch = global.fetch;
+    this._installMockFetch(JSON.stringify(this.buildMockSitSession()));
+    try {
+      service.model = 'gpt-5.4';
+      await service.generateSitSessionContent(partners);
+      this.assert(
+        !Object.prototype.hasOwnProperty.call(this.lastCapturedBody || {}, 'temperature'),
+        'gpt-5.4 Sit Session request omits temperature'
+      );
+    } catch (error) {
+      this.assert(false, 'gpt-5.4 generateSitSessionContent call', `Error: ${error.message}`);
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    const gpt4Fetch = global.fetch;
+    this._installMockFetch(JSON.stringify(this.buildMockSitSession()));
+    try {
+      service.model = 'gpt-4o';
+      await service.generateSitSessionContent(partners);
+      this.assert(
+        this.lastCapturedBody && this.lastCapturedBody.temperature === 0.7,
+        'gpt-4o Sit Session request keeps temperature 0.7'
+      );
+    } catch (error) {
+      this.assert(false, 'gpt-4o generateSitSessionContent call', `Error: ${error.message}`);
+    } finally {
+      service.model = originalModel;
+      global.fetch = gpt4Fetch;
+    }
+  }
+
   testSitSessionNormalizeStrictness(service) {
     this.log('Testing normalizeSitSessionResponse rejects bad shapes and strips extras', 'section');
 
@@ -744,6 +793,7 @@ class HelpfulPromptServiceTestRunner {
     await this.testInputValidationRejectsGenericNames(service);
     this.testSitSessionPrepPromptShape(service);
     await this.testSitSessionGeneration(service);
+    await this.testSamplingTemperatureByModel(service);
     this.testSitSessionNormalizeStrictness(service);
 
     this.assertTokenSafety();

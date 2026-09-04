@@ -250,15 +250,29 @@ class BasePromptService {
     };
   }
 
+  // GPT-5 / o-series reasoning models reject `temperature` unless reasoning
+  // effort is `none`. Sit Session generate always sent 0.7, so OpenAI 400'd
+  // and clients saw generation_status=failed / "Failed to generate Sit Session
+  // content". Omit sampling params for those families; keep them for gpt-4*.
+  modelSupportsSamplingTemperature(model = this.model) {
+    const id = String(model || '').toLowerCase();
+    if (!id) return true;
+    if (id.startsWith('gpt-5')) return false;
+    if (/^o[1-9]/.test(id)) return false;
+    return true;
+  }
+
   async _callOpenAI(systemPrompt, userPrompt, { maxTokens, temperature, jsonMode }) {
     const body = {
       model: this.model,
       messages: [
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         { role: 'user', content: userPrompt }
-      ],
-      temperature
+      ]
     };
+    if (this.modelSupportsSamplingTemperature() && temperature != null) {
+      body.temperature = temperature;
+    }
     if (maxTokens) body.max_completion_tokens = maxTokens;
     if (jsonMode) body.response_format = { type: 'json_object' };
 
