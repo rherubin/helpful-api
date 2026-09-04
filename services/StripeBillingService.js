@@ -218,6 +218,7 @@ class StripeBillingService {
   constructor(userModel, stripeSubscriptionModel, options = {}) {
     this.userModel = userModel;
     this.stripeSubscriptionModel = stripeSubscriptionModel;
+    this.subscriptionService = options.subscriptionService || null;
     this.trialPeriodDays = Number(process.env.STRIPE_TRIAL_PERIOD_DAYS || 7);
     this.webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
     this.priceIds = {
@@ -646,6 +647,13 @@ class StripeBillingService {
     const user = await this.userModel.getUserByIdIncludingDeleted(userId);
     const shouldBePremium = !!active || this.premiumEntitledFromOrg(user);
     await this.userModel.setIsPremium(userId, shouldBePremium);
+    // Share paid entitlement with accepted pairing partners the same way IAP does
+    // (pairings.premium). Org-only premium is not shared — only an active Stripe
+    // (or IAP) subscription marks the pairing. Cancel/lapse clears it unless the
+    // other partner still has an active subscription.
+    if (this.subscriptionService) {
+      await this.subscriptionService.reconcilePremiumStatus(userId);
+    }
     return shouldBePremium;
   }
 

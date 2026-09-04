@@ -6,11 +6,18 @@ class SubscriptionError extends Error {
 }
 
 class SubscriptionService {
-  constructor(iosSubscriptionModel, androidSubscriptionModel, userModel, pairingModel) {
+  constructor(
+    iosSubscriptionModel,
+    androidSubscriptionModel,
+    userModel,
+    pairingModel,
+    stripeSubscriptionModel = null
+  ) {
     this.iosSubscriptionModel = iosSubscriptionModel;
     this.androidSubscriptionModel = androidSubscriptionModel;
     this.userModel = userModel;
     this.pairingModel = pairingModel;
+    this.stripeSubscriptionModel = stripeSubscriptionModel;
   }
 
   normalizePlatform(platform) {
@@ -155,11 +162,17 @@ class SubscriptionService {
   }
 
   async hasActiveSubscription(userId) {
-    const [iosActive, androidActive] = await Promise.all([
+    const checks = [
       this.iosSubscriptionModel.hasActiveSubscription(userId),
       this.androidSubscriptionModel.hasActiveSubscription(userId)
-    ]);
-    return iosActive || androidActive;
+    ];
+    if (this.stripeSubscriptionModel) {
+      checks.push(
+        this.stripeSubscriptionModel.getActiveForUser(userId).then((row) => !!row)
+      );
+    }
+    const results = await Promise.all(checks);
+    return results.some(Boolean);
   }
 
   // Compute if a pairing should be premium based on either user having an active subscription

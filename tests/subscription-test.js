@@ -760,6 +760,66 @@ class SubscriptionTestRunner {
     }
   }
 
+  // Subscribe first, then pair — partner should still get premium
+  async testPremiumWhenPairingAfterPurchase() {
+    this.log('Testing Premium When Pairing After IAP Purchase', 'section');
+
+    const user1 = await this.createTestUser('subscription_ios_thenpair_user1');
+    const user2 = await this.createTestUser('subscription_ios_thenpair_user2');
+    if (!user1 || !user2) {
+      this.assert(false, 'Create users for pair-after-purchase', 'Failed to create test users');
+      return;
+    }
+
+    const futureExpiration = Date.now() + (365 * 24 * 60 * 60 * 1000);
+    const subscription = {
+      platform: 'ios',
+      product_id: 'com.helpful.yearly.29.99',
+      transaction_id: `test_txn_thenpair_${Date.now()}`,
+      original_transaction_id: `test_orig_txn_thenpair_${Date.now()}`,
+      jws_receipt: 'test_receipt_thenpair',
+      environment: 'Production',
+      purchase_date: Date.now() - 1000,
+      expiration_date: futureExpiration
+    };
+
+    try {
+      await axios.post(`${this.baseURL}/api/subscription`, subscription, {
+        headers: { Authorization: `Bearer ${user1.token}` },
+        timeout: this.timeout
+      });
+
+      const pairingResponse = await axios.post(`${this.baseURL}/api/pairing/request`, {}, {
+        headers: { Authorization: `Bearer ${user1.token}` },
+        timeout: this.timeout
+      });
+
+      await axios.post(`${this.baseURL}/api/pairing/accept`, {
+        partner_code: pairingResponse.data.partner_code
+      }, {
+        headers: { Authorization: `Bearer ${user2.token}` },
+        timeout: this.timeout
+      });
+
+      const user2StatusResponse = await axios.get(`${this.baseURL}/api/subscription`, {
+        headers: { Authorization: `Bearer ${user2.token}` },
+        timeout: this.timeout
+      });
+
+      this.assert(
+        user2StatusResponse.data.premium === true,
+        'Partner has premium after pairing with existing IAP subscriber',
+        `Premium: ${user2StatusResponse.data.premium}`
+      );
+    } catch (error) {
+      this.assert(
+        false,
+        'Premium when pairing after purchase',
+        `Error: ${error.response?.data?.error || error.message}`
+      );
+    }
+  }
+
   // Test validation errors
   async testValidationErrors() {
     this.log('Testing Validation Errors', 'section');
@@ -1110,6 +1170,11 @@ class SubscriptionTestRunner {
       await new Promise(resolve => setTimeout(resolve, 500));
       
       await this.testPremiumReconciliation();
+      console.log('');
+      
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      await this.testPremiumWhenPairingAfterPurchase();
       console.log('');
       
       await new Promise(resolve => setTimeout(resolve, 500));

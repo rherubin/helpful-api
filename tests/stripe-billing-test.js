@@ -665,6 +665,169 @@ class StripeBillingTestRunner {
     }
   }
 
+  async createPairedUsers(prefix = 'stripe-billing-paired') {
+    const user1 = await this.createTestUser(`${prefix}_payer`);
+    const user2 = await this.createTestUser(`${prefix}_partner`);
+    if (!user1 || !user2) return null;
+
+    try {
+      const pairingResponse = await axios.post(`${this.baseURL}/api/pairing/request`, {}, {
+        headers: { Authorization: `Bearer ${user1.token}` },
+        timeout: this.timeout
+      });
+      const partnerCode = pairingResponse.data.partner_code;
+      await axios.post(`${this.baseURL}/api/pairing/accept`, {
+        partner_code: partnerCode
+      }, {
+        headers: { Authorization: `Bearer ${user2.token}` },
+        timeout: this.timeout
+      });
+      return { user1, user2, partnerCode };
+    } catch (error) {
+      this.log(`Failed to create paired users: ${error.response?.data?.error || error.message}`, 'fail');
+      return null;
+    }
+  }
+
+  async assertSharedPremium(user, expected, label) {
+    const subRes = await axios.get(`${this.baseURL}/api/subscription`, {
+      headers: { Authorization: `Bearer ${user.token}` },
+      timeout: this.timeout
+    });
+    this.assert(
+      subRes.data.premium === expected,
+      `${label} GET /subscription premium=${expected}`,
+      `premium=${subRes.data.premium}`
+    );
+
+    const profileRes = await axios.get(`${this.baseURL}/api/users/${user.id}`, {
+      headers: { Authorization: `Bearer ${user.token}` },
+      timeout: this.timeout
+    });
+    this.assert(
+      profileRes.data.premium === expected,
+      `${label} profile premium=${expected}`,
+      `premium=${profileRes.data.premium}`
+    );
+
+    const pairingsRes = await axios.get(`${this.baseURL}/api/pairing`, {
+      headers: { Authorization: `Bearer ${user.token}` },
+      timeout: this.timeout
+    });
+    const accepted = (pairingsRes.data.pairings || []).find((p) => p.status === 'accepted');
+    this.assert(
+      !!accepted && accepted.premium === expected,
+      `${label} pairing.premium=${expected}`,
+      `pairing.premium=${accepted?.premium}`
+    );
+  }
+
+  async postCheckoutCompleted(user, subId) {
+    return this.postWebhook({
+      id: `evt_partner_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: `cs_partner_${Date.now()}`,
+          mode: 'subscription',
+          client_reference_id: user.id,
+          customer: null,
+          metadata: { user_id: user.id, plan: 'yearly' },
+          subscription: this.buildSubscriptionObject(user, { id: subId, status: 'trialing' })
+        }
+      }
+    });
+  }
+
+  /**
+   * Stripe purchase must mark accepted pairing partners premium (same as IAP).
+   * Cancel must clear partner premium when neither side still has a paid sub.
+   */
+  async testStripePurchaseMarksPartnerPremium() {
+    this.log('Testing Stripe purchase marks paired partner premium', 'section');
+    const paired = await this.createPairedUsers('stripe-partner-buy');
+    if (!paired) {
+      this.assert(false, 'Create paired users for Stripe partner premium');
+      return;
+    }
+    const { user1: payer, user2: partner } = paired;
+    const subId = `sub_partner_${Date.now()}`;
+
+    try {
+      const activate = await this.postCheckoutCompleted(payer, subId);
+      this.assert(activate.status === 200, 'Stripe partner-premium activate webhook returns 200');
+
+      await this.assertSharedPremium(payer, true, 'Payer after Stripe purchase');
+      await this.assertSharedPremium(partner, true, 'Partner after Stripe purchase');
+
+      const partnerLogin = await axios.post(`${this.baseURL}/api/login`, {
+        email: partner.email,
+        password: 'SecurePass987!'
+      }, { timeout: this.timeout });
+      this.assert(
+        partnerLogin.data?.data?.user?.premium === true,
+        'Partner login premium is true after payer Stripe purchase',
+        `premium=${partnerLogin.data?.data?.user?.premium}`
+      );
+      partner.token = partnerLogin.data?.data?.access_token || partner.token;
+
+      const cancel = await this.postWebhook({
+        id: `evt_partner_cancel_${Date.now()}`,
+        type: 'customer.subscription.deleted',
+        data: {
+          object: this.buildSubscriptionObject(payer, { id: subId, status: 'canceled' })
+        }
+      });
+      this.assert(cancel.status === 200, 'Stripe partner-premium cancel webhook returns 200');
+
+      await this.assertSharedPremium(partner, false, 'Partner after Stripe cancel');
+    } catch (error) {
+      this.assert(
+        false,
+        'Stripe purchase marks partner premium',
+        error.response?.data?.error || error.message
+      );
+    }
+  }
+
+  /**
+   * Subscribe first, then pair: accepting the pairing must still share premium.
+   */
+  async testStripeThenPairMarksPartnerPremium() {
+    this.log('Testing Stripe purchase then pair marks partner premium', 'section');
+    const payer = await this.createTestUser('stripe-then-pair-payer');
+    const partner = await this.createTestUser('stripe-then-pair-partner');
+    if (!payer || !partner) {
+      this.assert(false, 'Create users for Stripe-then-pair premium');
+      return;
+    }
+
+    try {
+      const subId = `sub_then_pair_${Date.now()}`;
+      const activate = await this.postCheckoutCompleted(payer, subId);
+      this.assert(activate.status === 200, 'Stripe-then-pair activate webhook returns 200');
+
+      const pairingResponse = await axios.post(`${this.baseURL}/api/pairing/request`, {}, {
+        headers: { Authorization: `Bearer ${payer.token}` },
+        timeout: this.timeout
+      });
+      await axios.post(`${this.baseURL}/api/pairing/accept`, {
+        partner_code: pairingResponse.data.partner_code
+      }, {
+        headers: { Authorization: `Bearer ${partner.token}` },
+        timeout: this.timeout
+      });
+
+      await this.assertSharedPremium(partner, true, 'Partner after pairing with Stripe subscriber');
+    } catch (error) {
+      this.assert(
+        false,
+        'Stripe then pair marks partner premium',
+        error.response?.data?.error || error.message
+      );
+    }
+  }
+
   async runAllTests() {
     this.log('Starting Stripe Billing tests', 'section');
 
@@ -692,6 +855,8 @@ class StripeBillingTestRunner {
     await this.testOrgPremiumSurvivesStripeCancel();
     await this.testSoftDeleteCancelsStripeAndWebhookSyncWhileDeleted();
     await this.testStaleSubscriptionUpdateDoesNotResurrectPremium();
+    await this.testStripePurchaseMarksPartnerPremium();
+    await this.testStripeThenPairMarksPartnerPremium();
 
     this.log(`Results: ${this.testResults.passed}/${this.testResults.total} passed`, 'info');
     return this.testResults.failed === 0;

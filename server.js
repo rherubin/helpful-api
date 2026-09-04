@@ -339,7 +339,6 @@ async function initializeApp() {
 
     // Initialize services
     authService = new AuthService(userModel, refreshTokenModel, pairingModel);
-    pairingService = new PairingService(userModel, pairingModel);
     // Two concrete prompt services are instantiated. Routes select between
     // them per-request based on whether the user has an org_code / custom org
     // fields (Hopeful = faith-based, Helpful = secular couples EFT/Gottman).
@@ -350,11 +349,14 @@ async function initializeApp() {
       iosSubscriptionModel,
       androidSubscriptionModel,
       userModel,
-      pairingModel
+      pairingModel,
+      stripeSubscriptionModel
     );
+    pairingService = new PairingService(userModel, pairingModel, subscriptionService);
     stripeBillingService = new StripeBillingService(
       userModel,
-      stripeSubscriptionModel
+      stripeSubscriptionModel,
+      { subscriptionService }
     );
     // Push notifications (FCM via firebase-admin). Fails soft when no Firebase
     // credentials are present so local/dev/CI environments stay healthy; sends

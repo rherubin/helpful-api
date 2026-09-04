@@ -1,7 +1,19 @@
 class PairingService {
-  constructor(userModel, pairingModel) {
+  constructor(userModel, pairingModel, subscriptionService = null) {
     this.userModel = userModel;
     this.pairingModel = pairingModel;
+    this.subscriptionService = subscriptionService;
+  }
+
+  // If either member already has an active IAP/Stripe subscription, mark the
+  // newly accepted pairing premium so subscribe-then-pair matches pair-then-buy.
+  async reconcilePairingPremium(userId) {
+    if (!this.subscriptionService) return;
+    try {
+      await this.subscriptionService.reconcilePremiumStatus(userId);
+    } catch (error) {
+      console.error('Error reconciling pairing premium:', error.message);
+    }
   }
 
   // Request a pairing (new flow - creates partner code)
@@ -90,6 +102,7 @@ class PairingService {
 
       // Accept the pairing
       await this.pairingModel.acceptPairing(pairingId);
+      await this.reconcilePairingPremium(userId);
       
       return {
         message: 'Pairing accepted successfully',
@@ -104,7 +117,9 @@ class PairingService {
   // Cap checks + accept + leftover-invite cleanup run in one transaction so
   // concurrent accepts cannot race past max_pairings.
   async acceptPairingByCode(userId, partnerCode) {
-    return this.pairingModel.acceptPairingByPartnerCodeAtomic(partnerCode, userId);
+    const result = await this.pairingModel.acceptPairingByPartnerCodeAtomic(partnerCode, userId);
+    await this.reconcilePairingPremium(userId);
+    return result;
   }
 
   // Reject a pairing request
