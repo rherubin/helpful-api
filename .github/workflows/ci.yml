@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: API test suite
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: helpful_ci_root
+          MYSQL_DATABASE: helpful_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -phelpful_ci_root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    # Mock every third-party integration (Stripe, OpenAI, FCM, IAP) so the
+    # suite needs no real secrets and never spends real API quota — this is
+    # the same combination the README documents for local runs.
+    env:
+      PORT: 9000
+      HOST: 0.0.0.0
+      JWT_SECRET: ci-test-jwt-secret
+      JWT_REFRESH_SECRET: ci-test-refresh-secret
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: helpful_ci_root
+      MYSQL_DATABASE: helpful_db
+      TEST_MOCK_LLM: true
+      TEST_MOCK_PUSH: true
+      TEST_MOCK_IAP: true
+      TEST_MOCK_STRIPE: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Start API server
+        run: |
+          nohup npm start > server.log 2>&1 &
+          echo $! > server.pid
+
+      - name: Wait for API to become healthy
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9000/health > /dev/null; then
+              echo "Server is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server did not become healthy in time"
+          cat server.log
+          exit 1
+
+      # Full suite (tests/run-all-tests.js) — includes the Stripe billing
+      # regression test that pins the free-trial-start-timing fix
+      # (trial must only start once a payment method is confirmed via
+      # /api/billing/subscribe, never at /api/billing/setup-intent).
+      - name: Run test suite
+        run: npm test
+
+      - name: Server logs
+        if: always()
+        run: cat server.log || true
+
+      - name: Stop API server
+        if: always()
+        run: kill "$(cat server.pid)" 2>/dev/null || true
