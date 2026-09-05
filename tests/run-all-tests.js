@@ -16,6 +16,7 @@ const SubscriptionTestRunner = require('./subscription-test');
 const UserOrgCodeTestRunner = require('./user-org-code-test');
 const DeviceTokenTestRunner = require('./device-tokens-test');
 const StripeBillingTestRunner = require('./stripe-billing-test');
+const StripeCustomerEmailSyncTestRunner = require('./stripe-customer-email-sync-test');
 const HelpfulPromptServiceTestRunner = require('./helpful-prompt-service-test');
 const HopefulPromptServiceTestRunner = require('./hopeful-prompt-service-test');
 const ProgramOrgContextTestRunner = require('./program-org-context-test');
@@ -51,6 +52,7 @@ class TestSuiteRunner {
       runUserOrgCode: options.runUserOrgCode !== false, // Default true
       runDeviceTokens: options.runDeviceTokens !== false, // Default true
       runStripeBilling: options.runStripeBilling !== false, // Default true
+      runStripeCustomerEmailSync: options.runStripeCustomerEmailSync !== false, // Default true
       runHelpfulPromptService: options.runHelpfulPromptService !== false, // Default true
       runHopefulPromptService: options.runHopefulPromptService !== false, // Default true
       runProgramOrgContext: options.runProgramOrgContext !== false, // Default true
@@ -82,6 +84,7 @@ class TestSuiteRunner {
       userOrgCode: null,
       deviceTokens: null,
       stripeBilling: null,
+      stripeCustomerEmailSync: null,
       helpfulPromptService: null,
       hopefulPromptService: null,
       programOrgContext: null,
@@ -663,6 +666,41 @@ class TestSuiteRunner {
     }
   }
 
+  async runStripeCustomerEmailSyncTests() {
+    if (!this.options.runStripeCustomerEmailSync) {
+      this.log('Skipping Stripe customer email sync unit tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('💳 Running Stripe Customer Email Sync Unit Test Suite', 'section');
+
+    try {
+      const runner = new StripeCustomerEmailSyncTestRunner();
+      const success = await runner.run();
+
+      this.results.stripeCustomerEmailSync = {
+        success,
+        skipped: false,
+        details: 'StripeBillingService.updateCustomerEmail keeps the Stripe customer record in sync with the account email (mock Stripe)',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Stripe customer email sync unit tests completed successfully', 'success');
+      } else {
+        this.log('Stripe customer email sync unit tests failed', 'error');
+      }
+
+      return this.results.stripeCustomerEmailSync;
+    } catch (error) {
+      this.log(`Stripe customer email sync unit tests failed: ${error.message}`, 'error');
+      this.results.stripeCustomerEmailSync = { success: false, error: error.message };
+      return this.results.stripeCustomerEmailSync;
+    }
+  }
+
   async runHelpfulPromptServiceTests() {
     if (!this.options.runHelpfulPromptService) {
       this.log('Skipping HelpfulPromptService unit tests', 'warn');
@@ -1052,6 +1090,7 @@ class TestSuiteRunner {
     this.log(`  User Org Code Tests: ${this.options.runUserOrgCode ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Device Tokens Tests: ${this.options.runDeviceTokens ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Stripe Billing Tests: ${this.options.runStripeBilling ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Stripe Customer Email Sync Unit Tests: ${this.options.runStripeCustomerEmailSync ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HelpfulPromptService Unit Tests: ${this.options.runHelpfulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HopefulPromptService Unit Tests: ${this.options.runHopefulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Program Org Context Tests: ${this.options.runProgramOrgContext ? 'Enabled' : 'Disabled'}`, 'info');
@@ -1225,6 +1264,15 @@ class TestSuiteRunner {
     if (this.options.runStripeBilling) {
       await this.runStripeBillingTests();
       if (this.results.stripeBilling && !this.results.stripeBilling.success && !this.results.stripeBilling.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Run Stripe customer email sync unit tests (mock Stripe, no server needed)
+    if (this.options.runStripeCustomerEmailSync) {
+      await this.runStripeCustomerEmailSyncTests();
+      if (this.results.stripeCustomerEmailSync && !this.results.stripeCustomerEmailSync.success && !this.results.stripeCustomerEmailSync.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -1494,6 +1542,17 @@ class TestSuiteRunner {
       }
     }
 
+    // Stripe customer email sync unit test results
+    if (this.results.stripeCustomerEmailSync) {
+      if (this.results.stripeCustomerEmailSync.skipped) {
+        this.log('💳 Stripe Customer Email Sync Unit Tests: SKIPPED', 'warn');
+      } else if (this.results.stripeCustomerEmailSync.success) {
+        this.log(`💳 Stripe Customer Email Sync Unit Tests: PASSED (${this.results.stripeCustomerEmailSync.passed}/${this.results.stripeCustomerEmailSync.total})`, 'success');
+      } else {
+        this.log(`💳 Stripe Customer Email Sync Unit Tests: FAILED (${this.results.stripeCustomerEmailSync.failed}/${this.results.stripeCustomerEmailSync.total} failures)`, 'error');
+      }
+    }
+
     // HelpfulPromptService unit test results
     if (this.results.helpfulPromptService) {
       if (this.results.helpfulPromptService.skipped) {
@@ -1605,6 +1664,8 @@ class TestSuiteRunner {
         subscription: this.results.subscription,
         userOrgCode: this.results.userOrgCode,
         deviceTokens: this.results.deviceTokens,
+        stripeBilling: this.results.stripeBilling,
+        stripeCustomerEmailSync: this.results.stripeCustomerEmailSync,
         helpfulPromptService: this.results.helpfulPromptService,
         hopefulPromptService: this.results.hopefulPromptService,
         programOrgContext: this.results.programOrgContext,
@@ -1622,6 +1683,7 @@ class TestSuiteRunner {
                    (this.results.messages?.total || 0) + (this.results.therapyTrigger?.total || 0) +
                    (this.results.wwwAuthenticate?.total || 0) + (this.results.subscription?.total || 0) +
                    (this.results.userOrgCode?.total || 0) + (this.results.deviceTokens?.total || 0) +
+                   (this.results.stripeBilling?.total || 0) + (this.results.stripeCustomerEmailSync?.total || 0) +
                    (this.results.helpfulPromptService?.total || 0) +
                    (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0) +
                    (this.results.pushNotificationService?.total || 0) + (this.results.promptSessions?.total || 0),
@@ -1633,6 +1695,7 @@ class TestSuiteRunner {
                     (this.results.messages?.passed || 0) + (this.results.therapyTrigger?.passed || 0) +
                     (this.results.wwwAuthenticate?.passed || 0) + (this.results.subscription?.passed || 0) +
                     (this.results.userOrgCode?.passed || 0) + (this.results.deviceTokens?.passed || 0) +
+                    (this.results.stripeBilling?.passed || 0) + (this.results.stripeCustomerEmailSync?.passed || 0) +
                     (this.results.helpfulPromptService?.passed || 0) +
                     (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0) +
                     (this.results.pushNotificationService?.passed || 0) + (this.results.promptSessions?.passed || 0),
@@ -1644,7 +1707,7 @@ class TestSuiteRunner {
                     (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0) +
                     (this.results.wwwAuthenticate?.failed || 0) + (this.results.subscription?.failed || 0) +
                     (this.results.userOrgCode?.failed || 0) + (this.results.deviceTokens?.failed || 0) +
-                    (this.results.stripeBilling?.failed || 0) +
+                    (this.results.stripeBilling?.failed || 0) + (this.results.stripeCustomerEmailSync?.failed || 0) +
                     (this.results.helpfulPromptService?.failed || 0) +
                     (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0) +
                     (this.results.pushNotificationService?.failed || 0) + (this.results.promptSessions?.failed || 0)
@@ -1677,6 +1740,7 @@ function parseArgs() {
     if (arg === '--no-user-org-code') options.runUserOrgCode = false;
     if (arg === '--no-device-tokens') options.runDeviceTokens = false;
     if (arg === '--no-stripe-billing') options.runStripeBilling = false;
+    if (arg === '--no-stripe-customer-email-sync') options.runStripeCustomerEmailSync = false;
     if (arg === '--no-helpful-prompt-service') options.runHelpfulPromptService = false;
     if (arg === '--no-hopeful-prompt-service') options.runHopefulPromptService = false;
     if (arg === '--no-program-org-context') options.runProgramOrgContext = false;

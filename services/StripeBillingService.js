@@ -39,6 +39,17 @@ function createMockStripe() {
           throw err;
         }
         return customer;
+      },
+      update: async (id, params = {}) => {
+        const customer = customers.get(id);
+        if (!customer) {
+          const err = new Error('No such customer');
+          err.statusCode = 404;
+          throw err;
+        }
+        const updated = { ...customer, ...params };
+        customers.set(id, updated);
+        return updated;
       }
     },
     checkout: {
@@ -784,6 +795,14 @@ class StripeBillingService {
     }
 
     return this.applyStripeSubscription(stripeSubscription, { userId, plan });
+  }
+
+  // Keep the Stripe customer's email in sync with the account's, e.g. when a
+  // trial account created with a placeholder email later sets its real one.
+  async updateCustomerEmail(userId, email) {
+    const user = await this.userModel.getUserById(userId).catch(() => null);
+    if (!user?.stripe_customer_id) return;
+    await this.stripe.customers.update(user.stripe_customer_id, { email });
   }
 
   // Cancel every trialing/active Stripe subscription for a user. Used on account

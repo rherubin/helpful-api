@@ -400,7 +400,7 @@ class User {
   // Update user
   async updateUser(id, updateData) {
     const {
-      email, max_pairings, user_name, partner_name, children,
+      email, password, max_pairings, user_name, partner_name, children,
       org_code_id, org_name, org_city, org_state, is_premium,
       bypass_password, stripe_customer_id
     } = updateData;
@@ -412,6 +412,23 @@ class User {
     if (email) {
       updateFields.push('email = ?');
       updateValues.push(email);
+    }
+    if (password) {
+      const passwordValidation = this.validatePassword(password);
+      if (!passwordValidation.valid) {
+        throw new Error(passwordValidation.error);
+      }
+      const hash = await new Promise((resolve, reject) => {
+        bcrypt.hash(password, 10, (err, hash) => {
+          if (err) {
+            reject(new Error('Failed to hash password'));
+          } else {
+            resolve(hash);
+          }
+        });
+      });
+      updateFields.push('password_hash = ?');
+      updateValues.push(hash);
     }
     if (max_pairings !== undefined) {
       updateFields.push('max_pairings = ?');

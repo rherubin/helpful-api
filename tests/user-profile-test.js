@@ -101,6 +101,7 @@ class UserProfileTestRunner {
       // Store test data
       this.testData.user1 = {
         ...user1Response.data.user,
+        password: user1Data.password,
         token: user1Response.data.access_token,
         refreshToken: user1Response.data.refresh_token
       };
@@ -227,10 +228,18 @@ class UserProfileTestRunner {
       this.assert(false, 'GET /api/users/:id', `Error: ${error.response?.data?.error || error.message}`);
     }
 
+    // Regression test: PUT /api/users/:id must persist a new password (not just
+    // email) - a bug fixed after the trial-signup flow's "claim your account"
+    // step silently dropped the user's chosen password, leaving the account
+    // stuck on its random placeholder password forever. See User.model.updateUser
+    // and routes/users.js PUT /:id.
+    const originalPassword = this.testData.user1.password;
+    const newPassword = 'UpdatedPass9!@#';
     try {
       const newEmail = `profile.user1.updated.${Date.now()}@example.com`;
       const updateResponse = await axios.put(`${this.baseURL}/api/users/${user.id}`, {
-        email: newEmail
+        email: newEmail,
+        password: newPassword
       }, {
         headers: { Authorization: `Bearer ${user.token}` },
         timeout: this.timeout
@@ -243,6 +252,31 @@ class UserProfileTestRunner {
       this.testData.user1.email = newEmail;
     } catch (error) {
       this.assert(false, 'PUT /api/users/:id email change', `Error: ${error.response?.data?.error || error.message}`);
+    }
+
+    try {
+      const oldPasswordLogin = await axios.post(`${this.baseURL}/api/login`, {
+        email: this.testData.user1.email,
+        password: originalPassword
+      }, { timeout: this.timeout, validateStatus: () => true });
+      this.assert(
+        oldPasswordLogin.status === 401,
+        'Login with pre-update password fails after PUT changes it',
+        `Status: ${oldPasswordLogin.status}`
+      );
+
+      const newPasswordLogin = await axios.post(`${this.baseURL}/api/login`, {
+        email: this.testData.user1.email,
+        password: newPassword
+      }, { timeout: this.timeout, validateStatus: () => true });
+      this.assert(
+        newPasswordLogin.status === 200,
+        'PUT /api/users/:id password change actually persists (login with new password succeeds)',
+        `Status: ${newPasswordLogin.status}`
+      );
+      this.testData.user1.password = newPassword;
+    } catch (error) {
+      this.assert(false, 'PUT /api/users/:id password change persistence', `Error: ${error.response?.data?.error || error.message}`);
     }
 
     try {

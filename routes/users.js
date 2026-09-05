@@ -254,20 +254,20 @@ function createUserRoutes(
         return res.status(403).json({ error: 'Not authorized to update this user' });
       }
 
-      const { email, user_name, partner_name, children, org_code, org_name, org_city, org_state } = req.body;
-      
+      const { email, password, user_name, partner_name, children, org_code, org_name, org_city, org_state } = req.body;
+
       // Validate email format if provided
       if (email) {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
-          return res.status(400).json({ 
-            error: 'Invalid email format' 
+          return res.status(400).json({
+            error: 'Invalid email format'
           });
         }
       }
 
       const currentUser = await userModel.getUserById(id);
-      const updateData = { email, user_name, partner_name, children };
+      const updateData = { email, password, user_name, partner_name, children };
       const hasNonEmptyText = (value) =>
         typeof value === 'string' && value.trim().length > 0;
 
@@ -333,6 +333,16 @@ function createUserRoutes(
 
       const updatedUser = await userModel.updateUser(id, updateData);
 
+      // Keep the Stripe customer record (receipts, dashboard) in sync with the
+      // account's email — best-effort, must not block the profile update itself.
+      if (email && currentUser.email !== updatedUser.email && stripeBillingService) {
+        try {
+          await stripeBillingService.updateCustomerEmail(id, updatedUser.email);
+        } catch (billingError) {
+          console.warn('Warning: Failed to sync email to Stripe customer:', billingError.message);
+        }
+      }
+
       if (currentUser.org_code_id !== updatedUser.org_code_id) {
         try {
           await userModel.logOrgCodeLinkChange(
@@ -390,6 +400,8 @@ function createUserRoutes(
       } else if (error.message === 'Email already exists') {
         return res.status(409).json({ error: error.message });
       } else if (error.message.includes('Children must be')) {
+        return res.status(400).json({ error: error.message });
+      } else if (error.message.startsWith('Password')) {
         return res.status(400).json({ error: error.message });
       } else {
         console.error('Error updating user:', error.message);
