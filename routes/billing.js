@@ -28,22 +28,46 @@ function createBillingRoutes(stripeBillingService, authService) {
     }
   });
 
-  // POST /api/billing/subscription-intent
-  // Body: { plan: 'monthly' | 'yearly' }
-  // Returns client_secret for Stripe Payment Element (no hosted redirect).
-  router.post('/subscription-intent', authenticateToken, async (req, res) => {
+  // POST /api/billing/setup-intent
+  // Returns client_secret for a stand-alone Stripe SetupIntent (no hosted
+  // redirect). No subscription exists yet, so nothing is billed and no trial
+  // has started — that only happens once /subscribe is called after this
+  // SetupIntent is confirmed.
+  router.post('/setup-intent', authenticateToken, async (req, res) => {
     try {
-      const { plan } = req.body || {};
-      const result = await stripeBillingService.createSubscriptionIntent(req.user.id, { plan });
+      const result = await stripeBillingService.createSetupIntent(req.user.id);
       return res.status(200).json({
-        message: 'Subscription intent created',
+        message: 'Setup intent created',
         ...result
       });
     } catch (error) {
-      console.error('Billing subscription-intent error:', error.message);
+      console.error('Billing setup-intent error:', error.message);
       const status = error instanceof StripeBillingError ? error.status : 500;
       return res.status(status).json({
-        error: error.message || 'Failed to create subscription intent',
+        error: error.message || 'Failed to create setup intent',
+        ...(error.code ? { code: error.code } : {})
+      });
+    }
+  });
+
+  // POST /api/billing/subscribe
+  // Body: { plan: 'monthly' | 'yearly', setup_intent_id }
+  // Creates the real subscription once the SetupIntent above has been
+  // confirmed with a payment method — this is the only place the trial
+  // clock starts.
+  router.post('/subscribe', authenticateToken, async (req, res) => {
+    try {
+      const { plan, setup_intent_id } = req.body || {};
+      const result = await stripeBillingService.finalizeSubscription(req.user.id, { plan, setup_intent_id });
+      return res.status(200).json({
+        message: 'Subscription created',
+        ...result
+      });
+    } catch (error) {
+      console.error('Billing subscribe error:', error.message);
+      const status = error instanceof StripeBillingError ? error.status : 500;
+      return res.status(status).json({
+        error: error.message || 'Failed to create subscription',
         ...(error.code ? { code: error.code } : {})
       });
     }

@@ -15,12 +15,14 @@ const PREMIUM_STATUSES = new Set(['trialing', 'active']);
 function createMockStripe() {
   const customers = new Map();
   const sessionsById = new Map();
+  const setupIntentsById = new Map();
   // Include a process-unique prefix so restarts do not collide with leftover
   // users.unique_stripe_customer_id rows from earlier mock runs (cus_mock_1…).
   const runId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   let customerSeq = 0;
   let sessionSeq = 0;
   let subSeq = 0;
+  let setupIntentSeq = 0;
 
   return {
     customers: {
@@ -50,6 +52,37 @@ function createMockStripe() {
         const updated = { ...customer, ...params };
         customers.set(id, updated);
         return updated;
+      }
+    },
+    setupIntents: {
+      create: async ({ customer, metadata } = {}) => {
+        setupIntentSeq += 1;
+        const id = `seti_mock_${runId}_${setupIntentSeq}`;
+        const setupIntent = {
+          id,
+          object: 'setup_intent',
+          client_secret: `${id}_secret_mock`,
+          status: 'requires_payment_method',
+          customer,
+          payment_method: null,
+          metadata: metadata || {}
+        };
+        setupIntentsById.set(id, setupIntent);
+        return setupIntent;
+      },
+      retrieve: async (id) => {
+        const stored = setupIntentsById.get(id);
+        // No real Stripe.js confirmation happens against this mock — assume
+        // the customer already confirmed their card, the same way
+        // checkout.sessions.retrieve() below simulates a completed session.
+        return {
+          id,
+          object: 'setup_intent',
+          status: 'succeeded',
+          customer: stored?.customer || `cus_mock_${runId}_fallback`,
+          payment_method: stored?.payment_method || `pm_mock_${runId}_${id}`,
+          metadata: stored?.metadata || {}
+        };
       }
     },
     checkout: {
@@ -135,30 +168,27 @@ function createMockStripe() {
       create: async (params = {}) => {
         subSeq += 1;
         const id = `sub_mock_${runId}_${subSeq}`;
-        const setupId = `seti_mock_${runId}_${subSeq}`;
         const priceId = params.items?.[0]?.price || process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly';
         const trialDays = Number(params.trial_period_days) || 0;
         const now = Math.floor(Date.now() / 1000);
+        // finalizeSubscription() always passes a default_payment_method
+        // (already confirmed via a SetupIntent) — with a trial, $0 is due
+        // today so status goes straight to trialing; without one, the mock
+        // simulates a successful immediate off-session charge.
+        const hasPaymentMethod = !!params.default_payment_method;
+        const status = trialDays > 0 ? 'trialing' : (hasPaymentMethod ? 'active' : 'incomplete');
         const sub = {
           id,
-          status: trialDays > 0 ? 'incomplete' : 'incomplete',
+          status,
           items: { data: [{ price: { id: priceId } }] },
           trial_end: trialDays > 0 ? now + trialDays * 24 * 3600 : null,
           current_period_end: now + (trialDays > 0 ? trialDays : 30) * 24 * 3600,
           cancel_at_period_end: false,
           metadata: params.metadata || {},
           customer: params.customer,
-          pending_setup_intent: trialDays > 0
+          default_payment_method: params.default_payment_method || null,
+          latest_invoice: status === 'incomplete'
             ? {
-                id: setupId,
-                object: 'setup_intent',
-                client_secret: `${setupId}_secret_mock`,
-                status: 'requires_payment_method'
-              }
-            : null,
-          latest_invoice: trialDays > 0
-            ? null
-            : {
                 id: `in_mock_${runId}_${subSeq}`,
                 payment_intent: {
                   id: `pi_mock_${runId}_${subSeq}`,
@@ -166,6 +196,7 @@ function createMockStripe() {
                   status: 'requires_payment_method'
                 }
               }
+            : null
         };
         return sub;
       },
@@ -467,14 +498,13 @@ class StripeBillingService {
   }
 
   /**
-   * Create an incomplete Stripe subscription and return a client_secret for
-   * Payment Element (SetupIntent during trial, PaymentIntent otherwise).
-   * Keeps the buyer on the Sit Together UI — no hosted Checkout redirect.
+   * Create a stand-alone SetupIntent — no subscription, no trial. Lets
+   * Checkout mount the Payment Element and collect/confirm a card before any
+   * trial clock exists. The subscription (and its trial) is only created by
+   * finalizeSubscription(), after this SetupIntent has succeeded.
    */
-  async createSubscriptionIntent(userId, { plan } = {}) {
+  async createSetupIntent(userId) {
     this.assertConfigured();
-    const normalizedPlan = this.normalizePlan(plan);
-    const priceId = this.priceIdForPlan(normalizedPlan);
 
     const conn = await this.userModel.db.getConnection();
     try {
@@ -515,11 +545,100 @@ class StripeBillingService {
         );
       }
 
-      // Cancel leftover incomplete subscriptions so Elements can start clean.
+      const setupIntent = await this.stripe.setupIntents.create({
+        customer: customerId,
+        usage: 'off_session',
+        metadata: { user_id: userId }
+      });
+
+      await conn.commit();
+
+      if (!setupIntent?.client_secret) {
+        throw new StripeBillingError(
+          'Stripe did not return a client_secret for Payment Element',
+          { status: 502 }
+        );
+      }
+
+      return { client_secret: setupIntent.client_secret };
+    } catch (error) {
+      try {
+        await conn.rollback();
+      } catch (_) {
+        /* ignore */
+      }
+      throw error;
+    } finally {
+      conn.release();
+    }
+  }
+
+  /**
+   * Create the real subscription — this is the only place the trial clock
+   * starts. Requires a SetupIntent from createSetupIntent() that has already
+   * succeeded, so a payment method is confirmed and attached before any
+   * trial_period_days is applied.
+   */
+  async finalizeSubscription(userId, { plan, setup_intent_id } = {}) {
+    this.assertConfigured();
+    const normalizedPlan = this.normalizePlan(plan);
+    const priceId = this.priceIdForPlan(normalizedPlan);
+
+    if (!setup_intent_id) {
+      throw new StripeBillingError('setup_intent_id is required');
+    }
+
+    const conn = await this.userModel.db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [userRows] = await conn.execute(
+        'SELECT * FROM users WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+        [userId]
+      );
+      const user = userRows[0];
+      if (!user) {
+        throw new StripeBillingError('User not found', { status: 404 });
+      }
+      if (!user.stripe_customer_id) {
+        throw new StripeBillingError('No Stripe customer for this account', { status: 400 });
+      }
+
+      const [activeRows] = await conn.execute(
+        `SELECT id FROM stripe_subscriptions
+         WHERE user_id = ? AND status IN ('trialing', 'active')
+         LIMIT 1`,
+        [userId]
+      );
+      if (activeRows.length > 0) {
+        throw new StripeBillingError(
+          'An active Stripe subscription already exists. Use the billing portal to manage it.',
+          { status: 409, code: 'subscription_already_active' }
+        );
+      }
+
+      const setupIntent = await this.stripe.setupIntents.retrieve(setup_intent_id);
+      const setupIntentCustomerId = typeof setupIntent?.customer === 'string'
+        ? setupIntent.customer
+        : setupIntent?.customer?.id;
+      if (!setupIntent || setupIntentCustomerId !== user.stripe_customer_id) {
+        throw new StripeBillingError('Setup intent does not belong to this account', { status: 400 });
+      }
+      if (setupIntent.status !== 'succeeded') {
+        throw new StripeBillingError('Payment method has not been confirmed yet', { status: 400 });
+      }
+      const paymentMethodId = typeof setupIntent.payment_method === 'string'
+        ? setupIntent.payment_method
+        : setupIntent.payment_method?.id;
+      if (!paymentMethodId) {
+        throw new StripeBillingError('Setup intent has no attached payment method', { status: 400 });
+      }
+
+      // Clean up leftover incomplete subscriptions from earlier abandoned attempts.
       if (typeof this.stripe.subscriptions?.list === 'function') {
         try {
           const incomplete = await this.stripe.subscriptions.list({
-            customer: customerId,
+            customer: user.stripe_customer_id,
             status: 'incomplete',
             limit: 10
           });
@@ -536,17 +655,15 @@ class StripeBillingService {
       }
 
       const createParams = {
-        customer: customerId,
+        customer: user.stripe_customer_id,
         items: [{ price: priceId }],
+        default_payment_method: paymentMethodId,
         payment_behavior: 'default_incomplete',
-        payment_settings: {
-          save_default_payment_method: 'on_subscription'
-        },
         metadata: {
           user_id: userId,
           plan: normalizedPlan
         },
-        expand: ['latest_invoice.payment_intent', 'pending_setup_intent']
+        expand: ['latest_invoice.payment_intent']
       };
       if (this.trialPeriodDays > 0) {
         createParams.trial_period_days = this.trialPeriodDays;
@@ -554,38 +671,44 @@ class StripeBillingService {
 
       const subscription = await this.stripe.subscriptions.create(createParams);
 
+      if (subscription.status === 'incomplete') {
+        // No trial covering today's invoice, and the off-session charge on
+        // the just-confirmed card failed or needs further authentication —
+        // nothing left for this endpoint to do without another client round
+        // trip. Surface it as an error rather than persisting a dead sub.
+        try {
+          await this.stripe.subscriptions.cancel(subscription.id);
+        } catch (_) {
+          /* best-effort */
+        }
+        throw new StripeBillingError(
+          'Your card could not be charged. Please try a different payment method.',
+          { status: 402 }
+        );
+      }
+
       await conn.commit();
 
-      // Persist incomplete row so webhooks/cron have a record (after commit).
+      // Persist row so webhooks/cron have a record (after commit).
       try {
         await this.stripeSubscriptionModel.upsertByStripeSubscriptionId(userId, {
           stripe_subscription_id: subscription.id,
           stripe_price_id: priceId,
           plan: normalizedPlan,
-          status: subscription.status || 'incomplete',
+          status: subscription.status || 'trialing',
           trial_end: subscription.trial_end || null,
           current_period_end: subscription.current_period_end || null,
           cancel_at_period_end: !!subscription.cancel_at_period_end
         });
       } catch (persistErr) {
-        console.warn('[stripe-billing] failed to persist incomplete subscription row:', persistErr.message);
-      }
-
-      const setupSecret = subscription.pending_setup_intent?.client_secret || null;
-      const paymentSecret = subscription.latest_invoice?.payment_intent?.client_secret || null;
-      const clientSecret = setupSecret || paymentSecret;
-      if (!clientSecret) {
-        throw new StripeBillingError(
-          'Stripe did not return a client_secret for Payment Element',
-          { status: 502 }
-        );
+        console.warn('[stripe-billing] failed to persist finalized subscription row:', persistErr.message);
       }
 
       return {
-        client_secret: clientSecret,
-        mode: setupSecret ? 'setup' : 'payment',
         subscription_id: subscription.id,
-        plan: normalizedPlan
+        status: subscription.status,
+        plan: normalizedPlan,
+        trial_end: subscription.trial_end || null
       };
     } catch (error) {
       try {

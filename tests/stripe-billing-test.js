@@ -112,39 +112,100 @@ class StripeBillingTestRunner {
     }
   }
 
-  async testSubscriptionIntentCreatesClientSecret(user) {
-    this.log('Testing in-app subscription intent (Payment Element)', 'section');
+  async testSetupIntentCreatesClientSecret(user) {
+    this.log('Testing in-app setup intent (Payment Element)', 'section');
     // Use a fresh user so an active sub from earlier tests does not 409.
     const intentUser = await this.createTestUser('stripe-intent');
     if (!intentUser) {
-      this.assert(false, 'Create subscription-intent test user');
+      this.assert(false, 'Create setup-intent test user');
       return null;
     }
     try {
-      const res = await axios.post(`${this.baseURL}/api/billing/subscription-intent`, {
-        plan: 'monthly'
-      }, {
+      const res = await axios.post(`${this.baseURL}/api/billing/setup-intent`, {}, {
         headers: { Authorization: `Bearer ${intentUser.token}` },
         timeout: this.timeout
       });
 
-      this.assert(res.status === 200, 'Subscription intent returns 200');
+      this.assert(res.status === 200, 'Setup intent returns 200');
       this.assert(
         typeof res.data.client_secret === 'string' && res.data.client_secret.length > 0,
         'Returns client_secret',
         res.data.client_secret
       );
-      this.assert(
-        res.data.mode === 'setup' || res.data.mode === 'payment',
-        'Returns mode setup|payment',
-        res.data.mode
-      );
-      this.assert(!!res.data.subscription_id, 'Returns subscription_id');
-      this.assert(res.data.plan === 'monthly', 'Echoes plan monthly');
       return { user: intentUser, ...res.data };
     } catch (error) {
-      this.assert(false, 'Subscription intent creation', error.response?.data?.error || error.message);
+      this.assert(false, 'Setup intent creation', error.response?.data?.error || error.message);
       return null;
+    }
+  }
+
+  // The core regression test for the "trial starts before payment info"
+  // bug: merely creating a SetupIntent (analogous to account creation) must
+  // not start a trial or grant premium. Only /subscribe, called after the
+  // SetupIntent is confirmed, may do that — and its trial_end must be
+  // computed from that call, not from any earlier point in the flow.
+  async testTrialOnlyStartsAfterSubscribeConfirmed() {
+    this.log('Testing trial only starts after /subscribe, not at setup-intent', 'section');
+    const user = await this.createTestUser('stripe-trial-timing');
+    if (!user) {
+      this.assert(false, 'Create trial-timing test user');
+      return;
+    }
+
+    try {
+      const setupRes = await axios.post(`${this.baseURL}/api/billing/setup-intent`, {}, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(setupRes.status === 200, 'Setup intent returns 200');
+      const setupIntentId = setupRes.data.client_secret.split('_secret')[0];
+
+      const statusBeforeSubscribe = await axios.get(`${this.baseURL}/api/billing/status`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(
+        statusBeforeSubscribe.data.premium === false,
+        'No trial/premium from setup-intent alone',
+        `premium=${statusBeforeSubscribe.data.premium}`
+      );
+
+      const beforeSubscribe = Math.floor(Date.now() / 1000);
+      const subscribeRes = await axios.post(`${this.baseURL}/api/billing/subscribe`, {
+        plan: 'yearly',
+        setup_intent_id: setupIntentId
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(subscribeRes.status === 200, 'Subscribe returns 200',
+        JSON.stringify(subscribeRes.data));
+      this.assert(subscribeRes.data.status === 'trialing', 'Subscribe returns trialing status',
+        subscribeRes.data.status);
+      this.assert(!!subscribeRes.data.subscription_id, 'Subscribe returns subscription_id');
+
+      const expectedTrialEnd = beforeSubscribe + 7 * 24 * 3600;
+      this.assert(
+        Math.abs(subscribeRes.data.trial_end - expectedTrialEnd) < 60,
+        'trial_end is ~7 days from the /subscribe call, not from setup-intent',
+        `trial_end=${subscribeRes.data.trial_end} expected~${expectedTrialEnd}`
+      );
+
+      const statusAfterSubscribe = await axios.get(`${this.baseURL}/api/billing/status`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        timeout: this.timeout
+      });
+      this.assert(
+        statusAfterSubscribe.data.subscription?.status === 'trialing',
+        'Status reflects trialing immediately after /subscribe (mock has no webhook lag)',
+        statusAfterSubscribe.data.subscription?.status
+      );
+    } catch (error) {
+      this.assert(
+        false,
+        'Trial only starts after subscribe confirmed',
+        error.response?.data?.error || error.message
+      );
     }
   }
 
@@ -842,7 +903,8 @@ class StripeBillingTestRunner {
     await this.testCheckoutValidation(user);
     // Reject bad return URLs before any subscription exists (otherwise 409 masks 400).
     await this.testRejectedReturnOrigin(user);
-    await this.testSubscriptionIntentCreatesClientSecret(user);
+    await this.testSetupIntentCreatesClientSecret(user);
+    await this.testTrialOnlyStartsAfterSubscribeConfirmed();
     await this.testCheckoutCreatesSession(user);
     await this.testCheckoutBlockedWhileSessionOpen(user);
     await this.testStatusBeforeWebhook(user);
