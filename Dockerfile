@@ -1,5 +1,5 @@
 # Use the official Node.js 18 image
-FROM node:18-alpine
+FROM node:24-alpine
 
 # Install required packages for MySQL connectivity
 RUN apk add --no-cache python3 make g++
