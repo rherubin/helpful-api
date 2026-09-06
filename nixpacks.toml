@@ -1,5 +1,5 @@
 [providers]
-node = "18"
+node = "24"
 
 [build]
 cmd = "npm ci"
