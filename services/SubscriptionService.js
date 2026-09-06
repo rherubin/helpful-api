@@ -1,3 +1,5 @@
+const { AppleReceiptVerifier } = require('./AppleReceiptVerifier');
+
 class SubscriptionError extends Error {
   constructor(message, statusCode = 400) {
     super(message);
@@ -11,13 +13,24 @@ class SubscriptionService {
     androidSubscriptionModel,
     userModel,
     pairingModel,
-    stripeSubscriptionModel = null
+    stripeSubscriptionModel = null,
+    appleReceiptVerifier = null
   ) {
     this.iosSubscriptionModel = iosSubscriptionModel;
     this.androidSubscriptionModel = androidSubscriptionModel;
     this.userModel = userModel;
     this.pairingModel = pairingModel;
     this.stripeSubscriptionModel = stripeSubscriptionModel;
+    // Constructed lazily so the pinned root certificate is only read from disk
+    // in deployments that actually verify receipts (and so tests can inject).
+    this.appleReceiptVerifier = appleReceiptVerifier;
+  }
+
+  getAppleReceiptVerifier() {
+    if (!this.appleReceiptVerifier) {
+      this.appleReceiptVerifier = new AppleReceiptVerifier();
+    }
+    return this.appleReceiptVerifier;
   }
 
   normalizePlatform(platform) {
@@ -62,7 +75,12 @@ class SubscriptionService {
     }
   }
 
-  validateIosPayload(payload) {
+  // `requireExpiration` is false on the verified path: the mobile client types
+  // expiration_date as optional (UserUpdateRequest.SubscriptionPurchaseRequest,
+  // `expirationDate: Long? = null`), and when we verify the JWS we take the
+  // expiry from Apple's signed claims anyway, so demanding it here would reject
+  // a legitimate purchase over a field we are about to discard.
+  validateIosPayload(payload, { requireExpiration = true } = {}) {
     const {
       product_id,
       transaction_id,
@@ -88,10 +106,14 @@ class SubscriptionService {
 
     const normalizedEnvironment = this.normalizeEnvironment(environment);
     this.validateTimestamp('purchase_date', purchase_date);
-    this.validateTimestamp('expiration_date', expiration_date);
 
-    if (expiration_date <= purchase_date) {
-      throw new SubscriptionError('expiration_date must be later than purchase_date', 400);
+    const expirationSupplied = expiration_date !== undefined && expiration_date !== null;
+    if (requireExpiration || expirationSupplied) {
+      this.validateTimestamp('expiration_date', expiration_date);
+
+      if (expiration_date <= purchase_date) {
+        throw new SubscriptionError('expiration_date must be later than purchase_date', 400);
+      }
     }
 
     return {
@@ -101,7 +123,7 @@ class SubscriptionService {
       jws_receipt,
       environment: normalizedEnvironment,
       purchase_date,
-      expiration_date
+      expiration_date: expirationSupplied ? expiration_date : null
     };
   }
 
@@ -227,23 +249,105 @@ class SubscriptionService {
     return premiumPairingIds;
   }
 
-  async processReceipt(userId, payload) {
-    // Client-supplied expiration_date / jws_receipt are trusted only when tests
-    // explicitly opt in. Without App Store / Play verification, any authenticated
-    // caller could POST a far-future expiration and mark their pairings premium.
-    // Mirror StripeBillingService.constructEvent's TEST_MOCK_STRIPE gate.
-    if (process.env.TEST_MOCK_IAP !== 'true') {
+  // Verifies the StoreKit 2 JWS and returns a payload built from Apple's signed
+  // claims rather than the client's. The client's copies of these fields are
+  // only used to detect disagreement — Apple's values always win.
+  verifyIosReceipt(validated) {
+    let claims;
+    try {
+      claims = this.getAppleReceiptVerifier().verify(validated.jws_receipt);
+    } catch (error) {
+      throw new SubscriptionError(`Apple receipt verification failed: ${error.message}`, 400);
+    }
+
+    const {
+      transactionId,
+      originalTransactionId,
+      productId,
+      expiresDate,
+      purchaseDate,
+      environment,
+      bundleId
+    } = claims;
+
+    if (!transactionId || !originalTransactionId || !productId) {
       throw new SubscriptionError(
-        'In-app purchase receipt verification is not configured. Set TEST_MOCK_IAP=true for tests only.',
-        503
+        'Apple receipt is missing its transaction identifiers',
+        400
       );
     }
 
+    // Auto-renewable subscriptions always carry an expiry; anything without one
+    // is not a subscription and must not grant premium.
+    if (typeof expiresDate !== 'number' || !Number.isFinite(expiresDate) || expiresDate <= 0) {
+      throw new SubscriptionError(
+        'Apple receipt has no subscription expiration date',
+        400
+      );
+    }
+
+    // Xcode's local StoreKit testing signs with its own throwaway root, so a
+    // receipt from it can never reach this point — but say so explicitly rather
+    // than letting it fail as a generic chain error. Note the iOS client reports
+    // environment purely from its build config (#if DEBUG -> "Sandbox"), so its
+    // own value cannot distinguish this case; only Apple's claim can.
+    if (typeof environment === 'string' && environment.trim().toLowerCase() === 'xcode') {
+      throw new SubscriptionError(
+        'Receipt came from Xcode local StoreKit testing, which Apple does not sign. '
+        + 'Use an App Store sandbox purchase, or set TEST_MOCK_IAP=true for local testing only.',
+        400
+      );
+    }
+
+    // A receipt for a different app is a valid Apple signature over someone
+    // else's purchase — check it when we know which bundle to expect.
+    const expectedBundleId = process.env.APPLE_BUNDLE_ID;
+    if (expectedBundleId && bundleId !== expectedBundleId) {
+      throw new SubscriptionError(
+        'Apple receipt was issued for a different application',
+        400
+      );
+    }
+
+    // Disagreement means the client sent a receipt for a transaction other than
+    // the one it described. Not necessarily an attack, but never something to
+    // silently paper over.
+    if (validated.transaction_id !== transactionId
+      || validated.original_transaction_id !== originalTransactionId) {
+      throw new SubscriptionError(
+        'Apple receipt does not match the transaction identifiers supplied with it',
+        400
+      );
+    }
+
+    return {
+      ...validated,
+      product_id: productId,
+      transaction_id: transactionId,
+      original_transaction_id: originalTransactionId,
+      expiration_date: expiresDate,
+      purchase_date: typeof purchaseDate === 'number' && purchaseDate > 0
+        ? purchaseDate
+        : validated.purchase_date,
+      environment: this.normalizeEnvironment(environment || validated.environment)
+    };
+  }
+
+  async processReceipt(userId, payload) {
+    // TEST_MOCK_IAP trusts whatever the client sends. It exists for tests and
+    // for dev environments running against a throwaway database — never enable
+    // it anywhere production-adjacent, since it reopens the hole this gate was
+    // added to close. Mirrors StripeBillingService's TEST_MOCK_STRIPE gate.
+    const trustClientPayload = process.env.TEST_MOCK_IAP === 'true';
     const platform = this.normalizePlatform(payload.platform);
     let subscriptionResult;
 
     if (platform === 'ios') {
-      const validated = this.validateIosPayload(payload);
+      let validated = this.validateIosPayload(payload, { requireExpiration: trustClientPayload });
+      if (!trustClientPayload) {
+        // Replaces the client's claims with Apple's own signed ones.
+        validated = this.verifyIosReceipt(validated);
+      }
       const existing = await this.iosSubscriptionModel.getByTransactionId(validated.transaction_id);
       const existingOriginal = await this.iosSubscriptionModel.getByOriginalTransactionId(
         validated.original_transaction_id
@@ -252,6 +356,16 @@ class SubscriptionService {
       await this.ensureSubscriptionOwnership(existingOriginal, userId);
       subscriptionResult = await this.iosSubscriptionModel.upsertSubscription(userId, validated);
     } else {
+      // Google Play verification needs a service account calling
+      // purchases.subscriptions.get; until those credentials exist there is no
+      // way to tell a real purchase_token from a fabricated one, so Android
+      // stays fail-closed rather than trusting the client.
+      if (!trustClientPayload) {
+        throw new SubscriptionError(
+          'Google Play receipt verification is not configured. Set TEST_MOCK_IAP=true for tests only.',
+          503
+        );
+      }
       const validated = this.validateAndroidPayload(payload);
       const existing = await this.androidSubscriptionModel.getByOrderId(validated.order_id);
       const existingToken = await this.androidSubscriptionModel.getByPurchaseToken(
