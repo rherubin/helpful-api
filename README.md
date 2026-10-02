@@ -47,7 +47,7 @@ Deeper docs (this README is the client contract):
 | **14-day programs** | Async AI generation of day steps; user messages; couples therapy system replies; unlock tracking | **Mobile** (web does not call these) |
 | **Helpful vs Hopeful** | Same OpenAI model; Hopeful (faith-based) when the user has an org code or custom org name/city/state | Any client |
 | **Stripe (web)** | `POST /api/billing/subscription-intent` for in-app Payment Element; Customer Portal; webhooks; reconcile + orphaned-trial jobs | **Web** |
-| **IAP (mobile)** | `POST /api/subscription` iOS/Android receipts — **503** unless `TEST_MOCK_IAP=true` (no App Store / Play verification yet) | **Mobile** |
+| **IAP (mobile)** | `POST /api/subscription` — iOS verifies StoreKit 2 JWS (needs `APPLE_BUNDLE_ID`); Android **503** until Play verification exists. `TEST_MOCK_IAP=true` trusts the client (tests only) | **Mobile** |
 | **Org codes** | Admin CRUD + audit; app users may list (secrets stripped); linking sets `users.is_premium` | Admin + mobile |
 | **Push** | Device-token CRUD; FCM send is a no-op if Firebase is unconfigured | **Mobile** |
 | **Admin** | Separate `admin_users` JWT (`type: "admin"`); org-code mutations; push-test | Internal |
@@ -159,7 +159,9 @@ OPENAI_API_KEY=your-openai-api-key
 # WEB_APP_ORIGIN=http://localhost:8080
 # TEST_MOCK_STRIPE=true
 
-# IAP receipts (POST /api/subscription) — 503 unless this is set (no store verification yet)
+# IAP receipts (POST /api/subscription)
+# APPLE_BUNDLE_ID=com.helpfullabs.couples
+# APPLE_IAP_ENVIRONMENT=Production,Sandbox
 # TEST_MOCK_IAP=true
 ```
 
@@ -179,7 +181,9 @@ OPENAI_API_KEY=your-openai-api-key
 | `TEST_MOCK_LLM_DELAY_MS` | No | `0` | Holds each mocked LLM call open this long, so tests can observe a generation mid-flight (concurrency assertions). Test-only |
 | `PROMPT_SESSION_GENERATION_LEASE_MS` | No | `600000` | How long a Sit Session `generation_status = 'running'` row is trusted before `POST .../generate` may reclaim it |
 | `TEST_MOCK_PUSH` | No | — | Mock FCM success |
-| `TEST_MOCK_IAP` | No | — | Trust client IAP receipt fields (`POST /api/subscription`). Required for subscription tests; otherwise **503** |
+| `APPLE_BUNDLE_ID` | For live iOS IAP | — | Comma-separated bundle ids (prod: `com.helpfullabs.couples`). Fail-closes `POST /api/subscription` with **503** if unset. Receipts for any other bundle are rejected |
+| `APPLE_IAP_ENVIRONMENT` | No | `Production,Sandbox` | Comma-separated Apple environments to accept. Both by default because App Review buys with sandbox accounts against the production build; each subscription row records its environment |
+| `TEST_MOCK_IAP` | No | — | Trust client IAP receipt fields (`POST /api/subscription`). Tests only; Android still **503** without Play verification |
 | `ALLOW_ADMIN_REGISTRATION` | No | — | Opt-in open `POST /api/admin/auth/register`. Also allowed when `TEST_MOCK_LLM`/`TEST_MOCK_STRIPE` is true, or no admins exist yet |
 | `ADMIN_REGISTRATION_SECRET` | No | — | Alternate admin-register unlock (header `x-admin-registration-secret` or body `registration_secret`) |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` / `_PATH` | No | — | Real FCM |
@@ -543,7 +547,7 @@ Message types: `user_message`, `system`, legacy `openai_response`.
 
 #### POST `/api/subscription`
 
-Auth. Platform-specific body. Receipt fields are trusted only when `TEST_MOCK_IAP=true` (no App Store / Play verification is implemented yet); otherwise the endpoint returns **503**.
+Auth. Platform-specific body. iOS receipts are verified as StoreKit 2 JWS against a pinned Apple root (`APPLE_BUNDLE_ID` required). Android still returns **503** until Play verification exists. `TEST_MOCK_IAP=true` trusts client fields (tests only).
 
 **iOS:** `platform: "ios"`, `product_id`, `transaction_id`, `original_transaction_id`, `jws_receipt`, `environment` (`Production`|`Sandbox`), `purchase_date`, `expiration_date` (epoch **ms**).
 

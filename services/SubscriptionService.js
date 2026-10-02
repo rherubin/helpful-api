@@ -62,6 +62,28 @@ class SubscriptionService {
     throw new SubscriptionError('environment must be Production or Sandbox', 400);
   }
 
+  // Which Apple environments this server accepts. Unset means both: App Review
+  // buys with sandbox accounts against the production build, so a production
+  // server that rejects Sandbox receipts fails review. Each row records its
+  // environment, so sandbox-granted premium stays identifiable. Set
+  // APPLE_IAP_ENVIRONMENT=Production (or a comma-separated list) to narrow it.
+  allowedAppleIapEnvironments() {
+    const configured = (process.env.APPLE_IAP_ENVIRONMENT || '').trim();
+    if (!configured) {
+      return ['Production', 'Sandbox'];
+    }
+    return configured.split(',').map((value) => this.normalizeEnvironment(value));
+  }
+
+  // APPLE_BUNDLE_ID may list several bundles (comma-separated) so a dev server
+  // can accept receipts from both the dev and production builds.
+  expectedAppleBundleIds() {
+    return (process.env.APPLE_BUNDLE_ID || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
   validateTimestamp(name, value) {
     if (value === undefined || value === null) {
       throw new SubscriptionError(`${name} is required`, 400);
@@ -267,7 +289,8 @@ class SubscriptionService {
       expiresDate,
       purchaseDate,
       environment,
-      bundleId
+      bundleId,
+      revocationDate
     } = claims;
 
     if (!transactionId || !originalTransactionId || !productId) {
@@ -286,25 +309,32 @@ class SubscriptionService {
       );
     }
 
-    // Xcode's local StoreKit testing signs with its own throwaway root, so a
-    // receipt from it can never reach this point — but say so explicitly rather
-    // than letting it fail as a generic chain error. Note the iOS client reports
-    // environment purely from its build config (#if DEBUG -> "Sandbox"), so its
-    // own value cannot distinguish this case; only Apple's claim can.
-    if (typeof environment === 'string' && environment.trim().toLowerCase() === 'xcode') {
+    if (typeof revocationDate === 'number' && Number.isFinite(revocationDate) && revocationDate > 0) {
+      throw new SubscriptionError('Apple receipt has been revoked', 400);
+    }
+
+    // A receipt for a different app is a valid Apple signature over someone
+    // else's purchase. Fail closed if we do not know which bundle to expect.
+    const expectedBundleIds = this.expectedAppleBundleIds();
+    if (expectedBundleIds.length === 0) {
       throw new SubscriptionError(
-        'Receipt came from Xcode local StoreKit testing, which Apple does not sign. '
-        + 'Use an App Store sandbox purchase, or set TEST_MOCK_IAP=true for local testing only.',
+        'Apple receipt verification is not configured: APPLE_BUNDLE_ID is required',
+        503
+      );
+    }
+    if (!expectedBundleIds.includes(bundleId)) {
+      throw new SubscriptionError(
+        'Apple receipt was issued for a different application',
         400
       );
     }
 
-    // A receipt for a different app is a valid Apple signature over someone
-    // else's purchase — check it when we know which bundle to expect.
-    const expectedBundleId = process.env.APPLE_BUNDLE_ID;
-    if (expectedBundleId && bundleId !== expectedBundleId) {
+    const receiptEnvironment = this.normalizeEnvironment(environment || validated.environment);
+    const allowedEnvironments = this.allowedAppleIapEnvironments();
+    if (!allowedEnvironments.includes(receiptEnvironment)) {
       throw new SubscriptionError(
-        'Apple receipt was issued for a different application',
+        `Apple receipt environment ${receiptEnvironment} is not accepted by this server `
+        + `(expected ${allowedEnvironments.join(' or ')})`,
         400
       );
     }
@@ -329,7 +359,7 @@ class SubscriptionService {
       purchase_date: typeof purchaseDate === 'number' && purchaseDate > 0
         ? purchaseDate
         : validated.purchase_date,
-      environment: this.normalizeEnvironment(environment || validated.environment)
+      environment: receiptEnvironment
     };
   }
 

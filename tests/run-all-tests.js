@@ -1308,16 +1308,17 @@ class TestSuiteRunner {
       console.log('');
     }
 
-    // Run Stripe customer email sync unit tests (mock Stripe, no server needed)
     if (this.options.runAppleReceiptVerifier) {
       await this.runAppleReceiptVerifierTests();
+      if (this.results.appleReceiptVerifier && !this.results.appleReceiptVerifier.success && !this.results.appleReceiptVerifier.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
     }
 
+    // Run Stripe customer email sync unit tests (mock Stripe, no server needed)
     if (this.options.runStripeCustomerEmailSync) {
       await this.runStripeCustomerEmailSyncTests();
-      if (this.results.appleReceiptVerifier && !this.results.appleReceiptVerifier.success && !this.results.appleReceiptVerifier.skipped) {
-        return false;
-      }
       if (this.results.stripeCustomerEmailSync && !this.results.stripeCustomerEmailSync.success && !this.results.stripeCustomerEmailSync.skipped) {
         overallSuccess = false;
       }
@@ -1588,7 +1589,6 @@ class TestSuiteRunner {
       }
     }
 
-    // Stripe customer email sync unit test results
     if (this.results.appleReceiptVerifier) {
       if (this.results.appleReceiptVerifier.skipped) {
         this.log('\u{1F34E} Apple Receipt Verifier Unit Tests: SKIPPED', 'warn');
@@ -1701,6 +1701,9 @@ class TestSuiteRunner {
                this.results.therapyTrigger?.success &&
                this.results.wwwAuthenticate?.success && this.results.subscription?.success &&
                this.results.userOrgCode?.success && this.results.deviceTokens?.success &&
+               (this.results.appleReceiptVerifier == null
+                 || this.results.appleReceiptVerifier.skipped
+                 || this.results.appleReceiptVerifier.success) &&
                this.results.helpfulPromptService?.success &&
                this.results.hopefulPromptService?.success && this.results.programOrgContext?.success &&
                this.results.pushNotificationService?.success && this.results.promptSessions?.success,
