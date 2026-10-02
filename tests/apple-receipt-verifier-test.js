@@ -22,6 +22,7 @@ class AppleReceiptVerifierTestRunner {
   constructor() {
     this.testResults = { passed: 0, failed: 0, total: 0 };
     this.tmpDir = null;
+    this.createdDirs = [];
   }
 
   log(message, type = 'info') {
@@ -44,9 +45,35 @@ class AppleReceiptVerifierTestRunner {
     execFileSync('openssl', args, { cwd: this.tmpDir, stdio: 'pipe' });
   }
 
+  async withEnv(overrides, fn) {
+    const previous = {};
+    for (const key of Object.keys(overrides)) {
+      previous[key] = process.env[key];
+      const value = overrides[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    try {
+      return await fn();
+    } finally {
+      for (const key of Object.keys(overrides)) {
+        if (previous[key] === undefined) delete process.env[key];
+        else process.env[key] = previous[key];
+      }
+    }
+  }
+
+  iapService(chain) {
+    return new SubscriptionService(
+      null, null, null, null, null,
+      new AppleReceiptVerifier({ rootCertificatePem: chain.rootPem })
+    );
+  }
+
   // root -> intermediate -> leaf, mirroring the shape Apple sends in x5c.
-  buildChain() {
+  buildChain({ appleOids = true } = {}) {
     this.tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'apple-receipt-test-'));
+    this.createdDirs.push(this.tmpDir);
 
     for (const name of ['root', 'intermediate', 'leaf']) {
       this.openssl(['ecparam', '-name', 'prime256v1', '-genkey', '-noout', '-out', `${name}.key`]);
@@ -58,15 +85,29 @@ class AppleReceiptVerifierTestRunner {
     ]);
 
     this.openssl(['req', '-new', '-key', 'intermediate.key', '-subj', '/CN=Test Intermediate', '-out', 'intermediate.csr']);
+    if (appleOids) {
+      fs.writeFileSync(
+        path.join(this.tmpDir, 'intermediate.ext'),
+        'basicConstraints=CA:TRUE\n1.2.840.113635.100.6.2.1=ASN1:NULL\n'
+      );
+    }
     this.openssl([
       'x509', '-req', '-in', 'intermediate.csr', '-CA', 'root.pem', '-CAkey', 'root.key',
-      '-CAcreateserial', '-days', '2', '-sha256', '-out', 'intermediate.pem'
+      '-CAcreateserial', '-days', '2', '-sha256', '-out', 'intermediate.pem',
+      ...(appleOids ? ['-extfile', 'intermediate.ext'] : [])
     ]);
 
     this.openssl(['req', '-new', '-key', 'leaf.key', '-subj', '/CN=Test Leaf', '-out', 'leaf.csr']);
+    if (appleOids) {
+      fs.writeFileSync(
+        path.join(this.tmpDir, 'leaf.ext'),
+        '1.2.840.113635.100.6.11.1=ASN1:NULL\n'
+      );
+    }
     this.openssl([
       'x509', '-req', '-in', 'leaf.csr', '-CA', 'intermediate.pem', '-CAkey', 'intermediate.key',
-      '-CAcreateserial', '-days', '2', '-sha256', '-out', 'leaf.pem'
+      '-CAcreateserial', '-days', '2', '-sha256', '-out', 'leaf.pem',
+      ...(appleOids ? ['-extfile', 'leaf.ext'] : [])
     ]);
 
     const read = (file) => fs.readFileSync(path.join(this.tmpDir, file), 'utf8');
@@ -198,6 +239,41 @@ class AppleReceiptVerifierTestRunner {
     }
   }
 
+  async testVerifierRejectsMissingAppleOids() {
+    this.log('🧪 Verifier: missing Apple certificate OIDs', 'section');
+    const bareChain = this.buildChain({ appleOids: false });
+    const verifier = new AppleReceiptVerifier({ rootCertificatePem: bareChain.rootPem });
+
+    try {
+      verifier.verify(this.signJws(bareChain, this.validClaims()));
+      this.assert(false, 'Chain missing Apple receipt OIDs is rejected', 'verify() resolved');
+    } catch (error) {
+      this.assert(
+        error instanceof AppleReceiptError && /OID/i.test(error.message),
+        'Chain missing Apple receipt OIDs is rejected',
+        error.message
+      );
+    }
+  }
+
+  async testVerifierNamesXcodeReceipt() {
+    this.log('🧪 Verifier: Xcode local StoreKit chain', 'section');
+    const appleLike = this.buildChain();
+    const xcodeChain = this.buildChain();
+    const verifier = new AppleReceiptVerifier({ rootCertificatePem: appleLike.rootPem });
+
+    try {
+      verifier.verify(this.signJws(xcodeChain, this.validClaims({ environment: 'Xcode' })));
+      this.assert(false, 'Xcode-signed receipt names the local StoreKit cause', 'verify() resolved');
+    } catch (error) {
+      this.assert(
+        error instanceof AppleReceiptError && /Xcode local StoreKit/i.test(error.message),
+        'Xcode-signed receipt names the local StoreKit cause',
+        error.message
+      );
+    }
+  }
+
   async testVerifierRejectsExpiredCertificate(chain) {
     this.log('🧪 Verifier: expired certificate', 'section');
     // Same chain, but evaluated a decade from now — every cert is out of date.
@@ -222,8 +298,7 @@ class AppleReceiptVerifierTestRunner {
   // The regression that matters: PR #12's hole was trusting expiration_date.
   async testServiceIgnoresClientExpiration(chain) {
     this.log('🧪 Service: Apple claims override the client', 'section');
-    const service = new SubscriptionService(null, null, null, null, null,
-      new AppleReceiptVerifier({ rootCertificatePem: chain.rootPem }));
+    const service = this.iapService(chain);
 
     const claims = this.validClaims();
     const jws = this.signJws(chain, claims);
@@ -251,8 +326,7 @@ class AppleReceiptVerifierTestRunner {
 
   async testServiceRejectsIdentifierMismatch(chain) {
     this.log('🧪 Service: identifier mismatch', 'section');
-    const service = new SubscriptionService(null, null, null, null, null,
-      new AppleReceiptVerifier({ rootCertificatePem: chain.rootPem }));
+    const service = this.iapService(chain);
 
     const claims = this.validClaims();
     try {
@@ -277,14 +351,154 @@ class AppleReceiptVerifierTestRunner {
 
   async testServiceRejectsForeignBundle(chain) {
     this.log('🧪 Service: bundle id mismatch', 'section');
-    const previous = process.env.APPLE_BUNDLE_ID;
-    process.env.APPLE_BUNDLE_ID = 'com.helpful.sittogether';
-
-    try {
+    await this.withEnv({
+      APPLE_BUNDLE_ID: 'com.helpful.sittogether',
+      APPLE_IAP_ENVIRONMENT: 'Sandbox'
+    }, () => {
       const service = new SubscriptionService(null, null, null, null, null,
         new AppleReceiptVerifier({ rootCertificatePem: chain.rootPem }));
       const claims = this.validClaims({ bundleId: 'com.someone.else' });
 
+      try {
+        service.verifyIosReceipt({
+          product_id: claims.productId,
+          transaction_id: claims.transactionId,
+          original_transaction_id: claims.originalTransactionId,
+          jws_receipt: this.signJws(chain, claims),
+          environment: 'Sandbox',
+          purchase_date: claims.purchaseDate,
+          expiration_date: claims.expiresDate
+        });
+        this.assert(false, 'Validly signed receipt for another app is rejected', 'no error thrown');
+      } catch (error) {
+        this.assert(
+          error instanceof SubscriptionError && /different application/i.test(error.message),
+          'Validly signed receipt for another app is rejected',
+          error.message
+        );
+      }
+    });
+  }
+
+  async testServiceRequiresBundleId(chain) {
+    this.log('🧪 Service: missing APPLE_BUNDLE_ID', 'section');
+    await this.withEnv({
+      APPLE_BUNDLE_ID: undefined,
+      APPLE_IAP_ENVIRONMENT: 'Sandbox'
+    }, () => {
+      const service = new SubscriptionService(null, null, null, null, null,
+        new AppleReceiptVerifier({ rootCertificatePem: chain.rootPem }));
+      const claims = this.validClaims();
+
+      try {
+        service.verifyIosReceipt({
+          product_id: claims.productId,
+          transaction_id: claims.transactionId,
+          original_transaction_id: claims.originalTransactionId,
+          jws_receipt: this.signJws(chain, claims),
+          environment: 'Sandbox',
+          purchase_date: claims.purchaseDate,
+          expiration_date: claims.expiresDate
+        });
+        this.assert(false, 'Missing APPLE_BUNDLE_ID fail-closes verification', 'no error thrown');
+      } catch (error) {
+        this.assert(
+          error instanceof SubscriptionError && error.statusCode === 503
+            && /APPLE_BUNDLE_ID is required/i.test(error.message),
+          'Missing APPLE_BUNDLE_ID fail-closes verification',
+          error.message
+        );
+      }
+    });
+  }
+
+  verifySandboxReceipt(chain, claimOverrides = {}) {
+    const service = this.iapService(chain);
+    const claims = this.validClaims({ environment: 'Sandbox', ...claimOverrides });
+    return service.verifyIosReceipt({
+      product_id: claims.productId,
+      transaction_id: claims.transactionId,
+      original_transaction_id: claims.originalTransactionId,
+      jws_receipt: this.signJws(chain, claims),
+      environment: 'Sandbox',
+      purchase_date: claims.purchaseDate,
+      expiration_date: claims.expiresDate
+    });
+  }
+
+  // App Review purchases with sandbox accounts against the production build,
+  // so a production server must accept Sandbox receipts unless told otherwise.
+  async testServiceAcceptsSandboxInProductionByDefault(chain) {
+    this.log('🧪 Service: sandbox receipt on a production server (default)', 'section');
+    await this.withEnv({
+      APPLE_BUNDLE_ID: 'com.helpful.sittogether',
+      APPLE_IAP_ENVIRONMENT: undefined,
+      NODE_ENV: 'production',
+      RAILWAY_ENVIRONMENT_NAME: 'production'
+    }, () => {
+      try {
+        const result = this.verifySandboxReceipt(chain);
+        this.assert(
+          result.environment === 'Sandbox',
+          'Sandbox receipts are accepted in production by default (App Review)',
+          `environment=${result.environment}`
+        );
+      } catch (error) {
+        this.assert(false, 'Sandbox receipts are accepted in production by default (App Review)', error.message);
+      }
+    });
+  }
+
+  async testServiceRejectsSandboxWhenNarrowedToProduction(chain) {
+    this.log('🧪 Service: sandbox receipt when narrowed to Production', 'section');
+    await this.withEnv({
+      APPLE_BUNDLE_ID: 'com.helpful.sittogether',
+      APPLE_IAP_ENVIRONMENT: 'Production'
+    }, () => {
+      try {
+        this.verifySandboxReceipt(chain);
+        this.assert(false, 'Sandbox receipts are rejected when APPLE_IAP_ENVIRONMENT=Production', 'no error thrown');
+      } catch (error) {
+        this.assert(
+          error instanceof SubscriptionError && /not accepted by this server/i.test(error.message),
+          'Sandbox receipts are rejected when APPLE_IAP_ENVIRONMENT=Production',
+          error.message
+        );
+      }
+    });
+  }
+
+  async testServiceAcceptsAnyListedBundle(chain) {
+    this.log('🧪 Service: multiple APPLE_BUNDLE_IDs', 'section');
+    await this.withEnv({
+      APPLE_BUNDLE_ID: 'com.helpful.dev, com.helpful.sittogether',
+      APPLE_IAP_ENVIRONMENT: undefined
+    }, () => {
+      try {
+        this.verifySandboxReceipt(chain);
+        this.assert(true, 'Receipt for any listed bundle id is accepted');
+      } catch (error) {
+        this.assert(false, 'Receipt for any listed bundle id is accepted', error.message);
+      }
+      try {
+        this.verifySandboxReceipt(chain, { bundleId: 'com.someone.else' });
+        this.assert(false, 'Receipt for an unlisted bundle id is rejected', 'no error thrown');
+      } catch (error) {
+        this.assert(
+          error instanceof SubscriptionError && /different application/i.test(error.message),
+          'Receipt for an unlisted bundle id is rejected',
+          error.message
+        );
+      }
+    });
+  }
+
+  async testServiceRejectsRevokedReceipt(chain) {
+    this.log('🧪 Service: revoked receipt', 'section');
+    const service = this.iapService(chain);
+    const claims = this.validClaims({ revocationDate: Date.now() });
+
+    try {
       service.verifyIosReceipt({
         product_id: claims.productId,
         transaction_id: claims.transactionId,
@@ -294,23 +508,19 @@ class AppleReceiptVerifierTestRunner {
         purchase_date: claims.purchaseDate,
         expiration_date: claims.expiresDate
       });
-      this.assert(false, 'Validly signed receipt for another app is rejected', 'no error thrown');
+      this.assert(false, 'Revoked Apple receipt is rejected', 'no error thrown');
     } catch (error) {
       this.assert(
-        error instanceof SubscriptionError && /different application/i.test(error.message),
-        'Validly signed receipt for another app is rejected',
+        error instanceof SubscriptionError && /revoked/i.test(error.message),
+        'Revoked Apple receipt is rejected',
         error.message
       );
-    } finally {
-      if (previous === undefined) delete process.env.APPLE_BUNDLE_ID;
-      else process.env.APPLE_BUNDLE_ID = previous;
     }
   }
 
   async testServiceRejectsNonSubscription(chain) {
     this.log('🧪 Service: receipt with no expiry', 'section');
-    const service = new SubscriptionService(null, null, null, null, null,
-      new AppleReceiptVerifier({ rootCertificatePem: chain.rootPem }));
+    const service = this.iapService(chain);
 
     const claims = this.validClaims();
     delete claims.expiresDate;
@@ -360,8 +570,7 @@ class AppleReceiptVerifierTestRunner {
   // API used to require it. On the verified path Apple supplies the expiry.
   async testServiceAcceptsMissingClientExpiration(chain) {
     this.log('🧪 Service: client omits expiration_date', 'section');
-    const service = new SubscriptionService(null, null, null, null, null,
-      new AppleReceiptVerifier({ rootCertificatePem: chain.rootPem }));
+    const service = this.iapService(chain);
 
     const claims = this.validClaims();
     const payload = {
@@ -402,8 +611,8 @@ class AppleReceiptVerifierTestRunner {
 
   async testServiceRejectsXcodeEnvironment(chain) {
     this.log('🧪 Service: Xcode local StoreKit receipt', 'section');
-    const service = new SubscriptionService(null, null, null, null, null,
-      new AppleReceiptVerifier({ rootCertificatePem: chain.rootPem }));
+    const xcodeChain = this.buildChain();
+    const service = this.iapService(chain);
 
     const claims = this.validClaims({ environment: 'Xcode' });
     try {
@@ -411,7 +620,7 @@ class AppleReceiptVerifierTestRunner {
         product_id: claims.productId,
         transaction_id: claims.transactionId,
         original_transaction_id: claims.originalTransactionId,
-        jws_receipt: this.signJws(chain, claims),
+        jws_receipt: this.signJws(xcodeChain, claims),
         environment: 'Sandbox',
         purchase_date: claims.purchaseDate,
         expiration_date: claims.expiresDate
@@ -427,50 +636,57 @@ class AppleReceiptVerifierTestRunner {
   }
 
   cleanup() {
-    if (this.tmpDir) {
-      fs.rmSync(this.tmpDir, { recursive: true, force: true });
-      this.tmpDir = null;
+    for (const dir of new Set(this.createdDirs.filter(Boolean))) {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
+    this.createdDirs = [];
+    this.tmpDir = null;
   }
 
   async run() {
     this.log('🍎 Starting Apple Receipt Verifier Unit Tests', 'section');
-    const roots = [];
 
-    try {
-      const chain = this.buildChain();
-      roots.push(this.tmpDir);
+    return this.withEnv({
+      APPLE_BUNDLE_ID: process.env.APPLE_BUNDLE_ID || 'com.helpful.sittogether',
+      APPLE_IAP_ENVIRONMENT: process.env.APPLE_IAP_ENVIRONMENT || 'Sandbox'
+    }, async () => {
+      try {
+        const chain = this.buildChain();
 
-      await this.testVerifierAcceptsGenuineReceipt(chain);
-      await this.testVerifierRejectsTamperedPayload(chain);
-      await this.testVerifierRejectsForeignRoot(chain);
-      roots.push(this.tmpDir);
-      await this.testVerifierRejectsBadAlgorithm(chain);
-      await this.testVerifierRejectsMalformedInput(chain);
-      await this.testVerifierRejectsExpiredCertificate(chain);
-      await this.testServiceIgnoresClientExpiration(chain);
-      await this.testServiceRejectsIdentifierMismatch(chain);
-      await this.testServiceRejectsForeignBundle(chain);
-      await this.testServiceRejectsNonSubscription(chain);
-      await this.testServiceAcceptsMissingClientExpiration(chain);
-      await this.testServiceRejectsXcodeEnvironment(chain);
-      await this.testPinnedRootIsAppleRoot();
-    } catch (error) {
-      this.log(`Unexpected failure: ${error.stack}`, 'fail');
-      this.testResults.failed++;
-      this.testResults.total++;
-    } finally {
-      for (const dir of new Set(roots.filter(Boolean))) {
-        fs.rmSync(dir, { recursive: true, force: true });
+        await this.testVerifierAcceptsGenuineReceipt(chain);
+        await this.testVerifierRejectsTamperedPayload(chain);
+        await this.testVerifierRejectsForeignRoot(chain);
+        await this.testVerifierRejectsMissingAppleOids();
+        await this.testVerifierNamesXcodeReceipt();
+        await this.testVerifierRejectsBadAlgorithm(chain);
+        await this.testVerifierRejectsMalformedInput(chain);
+        await this.testVerifierRejectsExpiredCertificate(chain);
+        await this.testServiceIgnoresClientExpiration(chain);
+        await this.testServiceRejectsIdentifierMismatch(chain);
+        await this.testServiceRejectsForeignBundle(chain);
+        await this.testServiceRequiresBundleId(chain);
+        await this.testServiceAcceptsSandboxInProductionByDefault(chain);
+        await this.testServiceRejectsSandboxWhenNarrowedToProduction(chain);
+        await this.testServiceAcceptsAnyListedBundle(chain);
+        await this.testServiceRejectsRevokedReceipt(chain);
+        await this.testServiceRejectsNonSubscription(chain);
+        await this.testServiceAcceptsMissingClientExpiration(chain);
+        await this.testServiceRejectsXcodeEnvironment(chain);
+        await this.testPinnedRootIsAppleRoot();
+      } catch (error) {
+        this.log(`Unexpected failure: ${error.stack}`, 'fail');
+        this.testResults.failed++;
+        this.testResults.total++;
+      } finally {
+        this.cleanup();
       }
-      this.cleanup();
-    }
 
-    this.log(
-      `Apple receipt verifier tests: ${this.testResults.passed}/${this.testResults.total} passed`,
-      this.testResults.failed === 0 ? 'pass' : 'fail'
-    );
-    return this.testResults.failed === 0;
+      this.log(
+        `Apple receipt verifier tests: ${this.testResults.passed}/${this.testResults.total} passed`,
+        this.testResults.failed === 0 ? 'pass' : 'fail'
+      );
+      return this.testResults.failed === 0;
+    });
   }
 }
 
