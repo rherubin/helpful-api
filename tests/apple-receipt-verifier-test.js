@@ -6,6 +6,7 @@ const path = require('path');
 
 const { AppleReceiptVerifier, AppleReceiptError } = require('../services/AppleReceiptVerifier');
 const { SubscriptionService, SubscriptionError } = require('../services/SubscriptionService');
+const SubscriptionSandboxReuseTestRunner = require('./subscription-sandbox-reuse-test');
 
 /**
  * AppleReceiptVerifier Unit Test Suite
@@ -646,7 +647,7 @@ class AppleReceiptVerifierTestRunner {
   async run() {
     this.log('🍎 Starting Apple Receipt Verifier Unit Tests', 'section');
 
-    return this.withEnv({
+    const verifierOk = await this.withEnv({
       APPLE_BUNDLE_ID: process.env.APPLE_BUNDLE_ID || 'com.helpful.sittogether',
       APPLE_IAP_ENVIRONMENT: process.env.APPLE_IAP_ENVIRONMENT || 'Sandbox'
     }, async () => {
@@ -687,8 +688,15 @@ class AppleReceiptVerifierTestRunner {
       );
       return this.testResults.failed === 0;
     });
+
+    const reuseRunner = new SubscriptionSandboxReuseTestRunner();
+    const reuseOk = await reuseRunner.run();
+    this.testResults.passed += reuseRunner.testResults.passed;
+    this.testResults.failed += reuseRunner.testResults.failed;
+    this.testResults.total += reuseRunner.testResults.total;
+    return verifierOk && reuseOk;
   }
-}
+};
 
 module.exports = AppleReceiptVerifierTestRunner;
 

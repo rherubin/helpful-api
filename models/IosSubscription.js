@@ -51,8 +51,11 @@ class IosSubscription {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 
-  // Create or update iOS subscription
-  async upsertSubscription(userId, subscriptionData) {
+  // Create or update iOS subscription.
+  // `reassignUser` is only set for recycled Sandbox receipts on a non-production
+  // server (Xcode transaction ids restart at 0). Production updates must not
+  // move a transaction onto a different account.
+  async upsertSubscription(userId, subscriptionData, { reassignUser = false } = {}) {
     const {
       product_id,
       transaction_id,
@@ -68,7 +71,20 @@ class IosSubscription {
     
     if (existing) {
       // Update existing subscription
-      const updateQuery = `
+      const updateQuery = reassignUser
+        ? `
+        UPDATE ios_subscriptions 
+        SET user_id = ?,
+            product_id = ?, 
+            original_transaction_id = ?,
+            jws_receipt = ?,
+            environment = ?,
+            purchase_date = ?,
+            expiration_date = ?,
+            updated_at = NOW()
+        WHERE transaction_id = ?
+      `
+        : `
         UPDATE ios_subscriptions 
         SET product_id = ?, 
             original_transaction_id = ?,
@@ -79,8 +95,8 @@ class IosSubscription {
             updated_at = NOW()
         WHERE transaction_id = ?
       `;
-      
-      await this.query(updateQuery, [
+
+      const params = [
         product_id,
         original_transaction_id,
         jws_receipt,
@@ -88,10 +104,16 @@ class IosSubscription {
         purchase_date,
         expiration_date,
         transaction_id
-      ]);
+      ];
+      if (reassignUser) {
+        params.unshift(userId);
+      }
       
+      await this.query(updateQuery, params);
+
       return {
         ...existing,
+        user_id: reassignUser ? userId : existing.user_id,
         product_id,
         original_transaction_id,
         jws_receipt,

@@ -195,6 +195,32 @@ class SubscriptionService {
     }
   }
 
+  // Xcode's local StoreKit store reissues transaction ids 0, 1, 2… after a tester
+  // resets purchases. The iOS client reports that environment as Sandbox
+  // (StoreManager maps `.xcode` to Sandbox). Those ids are not Apple-unique, so
+  // a non-production server reassigns the row to the caller instead of
+  // returning 409. Production keeps the rejection, including for App Review
+  // sandbox purchases against the production build. A deployed production
+  // process sets RAILWAY_ENVIRONMENT_NAME; NODE_ENV=production with no Railway
+  // name stays closed too.
+  allowsRecycledSandboxReceipts(environment) {
+    if (environment !== 'Sandbox') {
+      return false;
+    }
+
+    const railwayEnv = String(
+      process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || ''
+    ).trim().toLowerCase();
+    if (railwayEnv === 'production') {
+      return false;
+    }
+    if (railwayEnv) {
+      return true;
+    }
+
+    return process.env.NODE_ENV !== 'production';
+  }
+
   async getAcceptedPairingsForUser(userId) {
     try {
       const userPairings = await this.pairingModel.getAcceptedPairings(userId);
@@ -382,9 +408,27 @@ class SubscriptionService {
       const existingOriginal = await this.iosSubscriptionModel.getByOriginalTransactionId(
         validated.original_transaction_id
       );
-      await this.ensureSubscriptionOwnership(existing, userId);
-      await this.ensureSubscriptionOwnership(existingOriginal, userId);
-      subscriptionResult = await this.iosSubscriptionModel.upsertSubscription(userId, validated);
+      // Incoming environment, not the stored row's. A reset Xcode purchase is
+      // Sandbox even when the stuck row was written as Production by an older build.
+      const reuseSandboxReceipt = this.allowsRecycledSandboxReceipts(validated.environment);
+      const previousOwnerId = reuseSandboxReceipt
+        && existing
+        && existing.user_id !== userId
+        ? existing.user_id
+        : null;
+      if (!reuseSandboxReceipt) {
+        await this.ensureSubscriptionOwnership(existing, userId);
+        await this.ensureSubscriptionOwnership(existingOriginal, userId);
+      }
+      subscriptionResult = await this.iosSubscriptionModel.upsertSubscription(
+        userId,
+        validated,
+        { reassignUser: reuseSandboxReceipt }
+      );
+      // The recycled id no longer entitles the previous account.
+      if (previousOwnerId) {
+        await this.reconcilePremiumStatus(previousOwnerId);
+      }
     } else {
       // Google Play verification needs a service account calling
       // purchases.subscriptions.get; until those credentials exist there is no

@@ -569,7 +569,7 @@ Auth. Platform-specific body. iOS receipts are verified as StoreKit 2 JWS agains
 }
 ```
 
-Conflict if receipt belongs to another user (**409** via `SubscriptionError`).
+Conflict if receipt belongs to another user (**409** via `SubscriptionError`). On a non-production server, a Sandbox receipt whose transaction id was reused — Xcode local StoreKit resets ids to 0, 1, 2… — is reassigned to the caller instead. Production, including App Review sandbox purchases, still returns 409.
 
 #### GET `/api/subscription`
 
