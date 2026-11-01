@@ -8,9 +8,9 @@ const BasePromptService = require("./BasePromptService");
  * Therapy (EFT) and the Gottman Couples Therapy method. Produces 14-day
  * conversation-starter programs designed for two paired partners.
  *
- * Ported from the pre-org-code services/ChatGPTService.js, modernized to
- * route through BasePromptService.callLLM for multi-provider support and
- * to use jsonMode + parse retries for stability.
+ * Ported from the pre-org-code services/ChatGPTService.js. Generation goes
+ * through BasePromptService.callLLM, which calls OpenAI, and uses jsonMode
+ * plus parse retries for stability.
  *
  * Selected by routes when the user has NO org_code or custom org fields.
  */
