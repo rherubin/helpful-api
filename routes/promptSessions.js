@@ -16,6 +16,11 @@ const { validatePrepAnswers } = require('../services/prepValidation');
 // Solo / single-device mode: POST without pairing_id creates a session owned by
 // the caller. Prep and other member endpoints work without an accepted pairing.
 //
+// Shared-device mode: a *paired* couple sitting together on one device. POST
+// with pairing_id + shared_device: true. The session belongs to the pairing (so
+// both partners see it in GET /api/prompt-sessions), but only the creator's
+// single prep is needed before generation, exactly like solo.
+//
 // Generation: POST /:id/generate builds a prompt from completed prep(s) via
 // HelpfulPromptService.generateSitSessionContent and persists bridge/session
 // content. When prep becomes ready, generation is also kicked off in the
@@ -306,7 +311,12 @@ function createPromptSessionRoutes(
   router.post('/', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
-      const { pairing_id } = req.body;
+      const { pairing_id, shared_device } = req.body || {};
+
+      if (shared_device !== undefined && typeof shared_device !== 'boolean') {
+        return res.status(400).json({ error: 'shared_device must be a boolean' });
+      }
+      const sharedDevice = shared_device === true && !!pairing_id;
 
       let pairing = null;
 
@@ -343,7 +353,8 @@ function createPromptSessionRoutes(
 
       const session = await promptSessionModel.createPromptSession({
         pairingId: pairing_id || null,
-        createdByUserId: userId
+        createdByUserId: userId,
+        sharedDevice
       });
 
       res.status(201).json({
@@ -352,8 +363,10 @@ function createPromptSessionRoutes(
       });
 
       // Notify the partner when a paired session is started (if they exist).
+      // Not for shared-device sessions: the partner is in the room and has no
+      // prep of their own to complete.
       const partnerId = partnerIdFor(pairing, userId);
-      if (pushNotificationService && partnerId) {
+      if (pushNotificationService && partnerId && !sharedDevice) {
         pushNotificationService.sendToUser(partnerId, {
           title: 'New Sit Session',
           body: 'Your partner started a Sit Session. Complete your prep to begin.',

@@ -659,7 +659,7 @@ Max **25** tokens per user. Raw FCM token never returned after register (only re
 | **Solo / single-device** | omit `pairing_id` (or `{}`) | Creator only | **1** completed prep | **Yes** — pairing not required |
 | **Paired** | `{ "pairing_id" }` | Creator or pairing member | **2** completed preps | **Yes** — after both preps |
 
-**Product note for web / app:** Sit Sessions are always written as a **couple experience** (two reflections, partner comparison, shared challenge), even in single-device mode. Pairing can happen **after** the first Sit Session. On one phone/shared web session, create a solo session (`pairing_id: null`), complete prep, then generate — the LLM still returns couple-shaped Bridge + Session content. When only one prep exists, Partner 2 may be labeled `"Partner"` (or similar) and inferred carefully from Partner 1’s answers.
+**Product note for web / app:** Sit Sessions are always written as a **couple experience** (two reflections, partner comparison, shared challenge), even in single-device mode. Pairing can happen **after** the first Sit Session. On one phone/shared web session, an **unpaired** user creates a solo session (`pairing_id: null`); a **paired** couple sharing one device creates `{ pairing_id, shared_device: true }` instead, so the sit stays on the pairing and shows up in **both** partners' `GET /api/prompt-sessions` (a solo session is only ever visible to its creator). Either way, one complete prep is enough, then generate — the LLM still returns couple-shaped Bridge + Session content. When only one prep exists, Partner 2 may be labeled `"Partner"` (or similar) and inferred carefully from Partner 1’s answers.
 
 - Pairing status need **not** be `accepted`. If `pairing_id` is sent, the caller must be a **member** (pending is fine). Soft-deleted pairings do not grant partner access.
 - **One** active (non-terminal) session **per pairing**; **one** active solo session **per user**. Active = status not `complete` / `abandoned`.
@@ -955,7 +955,7 @@ Clients should bind UI to these fields only (not free-form prose blobs).
 
 | Method | Path | Notes |
 |--------|------|--------|
-| POST | `/api/prompt-sessions` | Body optional `{ "pairing_id" }` · **201** · **409** if an active session already exists |
+| POST | `/api/prompt-sessions` | Body optional `{ "pairing_id", "shared_device" }` (`shared_device: true` = paired couple on one device; ready after the creator's one prep; ignored without `pairing_id`; non-boolean → **400**) · **201** · **409** if an active session already exists |
 | GET | `/api/prompt-sessions` | Optional `?pairing_id=` · list; items include `bridge_content` / `session_content` when generated |
 | GET | `/api/prompt-sessions/:id` | Creator or pairing member · **primary read path** for Bridge/Session after generate or auto-generate |
 | POST | `/api/prompt-sessions/:id/prep` | Merge prep fields. Strings only (≤2000 chars). Prompt-injection / jailbreak content → **400** `PREP_UNSAFE_INPUT`. Response: `prep`, `both_preps_complete` |
