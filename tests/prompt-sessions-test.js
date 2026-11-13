@@ -16,6 +16,9 @@ const PromptSessionModel = require('../models/PromptSession');
  *   - generation endpoint (409 before ready; 200 with bridge/session after;
  *     idempotent if already generated)
  *   - generation_prompt never exposed to clients
+ *   - partner visibility: both partners list completed sessions regardless of
+ *     pairing/account-creation order; shared-device (one phone) paired sessions
+ *     are ready after one prep and stay visible to both partners
  *
  * Run with: node tests/prompt-sessions-test.js
  * (Start the server first, e.g. TEST_MOCK_LLM=true npm start)
@@ -893,6 +896,160 @@ class PromptSessionsTestRunner {
         'Generate success',
         `Status: ${error.response?.status} Error: ${error.response?.data?.error || error.message}`
       );
+    }
+  }
+
+  // ── Partner session visibility ──────────────────────────────────────────
+  // Regression for "Partner A's completed sessions don't show up in Partner
+  // B's account" (Sept 2026). Covers both pairing orders — including the case
+  // where Partner B's account is created BEFORE Partner A's — for two-device
+  // sessions, and the shared-device (one phone, paired couple) mode that used
+  // to create a solo session invisible to the partner.
+
+  // Create B first, then A, and pair them. `requester` picks who generates the
+  // partner code (becomes pairings.user1_id).
+  async createPairedCouple(label, requester) {
+    const partnerB = await this.createUser(`${label}-b-first`);
+    await this.sleep(1100); // distinct created_at second for the ordering case
+    const partnerA = await this.createUser(`${label}-a-second`);
+    const [req, acc] = requester === 'A' ? [partnerA, partnerB] : [partnerB, partnerA];
+    const reqRes = await axios.post(`${this.baseURL}/api/pairing/request`, {}, this.authHeader(req.token));
+    await axios.post(
+      `${this.baseURL}/api/pairing/accept`,
+      { partner_code: reqRes.data.partner_code },
+      this.authHeader(acc.token)
+    );
+    const acceptedRes = await axios.get(`${this.baseURL}/api/pairing/accepted`, this.authHeader(partnerA.token));
+    const pairing = (acceptedRes.data.pairings || [])[0];
+    return { partnerA, partnerB, pairingId: pairing ? pairing.id : null };
+  }
+
+  async listSession(token, sessionId) {
+    const res = await axios.get(`${this.baseURL}/api/prompt-sessions`, this.authHeader(token));
+    return (res.data.prompt_sessions || []).find(s => s.id === sessionId) || null;
+  }
+
+  async generateOrPoll(token, sessionId) {
+    try {
+      const res = await axios.post(`${this.baseURL}/api/prompt-sessions/${sessionId}/generate`, {}, this.authHeader(token));
+      return res.data.prompt_session;
+    } catch (error) {
+      if (this.isGenerationRunning(error)) return this.pollGenerationTerminal(token, sessionId);
+      throw error;
+    }
+  }
+
+  async testPartnerSessionVisibility() {
+    this.log('Testing partner session visibility (both pairing orders, two-device + shared-device)', 'section');
+
+    for (const requester of ['A', 'B']) {
+      const label = `vis-req${requester}`;
+      const orderNote = `B created before A; ${requester} requested pairing`;
+      try {
+        const { partnerA, partnerB, pairingId } = await this.createPairedCouple(label, requester);
+        this.assert(!!pairingId, `[${orderNote}] couple paired`, `pairing: ${pairingId}`);
+
+        // Two-device: A starts, both prep, A completes.
+        const createRes = await axios.post(
+          `${this.baseURL}/api/prompt-sessions`,
+          { pairing_id: pairingId },
+          this.authHeader(partnerA.token)
+        );
+        const twoDeviceId = createRes.data.prompt_session.id;
+        this.assert(createRes.data.prompt_session.shared_device === false,
+          `[${orderNote}] two-device session reports shared_device=false`);
+        await axios.post(`${this.baseURL}/api/prompt-sessions/${twoDeviceId}/prep`, this.fullPrep(), this.authHeader(partnerA.token));
+        const bPrep = await axios.post(`${this.baseURL}/api/prompt-sessions/${twoDeviceId}/prep`, this.fullPrep(), this.authHeader(partnerB.token));
+        this.assert(bPrep.data.both_preps_complete === true, `[${orderNote}] two-device ready after both preps`);
+        await this.generateOrPoll(partnerA.token, twoDeviceId);
+        await axios.patch(`${this.baseURL}/api/prompt-sessions/${twoDeviceId}`, { status: 'complete' }, this.authHeader(partnerA.token));
+
+        const seenByB = await this.listSession(partnerB.token, twoDeviceId);
+        this.assert(seenByB?.status === 'complete',
+          `[${orderNote}] Partner B lists Partner A's completed two-device session`, `status: ${seenByB?.status}`);
+        const seenByA = await this.listSession(partnerA.token, twoDeviceId);
+        this.assert(seenByA?.status === 'complete',
+          `[${orderNote}] Partner A lists own completed two-device session`, `status: ${seenByA?.status}`);
+
+        // Shared-device: A runs the whole sit on one phone for the couple.
+        const sharedRes = await axios.post(
+          `${this.baseURL}/api/prompt-sessions`,
+          { pairing_id: pairingId, shared_device: true },
+          this.authHeader(partnerA.token)
+        );
+        const shared = sharedRes.data.prompt_session;
+        this.assert(sharedRes.status === 201 && shared.shared_device === true && shared.pairing_id === pairingId,
+          `[${orderNote}] shared-device session is created on the pairing`,
+          `shared_device: ${shared.shared_device}, pairing_id: ${shared.pairing_id}`);
+
+        const sharedPrep = await axios.post(
+          `${this.baseURL}/api/prompt-sessions/${shared.id}/prep`,
+          this.fullPrep(),
+          this.authHeader(partnerA.token)
+        );
+        this.assert(sharedPrep.data.both_preps_complete === true,
+          `[${orderNote}] shared-device session is ready after the creator's single prep`,
+          `value: ${sharedPrep.data.both_preps_complete}`);
+
+        const generated = await this.generateOrPoll(partnerA.token, shared.id);
+        this.assert(generated?.generation?.status === 'succeeded' && !!generated?.session_content,
+          `[${orderNote}] shared-device session generates from one prep`,
+          `generation.status: ${generated?.generation?.status}`);
+
+        await axios.patch(`${this.baseURL}/api/prompt-sessions/${shared.id}`, { status: 'complete' }, this.authHeader(partnerA.token));
+
+        const sharedSeenByB = await this.listSession(partnerB.token, shared.id);
+        this.assert(sharedSeenByB?.status === 'complete' && sharedSeenByB?.shared_device === true,
+          `[${orderNote}] Partner B lists Partner A's completed shared-device session`,
+          `status: ${sharedSeenByB?.status}`);
+        const getByB = await axios.get(`${this.baseURL}/api/prompt-sessions/${shared.id}`, this.authHeader(partnerB.token));
+        this.assert(getByB.status === 200 && !!getByB.data.prompt_session?.session_content,
+          `[${orderNote}] Partner B can open (replay) the shared-device session`);
+      } catch (error) {
+        this.assert(false, `[${orderNote}] partner visibility`,
+          `Status: ${error.response?.status} Error: ${error.response?.data?.error || error.message}`);
+      }
+    }
+
+    // Validation + backwards compatibility.
+    try {
+      const { partnerA, pairingId } = await this.createPairedCouple('vis-validate', 'A');
+      try {
+        await axios.post(
+          `${this.baseURL}/api/prompt-sessions`,
+          { pairing_id: pairingId, shared_device: 'yes' },
+          this.authHeader(partnerA.token)
+        );
+        this.assert(false, 'Non-boolean shared_device is rejected', 'Request unexpectedly succeeded');
+      } catch (error) {
+        this.assert(error.response?.status === 400, 'Non-boolean shared_device returns 400', `Status: ${error.response?.status}`);
+      }
+
+      const soloRes = await axios.post(
+        `${this.baseURL}/api/prompt-sessions`,
+        { shared_device: true },
+        this.authHeader(partnerA.token)
+      );
+      this.assert(soloRes.status === 201 && soloRes.data.prompt_session.pairing_id === null &&
+          soloRes.data.prompt_session.shared_device === false,
+        'shared_device without pairing_id still creates a plain solo session');
+
+      // A two-device paired session (no shared_device) still needs both preps.
+      const pairedRes = await axios.post(
+        `${this.baseURL}/api/prompt-sessions`,
+        { pairing_id: pairingId },
+        this.authHeader(partnerA.token)
+      );
+      const prep = await axios.post(
+        `${this.baseURL}/api/prompt-sessions/${pairedRes.data.prompt_session.id}/prep`,
+        this.fullPrep(),
+        this.authHeader(partnerA.token)
+      );
+      this.assert(prep.data.both_preps_complete === false,
+        'Two-device paired session still waits for the second partner', `value: ${prep.data.both_preps_complete}`);
+    } catch (error) {
+      this.assert(false, 'shared_device validation',
+        `Status: ${error.response?.status} Error: ${error.response?.data?.error || error.message}`);
     }
   }
 
@@ -1854,6 +2011,8 @@ class PromptSessionsTestRunner {
       await this.testGenerateSuccess();
       console.log('');
       await this.testSoloGenerate();
+      console.log('');
+      await this.testPartnerSessionVisibility();
       console.log('');
       await this.testGenerateKeepsPartnerPrepAfterPairingSoftDelete();
       console.log('');
