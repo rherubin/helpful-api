@@ -215,16 +215,18 @@ class SubscriptionTestRunner {
       return;
     }
 
-    // Create Android subscription with future expiration (active)
-    const futureExpiration = Date.now() + (365 * 24 * 60 * 60 * 1000); // 1 year from now
+    // Shaped exactly like the real Android app's request
+    // (SubscriptionReceiptBridge.recoverAndroidReceipt): production package id
+    // and expiration_date always null, because Play Billing's Purchase carries
+    // no expiry. Under TEST_MOCK_IAP the API derives one from the product.
     const androidSubscription = {
       platform: 'android',
       product_id: 'com.helpful.yearly.29.99',
       purchase_token: `test_token_${Date.now()}_abcdefghijklmnop`,
       order_id: `GPA.${Date.now()}-1234-5678-90123`,
-      package_name: 'com.helpful.app',
+      package_name: 'com.helpful.couples',
       purchase_date: Date.now() - 1000,
-      expiration_date: futureExpiration
+      expiration_date: null
     };
 
     try {
@@ -253,8 +255,15 @@ class SubscriptionTestRunner {
 
       this.assert(
         response.data.subscription.is_active === true,
-        'Android subscription with future expiration is active',
+        'Android subscription with null client expiry is active',
         `Is active: ${response.data.subscription.is_active}`
+      );
+
+      this.assert(
+        typeof response.data.subscription.expiration_date === 'number'
+          && response.data.subscription.expiration_date > Date.now() + (300 * 24 * 60 * 60 * 1000),
+        'Android yearly subscription gets a ~1 year expiry when the client sends none',
+        `expiration_date: ${response.data.subscription.expiration_date}`
       );
 
       // Store for later tests
@@ -338,7 +347,7 @@ class SubscriptionTestRunner {
         product_id: 'com.helpful.yearly.29.99',
         purchase_token: `test_token_update_${Date.now()}`,
         order_id: orderId,
-        package_name: 'com.helpful.app',
+        package_name: 'com.helpful.couples',
         purchase_date: Date.now() - 1000,
         expiration_date: Date.now() + (30 * 24 * 60 * 60 * 1000)
       };
@@ -473,9 +482,9 @@ class SubscriptionTestRunner {
         product_id: 'com.helpful.yearly.29.99',
         purchase_token: `test_token_owner_${Date.now()}`,
         order_id: orderId,
-        package_name: 'com.helpful.app',
+        package_name: 'com.helpful.couples',
         purchase_date: Date.now() - 1000,
-        expiration_date: Date.now() + (30 * 24 * 60 * 60 * 1000)
+        expiration_date: null
       }, {
         headers: { Authorization: `Bearer ${androidUser1.token}` },
         timeout: this.timeout
@@ -488,9 +497,9 @@ class SubscriptionTestRunner {
           product_id: 'com.helpful.yearly.29.99',
           purchase_token: `test_token_owner_conflict_${Date.now()}`,
           order_id: orderId,
-          package_name: 'com.helpful.app',
+          package_name: 'com.helpful.couples',
           purchase_date: Date.now() - 1000,
-          expiration_date: Date.now() + (30 * 24 * 60 * 60 * 1000)
+          expiration_date: null
         }, {
           headers: { Authorization: `Bearer ${androidUser2.token}` },
           timeout: this.timeout
@@ -510,9 +519,9 @@ class SubscriptionTestRunner {
         product_id: 'com.helpful.yearly.29.99',
         purchase_token: purchaseToken,
         order_id: `GPA.owner_token_${Date.now()}-1234-5678`,
-        package_name: 'com.helpful.app',
+        package_name: 'com.helpful.couples',
         purchase_date: Date.now() - 1000,
-        expiration_date: Date.now() + (30 * 24 * 60 * 60 * 1000)
+        expiration_date: null
       }, {
         headers: { Authorization: `Bearer ${androidUser1.token}` },
         timeout: this.timeout
@@ -525,9 +534,9 @@ class SubscriptionTestRunner {
           product_id: 'com.helpful.yearly.29.99',
           purchase_token: purchaseToken,
           order_id: `GPA.owner_token_conflict_${Date.now()}-1234-5678`,
-          package_name: 'com.helpful.app',
+          package_name: 'com.helpful.couples',
           purchase_date: Date.now() - 1000,
-          expiration_date: Date.now() + (30 * 24 * 60 * 60 * 1000)
+          expiration_date: null
         }, {
           headers: { Authorization: `Bearer ${androidUser2.token}` },
           timeout: this.timeout
@@ -893,7 +902,7 @@ class SubscriptionTestRunner {
         platform: 'android',
         product_id: 'com.helpful.yearly.29.99',
         purchase_token: 'test_token',
-        package_name: 'com.helpful.app',
+        package_name: 'com.helpful.couples',
         purchase_date: Date.now(),
         expiration_date: Date.now() + 1000
       }, { headers: androidHeaders, timeout: this.timeout });

@@ -18,6 +18,7 @@ const DeviceTokenTestRunner = require('./device-tokens-test');
 const StripeBillingTestRunner = require('./stripe-billing-test');
 const StripeCustomerEmailSyncTestRunner = require('./stripe-customer-email-sync-test');
 const AppleReceiptVerifierTestRunner = require('./apple-receipt-verifier-test');
+const GooglePlayReceiptVerifierTestRunner = require('./google-play-receipt-verifier-test');
 const HelpfulPromptServiceTestRunner = require('./helpful-prompt-service-test');
 const HopefulPromptServiceTestRunner = require('./hopeful-prompt-service-test');
 const ProgramOrgContextTestRunner = require('./program-org-context-test');
@@ -55,6 +56,7 @@ class TestSuiteRunner {
       runStripeBilling: options.runStripeBilling !== false, // Default true
       runStripeCustomerEmailSync: options.runStripeCustomerEmailSync !== false, // Default true
       runAppleReceiptVerifier: options.runAppleReceiptVerifier !== false, // Default true
+      runGooglePlayReceiptVerifier: options.runGooglePlayReceiptVerifier !== false, // Default true
       runHelpfulPromptService: options.runHelpfulPromptService !== false, // Default true
       runHopefulPromptService: options.runHopefulPromptService !== false, // Default true
       runProgramOrgContext: options.runProgramOrgContext !== false, // Default true
@@ -88,6 +90,7 @@ class TestSuiteRunner {
       stripeBilling: null,
       stripeCustomerEmailSync: null,
       appleReceiptVerifier: null,
+      googlePlayReceiptVerifier: null,
       helpfulPromptService: null,
       hopefulPromptService: null,
       programOrgContext: null,
@@ -669,6 +672,41 @@ class TestSuiteRunner {
     }
   }
 
+  async runGooglePlayReceiptVerifierTests() {
+    if (!this.options.runGooglePlayReceiptVerifier) {
+      this.log('Skipping Google Play receipt verifier unit tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('\u{1F916} Running Google Play Receipt Verifier Unit Test Suite', 'section');
+
+    try {
+      const runner = new GooglePlayReceiptVerifierTestRunner();
+      const success = await runner.run();
+
+      this.results.googlePlayReceiptVerifier = {
+        success,
+        skipped: false,
+        details: 'Service-account OAuth + purchases.subscriptionsv2.get (mocked HTTP); Google\'s values override client fields; renewal refresh job',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Google Play receipt verifier unit tests completed successfully', 'success');
+      } else {
+        this.log('Google Play receipt verifier unit tests failed', 'error');
+      }
+
+      return this.results.googlePlayReceiptVerifier;
+    } catch (error) {
+      this.log(`Google Play receipt verifier unit tests failed: ${error.message}`, 'error');
+      this.results.googlePlayReceiptVerifier = { success: false, error: error.message };
+      return this.results.googlePlayReceiptVerifier;
+    }
+  }
+
   async runAppleReceiptVerifierTests() {
     if (!this.options.runAppleReceiptVerifier) {
       this.log('Skipping Apple receipt verifier unit tests', 'warn');
@@ -1130,6 +1168,7 @@ class TestSuiteRunner {
     this.log(`  Stripe Billing Tests: ${this.options.runStripeBilling ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Stripe Customer Email Sync Unit Tests: ${this.options.runStripeCustomerEmailSync ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Apple Receipt Verifier Unit Tests: ${this.options.runAppleReceiptVerifier ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Google Play Receipt Verifier Unit Tests: ${this.options.runGooglePlayReceiptVerifier ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HelpfulPromptService Unit Tests: ${this.options.runHelpfulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  HopefulPromptService Unit Tests: ${this.options.runHopefulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Program Org Context Tests: ${this.options.runProgramOrgContext ? 'Enabled' : 'Disabled'}`, 'info');
@@ -1311,6 +1350,14 @@ class TestSuiteRunner {
     if (this.options.runAppleReceiptVerifier) {
       await this.runAppleReceiptVerifierTests();
       if (this.results.appleReceiptVerifier && !this.results.appleReceiptVerifier.success && !this.results.appleReceiptVerifier.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    if (this.options.runGooglePlayReceiptVerifier) {
+      await this.runGooglePlayReceiptVerifierTests();
+      if (this.results.googlePlayReceiptVerifier && !this.results.googlePlayReceiptVerifier.success && !this.results.googlePlayReceiptVerifier.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -1589,6 +1636,16 @@ class TestSuiteRunner {
       }
     }
 
+    if (this.results.googlePlayReceiptVerifier) {
+      if (this.results.googlePlayReceiptVerifier.skipped) {
+        this.log('\u{1F916} Google Play Receipt Verifier Unit Tests: SKIPPED', 'warn');
+      } else if (this.results.googlePlayReceiptVerifier.success) {
+        this.log(`\u{1F916} Google Play Receipt Verifier Unit Tests: PASSED (${this.results.googlePlayReceiptVerifier.passed}/${this.results.googlePlayReceiptVerifier.total})`, 'success');
+      } else {
+        this.log(`\u{1F916} Google Play Receipt Verifier Unit Tests: FAILED (${this.results.googlePlayReceiptVerifier.failed}/${this.results.googlePlayReceiptVerifier.total} failures)`, 'error');
+      }
+    }
+
     if (this.results.appleReceiptVerifier) {
       if (this.results.appleReceiptVerifier.skipped) {
         this.log('\u{1F34E} Apple Receipt Verifier Unit Tests: SKIPPED', 'warn');
@@ -1704,6 +1761,9 @@ class TestSuiteRunner {
                (this.results.appleReceiptVerifier == null
                  || this.results.appleReceiptVerifier.skipped
                  || this.results.appleReceiptVerifier.success) &&
+               (this.results.googlePlayReceiptVerifier == null
+                 || this.results.googlePlayReceiptVerifier.skipped
+                 || this.results.googlePlayReceiptVerifier.success) &&
                this.results.helpfulPromptService?.success &&
                this.results.hopefulPromptService?.success && this.results.programOrgContext?.success &&
                this.results.pushNotificationService?.success && this.results.promptSessions?.success,
@@ -1726,6 +1786,7 @@ class TestSuiteRunner {
         stripeBilling: this.results.stripeBilling,
         stripeCustomerEmailSync: this.results.stripeCustomerEmailSync,
         appleReceiptVerifier: this.results.appleReceiptVerifier,
+        googlePlayReceiptVerifier: this.results.googlePlayReceiptVerifier,
         helpfulPromptService: this.results.helpfulPromptService,
         hopefulPromptService: this.results.hopefulPromptService,
         programOrgContext: this.results.programOrgContext,
@@ -1743,7 +1804,7 @@ class TestSuiteRunner {
                    (this.results.messages?.total || 0) + (this.results.therapyTrigger?.total || 0) +
                    (this.results.wwwAuthenticate?.total || 0) + (this.results.subscription?.total || 0) +
                    (this.results.userOrgCode?.total || 0) + (this.results.deviceTokens?.total || 0) +
-                   (this.results.stripeBilling?.total || 0) + (this.results.stripeCustomerEmailSync?.total || 0) + (this.results.appleReceiptVerifier?.total || 0) +
+                   (this.results.stripeBilling?.total || 0) + (this.results.stripeCustomerEmailSync?.total || 0) + (this.results.appleReceiptVerifier?.total || 0) + (this.results.googlePlayReceiptVerifier?.total || 0) +
                    (this.results.helpfulPromptService?.total || 0) +
                    (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0) +
                    (this.results.pushNotificationService?.total || 0) + (this.results.promptSessions?.total || 0),
@@ -1755,7 +1816,7 @@ class TestSuiteRunner {
                     (this.results.messages?.passed || 0) + (this.results.therapyTrigger?.passed || 0) +
                     (this.results.wwwAuthenticate?.passed || 0) + (this.results.subscription?.passed || 0) +
                     (this.results.userOrgCode?.passed || 0) + (this.results.deviceTokens?.passed || 0) +
-                    (this.results.stripeBilling?.passed || 0) + (this.results.stripeCustomerEmailSync?.passed || 0) + (this.results.appleReceiptVerifier?.passed || 0) +
+                    (this.results.stripeBilling?.passed || 0) + (this.results.stripeCustomerEmailSync?.passed || 0) + (this.results.appleReceiptVerifier?.passed || 0) + (this.results.googlePlayReceiptVerifier?.passed || 0) +
                     (this.results.helpfulPromptService?.passed || 0) +
                     (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0) +
                     (this.results.pushNotificationService?.passed || 0) + (this.results.promptSessions?.passed || 0),
@@ -1767,7 +1828,7 @@ class TestSuiteRunner {
                     (this.results.messages?.failed || 0) + (this.results.therapyTrigger?.failed || 0) +
                     (this.results.wwwAuthenticate?.failed || 0) + (this.results.subscription?.failed || 0) +
                     (this.results.userOrgCode?.failed || 0) + (this.results.deviceTokens?.failed || 0) +
-                    (this.results.stripeBilling?.failed || 0) + (this.results.stripeCustomerEmailSync?.failed || 0) + (this.results.appleReceiptVerifier?.failed || 0) +
+                    (this.results.stripeBilling?.failed || 0) + (this.results.stripeCustomerEmailSync?.failed || 0) + (this.results.appleReceiptVerifier?.failed || 0) + (this.results.googlePlayReceiptVerifier?.failed || 0) +
                     (this.results.helpfulPromptService?.failed || 0) +
                     (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0) +
                     (this.results.pushNotificationService?.failed || 0) + (this.results.promptSessions?.failed || 0)
@@ -1802,6 +1863,7 @@ function parseArgs() {
     if (arg === '--no-stripe-billing') options.runStripeBilling = false;
     if (arg === '--no-stripe-customer-email-sync') options.runStripeCustomerEmailSync = false;
     if (arg === '--no-apple-receipt-verifier') options.runAppleReceiptVerifier = false;
+    if (arg === '--no-google-play-receipt-verifier') options.runGooglePlayReceiptVerifier = false;
     if (arg === '--no-helpful-prompt-service') options.runHelpfulPromptService = false;
     if (arg === '--no-hopeful-prompt-service') options.runHopefulPromptService = false;
     if (arg === '--no-program-org-context') options.runProgramOrgContext = false;
