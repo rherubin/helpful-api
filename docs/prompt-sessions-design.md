@@ -31,7 +31,7 @@ Public-facing language can remain "Sit Session" / "Sit Together". Internal code 
 A **Prompt Session** (publicly called a "Sit Session") is a structured, time-bounded experience. It supports:
 
 - **Solo / single-device**: no pairing required — one user creates a session and fills prep (web unpaired / shared-phone flow). Generate is allowed after one prep; output is still **couple-shaped** so pairing can happen after the first Sit Session.
-- **Shared-device (paired)**: a paired couple on one phone. Created with `pairing_id` + `shared_device: true` so the session belongs to the pairing and both partners see it in their history; like solo, it is ready after the creator's one prep (which folds in the partner's check-in).
+- **Shared-device (paired)**: a paired couple on one phone. Created with `pairing_id` + `shared_device: true` so the session belongs to the pairing and both partners see it in their history; like solo, it is ready after the creator's one prep (which folds in the partner's check-in). The sit belongs to its creator: only the creator can write prep (others get `409 SHARED_DEVICE_SESSION`), generation uses only that prep, no partner prep push is sent, and it requires an accepted pairing with both members (`409 PAIRING_NOT_ACCEPTED`). The partner can still read it and end it (`PATCH status: abandoned`).
 - **Paired**: optional `pairing_id` links the session to a couple so both members can prep and later generate shared content.
 
 High-level flow (paired):

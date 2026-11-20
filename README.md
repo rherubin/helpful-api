@@ -955,10 +955,10 @@ Clients should bind UI to these fields only (not free-form prose blobs).
 
 | Method | Path | Notes |
 |--------|------|--------|
-| POST | `/api/prompt-sessions` | Body optional `{ "pairing_id", "shared_device" }` (`shared_device: true` = paired couple on one device; ready after the creator's one prep; ignored without `pairing_id`; non-boolean → **400**) · **201** · **409** if an active session already exists |
+| POST | `/api/prompt-sessions` | Body optional `{ "pairing_id", "shared_device" }` (`shared_device: true` = paired couple on one device; ready after the creator's one prep; ignored without `pairing_id`; non-boolean → **400**; needs an **accepted** pairing with both members, else **409** `PAIRING_NOT_ACCEPTED`) · **201** · **409** if an active session already exists (body includes `prompt_session` with `created_by_user_id` / `shared_device`) |
 | GET | `/api/prompt-sessions` | Optional `?pairing_id=` · list; items include `bridge_content` / `session_content` when generated |
 | GET | `/api/prompt-sessions/:id` | Creator or pairing member · **primary read path** for Bridge/Session after generate or auto-generate |
-| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields. Strings only (≤2000 chars). Prompt-injection / jailbreak content → **400** `PREP_UNSAFE_INPUT`. Response: `prep`, `both_preps_complete` |
+| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields. Strings only (≤2000 chars). Prompt-injection / jailbreak content → **400** `PREP_UNSAFE_INPUT`. Response: `prep`, `both_preps_complete`. On a `shared_device` session only the **creator** may write prep; anyone else → **409** `SHARED_DEVICE_SESSION` |
 | GET | `/api/prompt-sessions/:id/prep` | Own prep; partner answers only when both complete (paired). Solo: `partner_prep: null` |
 | PATCH | `/api/prompt-sessions/:id` | Body `status` and/or `current_phase` |
 | POST | `/api/prompt-sessions/:id/generate` | **Working** (solo or paired). **200** + full `prompt_session` with Bridge/Session · **409** `PREP_NOT_READY` or `GENERATION_RUNNING` (branch on `code`) · **503** LLM not configured · idempotent once `succeeded`; retries when `failed` |

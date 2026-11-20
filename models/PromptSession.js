@@ -184,12 +184,23 @@ class PromptSession {
         AND COLUMN_NAME = 'shared_device'
     `);
     if (!col) {
-      await this.query(`
-        ALTER TABLE prompt_sessions
-        ADD COLUMN shared_device TINYINT(1) NOT NULL DEFAULT 0
-        AFTER created_by_user_id
-      `);
-      console.log('Added shared_device column to prompt_sessions table.');
+      try {
+        await this.query(`
+          ALTER TABLE prompt_sessions
+          ADD COLUMN shared_device TINYINT(1) NOT NULL DEFAULT 0
+          AFTER created_by_user_id
+        `);
+        console.log('Added shared_device column to prompt_sessions table.');
+      } catch (err) {
+        // Two instances booting at once can both see the column missing; the
+        // loser's ALTER fails with ER_DUP_FIELDNAME (1060). The column exists,
+        // which is all we wanted, so that is success rather than a fatal boot.
+        if (err && (err.errno === 1060 || err.code === 'ER_DUP_FIELDNAME')) {
+          console.log('shared_device column already added by another instance.');
+          return;
+        }
+        throw err;
+      }
     }
   }
 
@@ -581,7 +592,10 @@ class PromptSession {
   // True when prep requirements for this session are met:
   //   - Paired, two devices: at least two completed preps
   //   - Paired, shared device: the creator's completed prep (it folds in the
-  //     partner's check-in, since both people are on the creator's login)
+  //     partner's check-in, since both people are on the creator's login).
+  //     A shared sit belongs to its creator; other members cannot write prep
+  //     to it (routes reject with SHARED_DEVICE_SESSION), and any stray
+  //     non-creator prep row is ignored here and by generation.
   //   - Solo sessions (no pairing_id): at least one completed prep
   async bothPrepsComplete(promptSessionId) {
     const session = await this.queryOne(

@@ -1053,6 +1053,242 @@ class PromptSessionsTestRunner {
     }
   }
 
+  // ── Shared-device ownership (review fixes V1/V2/V7/V11) ────────────────
+  // A shared (one-device) sit belongs to its creator: the other partner can
+  // read and end it, but cannot add prep; a partner's unfinished prep is never
+  // revealed; one-device sits need an accepted pairing with both members.
+  async testSharedDeviceOwnership() {
+    this.log('Testing shared-device sit ownership (non-creator prep rejected, no prep leak, accepted pairing required)', 'section');
+    try {
+      const { partnerA, partnerB, pairingId } = await this.createPairedCouple('shared-own', 'A');
+      const createRes = await axios.post(
+        `${this.baseURL}/api/prompt-sessions`,
+        { pairing_id: pairingId, shared_device: true },
+        this.authHeader(partnerA.token)
+      );
+      const shared = createRes.data.prompt_session;
+
+      // Partner B can see the creator and resolve it client-side.
+      const createAgain = await axios.post(
+        `${this.baseURL}/api/prompt-sessions`,
+        { pairing_id: pairingId },
+        { ...this.authHeader(partnerB.token), validateStatus: () => true }
+      );
+      this.assert(createAgain.status === 409 &&
+          createAgain.data.prompt_session?.id === shared.id &&
+          createAgain.data.prompt_session?.created_by_user_id === partnerA.id &&
+          createAgain.data.prompt_session?.shared_device === true,
+        'Shared-device: partner create returns 409 with the creator id so clients can avoid resuming it',
+        `status: ${createAgain.status}`);
+
+      // V11: copy is accurate for shared sits (no "both partners").
+      const early = await axios.post(
+        `${this.baseURL}/api/prompt-sessions/${shared.id}/generate`, {},
+        { ...this.authHeader(partnerA.token), validateStatus: () => true }
+      );
+      this.assert(early.status === 409 && early.data.code === 'PREP_NOT_READY' &&
+          !/both partners/i.test(early.data.error || ''),
+        'Shared-device: PREP_NOT_READY copy does not mention both partners', `error: ${early.data.error}`);
+
+      // Creator saves a partial draft.
+      await axios.post(`${this.baseURL}/api/prompt-sessions/${shared.id}/prep`,
+        { bringing_text: 'CREATOR PARTIAL DRAFT' }, this.authHeader(partnerA.token));
+
+      // V1/V2: non-creator partial AND full prep are both rejected.
+      for (const [label, body] of [['partial', { bringing_text: 'PARTNER DRAFT' }], ['full', this.fullPrep({ bringing_text: 'PARTNER FULL' })]]) {
+        const res = await axios.post(`${this.baseURL}/api/prompt-sessions/${shared.id}/prep`, body,
+          { ...this.authHeader(partnerB.token), validateStatus: () => true });
+        this.assert(res.status === 409 && res.data.code === 'SHARED_DEVICE_SESSION',
+          `Shared-device: non-creator ${label} prep is rejected with 409 SHARED_DEVICE_SESSION`,
+          `status: ${res.status}, code: ${res.data.code}`);
+      }
+
+      // Partner B cannot see the creator's unfinished draft.
+      const bView = await axios.get(`${this.baseURL}/api/prompt-sessions/${shared.id}/prep`, this.authHeader(partnerB.token));
+      this.assert(bView.data.my_prep === null && bView.data.both_preps_complete === false &&
+          bView.data.partner_prep && bView.data.partner_prep.bringing_text === undefined,
+        'Shared-device: partner sees no draft text before the creator completes prep',
+        JSON.stringify(bView.data.partner_prep));
+
+      // Creator completes. Creator's view must not reveal any partner prep.
+      const done = await axios.post(`${this.baseURL}/api/prompt-sessions/${shared.id}/prep`,
+        this.fullPrep({ bringing_text: 'CREATOR COMPLETE' }), this.authHeader(partnerA.token));
+      this.assert(done.data.both_preps_complete === true, 'Shared-device: ready after creator completes prep');
+      const aView = await axios.get(`${this.baseURL}/api/prompt-sessions/${shared.id}/prep`, this.authHeader(partnerA.token));
+      this.assert(aView.data.partner_prep && aView.data.partner_prep.completed === false &&
+          aView.data.partner_prep.bringing_text === undefined,
+        'Shared-device: creator view exposes only partner completion status (no stored partner prep)',
+        JSON.stringify(aView.data.partner_prep));
+
+      // Partner B may end the sit (so the web can offer "end it and start a new one").
+      const endRes = await axios.patch(`${this.baseURL}/api/prompt-sessions/${shared.id}`,
+        { status: 'abandoned' }, this.authHeader(partnerB.token));
+      this.assert(endRes.status === 200 && endRes.data.prompt_session?.status === 'abandoned',
+        'Shared-device: the partner can end a shared sit they did not create');
+
+      // V7: shared_device on a pending (not accepted, single-member) pairing is refused.
+      const pendingShared = await axios.post(
+        `${this.baseURL}/api/prompt-sessions`,
+        { pairing_id: this.testData.pendingPairingId, shared_device: true },
+        { ...this.authHeader(this.testData.pendingUser.token), validateStatus: () => true }
+      );
+      this.assert(pendingShared.status === 409 && pendingShared.data.code === 'PAIRING_NOT_ACCEPTED',
+        'Shared-device: refused on a pairing that is not accepted with both partners',
+        `status: ${pendingShared.status}, code: ${pendingShared.data.code}`);
+    } catch (error) {
+      this.assert(false, 'Shared-device ownership',
+        `Status: ${error.response?.status} Error: ${error.response?.data?.error || error.message}`);
+    }
+  }
+
+  // In-process router on the same DB with spy push + spy LLM services, so we
+  // can assert what the HTTP suite cannot observe: no partner push for shared
+  // prep and single-prep generation even with a stray partner prep row.
+  async testSharedDeviceRoutesInProcess() {
+    this.log('Testing shared-device push + generation inputs (in-process router, spy services)', 'section');
+    const express = require('express');
+    const jwt = require('jsonwebtoken');
+    const PairingModel = require('../models/Pairing');
+    // The auth middleware captures JWT_SECRET at require time, and other runners
+    // in run-all-tests overwrite process.env.JWT_SECRET. Load a fresh copy of the
+    // router with a local secret and mint our own tokens for it, so this test
+    // never depends on matching the separately running server's secret.
+    const localSecret = `prompt-sessions-inproc-${Date.now()}`;
+    const prevSecret = process.env.JWT_SECRET;
+    delete require.cache[require.resolve('../middleware/auth')];
+    delete require.cache[require.resolve('../routes/promptSessions')];
+    process.env.JWT_SECRET = localSecret;
+    const createPromptSessionRoutes = require('../routes/promptSessions');
+    if (prevSecret === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = prevSecret;
+    delete require.cache[require.resolve('../middleware/auth')];
+    delete require.cache[require.resolve('../routes/promptSessions')];
+    const localAuth = (user) => this.authHeader(jwt.sign({ id: user.id, email: user.email }, localSecret, { expiresIn: '1h' }));
+    let server = null;
+    try {
+      const pool = getPool();
+      const model = new PromptSessionModel(pool);
+      const pushes = [];
+      const generations = [];
+      const push = { sendToUser: async (userId, payload) => { pushes.push({ userId, payload }); return {}; } };
+      // Real HelpfulPromptService in mock mode (deterministic content), wrapped
+      // so we can see exactly which preps generation was given.
+      const HelpfulPromptService = require('../services/HelpfulPromptService');
+      const prevMock = process.env.TEST_MOCK_LLM;
+      process.env.TEST_MOCK_LLM = 'true';
+      const realLlm = new HelpfulPromptService();
+      if (prevMock === undefined) delete process.env.TEST_MOCK_LLM; else process.env.TEST_MOCK_LLM = prevMock;
+      const llm = {
+        model: realLlm.model,
+        isConfigured: () => true,
+        generateSitSessionContent: async (partners) => {
+          generations.push(partners);
+          return realLlm.generateSitSessionContent(partners);
+        }
+      };
+      const app = express();
+      app.use(express.json());
+      app.use('/api/prompt-sessions', createPromptSessionRoutes(model, new PairingModel(pool), null, push, llm, null));
+      server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+      const base = `http://127.0.0.1:${server.address().port}/api/prompt-sessions`;
+
+      const { partnerA, partnerB, pairingId } = await this.createPairedCouple('shared-spy', 'B');
+      const created = await axios.post(base, { pairing_id: pairingId, shared_device: true }, localAuth(partnerA));
+      const sid = created.data.prompt_session.id;
+      this.assert(pushes.length === 0, 'Shared-device: no "partner started" push on create', `pushes: ${pushes.length}`);
+
+      // Simulate a stray partner prep row (e.g. written by an old client before
+      // the guard existed) directly in the DB.
+      await model.upsertPrep({ promptSessionId: sid, userId: partnerB.id, answers: this.fullPrep({ bringing_text: 'STRAY PARTNER PREP' }) });
+
+      // V2 push scenario: partner finishes "their" prep before the creator does.
+      const earlyPartner = await axios.post(`${base}/${sid}/prep`, this.fullPrep({ bringing_text: 'PARTNER FIRST' }),
+        { ...localAuth(partnerB), validateStatus: () => true });
+      await this.sleep(300);
+      this.assert(earlyPartner.status === 409 && pushes.length === 0,
+        'Shared-device: partner prep before the creator finishes is rejected and pushes nothing',
+        `status: ${earlyPartner.status}, pushes: ${pushes.length}`);
+
+      const prepRes = await axios.post(`${base}/${sid}/prep`, this.fullPrep({ bringing_text: 'CREATOR ONLY' }), localAuth(partnerA));
+      this.assert(prepRes.data.both_preps_complete === true, 'Shared-device (in-process): ready after creator prep');
+
+      // Let the fire-and-forget push/auto-generate settle.
+      await this.sleep(500);
+      const prepPushes = pushes.filter(p => p.payload?.data?.kind === 'prompt_session_prep_complete');
+      this.assert(prepPushes.length === 0, 'Shared-device: no "Your partner finished prep" push', `pushes: ${JSON.stringify(pushes.map(p => p.payload?.data?.kind))}`);
+
+      const rejected = await axios.post(`${base}/${sid}/prep`, this.fullPrep(),
+        { ...localAuth(partnerB), validateStatus: () => true });
+      this.assert(rejected.status === 409 && pushes.length === 0,
+        'Shared-device: rejected partner prep sends no push', `status: ${rejected.status}, pushes: ${pushes.length}`);
+
+      // Generation (auto-triggered, or explicit) must use exactly one prep: the creator's.
+      let finalSession = null;
+      for (let i = 0; i < 20; i++) {
+        const r = await axios.get(`${base}/${sid}`, localAuth(partnerA));
+        finalSession = r.data.prompt_session;
+        if (finalSession?.generation?.status === 'succeeded' || finalSession?.generation?.status === 'failed') break;
+        await this.sleep(250);
+      }
+      this.assert(finalSession?.generation?.status === 'succeeded', 'Shared-device (in-process): generation succeeded',
+        `status: ${finalSession?.generation?.status} error: ${finalSession?.generation?.error}`);
+      const last = generations[generations.length - 1] || [];
+      this.assert(generations.length === 1 && last.length === 1 &&
+          last[0].prep?.bringing_text === 'CREATOR ONLY',
+        'Shared-device: generation uses only the creator\'s prep (stray partner prep ignored, no double count)',
+        `calls: ${generations.length}, partners: ${last.length}, texts: ${last.map(p => p.prep?.bringing_text).join(' | ')}`);
+
+      const bView = await axios.get(`${base}/${sid}/prep`, localAuth(partnerA));
+      this.assert(bView.data.partner_prep?.bringing_text === 'STRAY PARTNER PREP',
+        'Shared-device: a completed stray partner prep is only visible because it is itself completed (policy control)',
+        JSON.stringify(bView.data.partner_prep));
+      await axios.patch(`${base}/${sid}`, { status: 'complete' }, localAuth(partnerA));
+
+      // Control: two-device prep still nudges the partner.
+      const twoDev = await axios.post(base, { pairing_id: pairingId }, localAuth(partnerA));
+      const beforeTwo = pushes.length;
+      await axios.post(`${base}/${twoDev.data.prompt_session.id}/prep`, this.fullPrep(), localAuth(partnerA));
+      await this.sleep(300);
+      const twoPushes = pushes.slice(beforeTwo).filter(p => p.payload?.data?.kind === 'prompt_session_prep_complete');
+      this.assert(twoPushes.length === 1 && twoPushes[0].userId === partnerB.id,
+        'Two-device (control): creator prep still pushes "Your partner finished prep" to the partner',
+        `pushes: ${twoPushes.length}`);
+      await axios.patch(`${base}/${twoDev.data.prompt_session.id}`, { status: 'abandoned' }, localAuth(partnerA));
+    } catch (error) {
+      this.assert(false, 'Shared-device in-process route checks',
+        `Status: ${error.response?.status} Error: ${error.response?.data?.error || error.message}`);
+    } finally {
+      if (server) await new Promise(resolve => server.close(resolve));
+    }
+  }
+
+  // V6: two instances booting at once — the loser's ALTER hits MySQL 1060.
+  async testSharedDeviceMigrationDuplicateColumnUnit() {
+    this.log('Unit-testing ensureSharedDeviceColumn tolerates a concurrent duplicate-column error (1060)', 'section');
+    const fakeModel = (alterError) => {
+      const m = new PromptSessionModel(null);
+      m.queryOne = async () => null; // column "missing" at check time
+      m.query = async () => { throw alterError; };
+      return m;
+    };
+    const dup = Object.assign(new Error("Duplicate column name 'shared_device'"), { errno: 1060, code: 'ER_DUP_FIELDNAME' });
+    let ok = true;
+    try { await fakeModel(dup).ensureSharedDeviceColumn(); } catch { ok = false; }
+    this.assert(ok, 'Migration: duplicate-column (1060) from a concurrent boot is treated as success');
+
+    const other = Object.assign(new Error('Access denied'), { errno: 1142, code: 'ER_TABLEACCESS_DENIED_ERROR' });
+    let threw = false;
+    try { await fakeModel(other).ensureSharedDeviceColumn(); } catch { threw = true; }
+    this.assert(threw, 'Migration: other ALTER errors are still fatal');
+
+    // And against the real DB: running it again on a migrated schema is a no-op.
+    try {
+      await new PromptSessionModel(getPool()).ensureSharedDeviceColumn();
+      this.assert(true, 'Migration: re-running on a migrated DB is a no-op');
+    } catch (error) {
+      this.assert(false, 'Migration: re-running on a migrated DB is a no-op', error.message);
+    }
+  }
+
   async testSoloGenerate() {
     this.log('Testing solo generate after one complete prep', 'section');
     const { user1 } = this.testData;
@@ -2013,6 +2249,12 @@ class PromptSessionsTestRunner {
       await this.testSoloGenerate();
       console.log('');
       await this.testPartnerSessionVisibility();
+      console.log('');
+      await this.testSharedDeviceOwnership();
+      console.log('');
+      await this.testSharedDeviceRoutesInProcess();
+      console.log('');
+      await this.testSharedDeviceMigrationDuplicateColumnUnit();
       console.log('');
       await this.testGenerateKeepsPartnerPrepAfterPairingSoftDelete();
       console.log('');
