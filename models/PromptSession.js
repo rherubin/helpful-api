@@ -65,6 +65,10 @@ class PromptSession {
         id VARCHAR(50) PRIMARY KEY,
         pairing_id VARCHAR(50) DEFAULT NULL,
         created_by_user_id VARCHAR(50) NOT NULL,
+        -- 1 = a paired couple sitting together on ONE device (one login, one
+        -- prep row that folds in both partners' check-ins). The session still
+        -- hangs off the pairing so both partners see it in their history.
+        shared_device TINYINT(1) NOT NULL DEFAULT 0,
 
         status ENUM('prep','bridge','in_session','complete','abandoned') DEFAULT 'prep',
         current_phase VARCHAR(50) DEFAULT NULL,
@@ -136,6 +140,7 @@ class PromptSession {
       await this.query(createPrepsTable);
       console.log('prompt_session_preps table initialized successfully.');
       await this.ensurePairingIdNullable();
+      await this.ensureSharedDeviceColumn();
       await this.ensureGenerationStatusColumns();
       await this.resetStaleRunningGenerations();
     } catch (err) {
@@ -164,6 +169,38 @@ class PromptSession {
       }
     } catch (err) {
       console.warn('Migration warning (prompt_sessions.pairing_id nullable):', err.message);
+    }
+  }
+
+  // Existing DBs predate shared-device (one phone, paired couple) sessions.
+  // Fatal on failure, like the generation columns below: createPromptSession
+  // and bothPrepsComplete both read/write this column.
+  async ensureSharedDeviceColumn() {
+    const col = await this.queryOne(`
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'prompt_sessions'
+        AND COLUMN_NAME = 'shared_device'
+    `);
+    if (!col) {
+      try {
+        await this.query(`
+          ALTER TABLE prompt_sessions
+          ADD COLUMN shared_device TINYINT(1) NOT NULL DEFAULT 0
+          AFTER created_by_user_id
+        `);
+        console.log('Added shared_device column to prompt_sessions table.');
+      } catch (err) {
+        // Two instances booting at once can both see the column missing; the
+        // loser's ALTER fails with ER_DUP_FIELDNAME (1060). The column exists,
+        // which is all we wanted, so that is success rather than a fatal boot.
+        if (err && (err.errno === 1060 || err.code === 'ER_DUP_FIELDNAME')) {
+          console.log('shared_device column already added by another instance.');
+          return;
+        }
+        throw err;
+      }
     }
   }
 
@@ -337,6 +374,7 @@ class PromptSession {
     const generationStatus = generation_status || 'idle';
     return {
       ...rest,
+      shared_device: !!row.shared_device,
       bridge_content: bridgeContent,
       session_content: sessionContent,
       generation: {
@@ -369,14 +407,17 @@ class PromptSession {
     };
   }
 
-  async createPromptSession({ pairingId = null, createdByUserId }) {
+  // sharedDevice only applies to paired sessions (a solo session is always
+  // single-device already); it is stored as 0 when there is no pairing.
+  async createPromptSession({ pairingId = null, createdByUserId, sharedDevice = false }) {
     const id = this.generateUniqueId();
     try {
       const insert = `
-        INSERT INTO prompt_sessions (id, pairing_id, created_by_user_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, 'prep', NOW(), NOW())
+        INSERT INTO prompt_sessions (id, pairing_id, created_by_user_id, shared_device, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'prep', NOW(), NOW())
       `;
-      await this.query(insert, [id, pairingId || null, createdByUserId]);
+      const shared = pairingId && sharedDevice ? 1 : 0;
+      await this.query(insert, [id, pairingId || null, createdByUserId, shared]);
       return this.getPromptSessionById(id);
     } catch (err) {
       console.error('Error creating prompt session:', err.message);
@@ -549,14 +590,28 @@ class PromptSession {
   }
 
   // True when prep requirements for this session are met:
-  //   - Paired sessions: at least two completed preps
+  //   - Paired, two devices: at least two completed preps
+  //   - Paired, shared device: the creator's completed prep (it folds in the
+  //     partner's check-in, since both people are on the creator's login).
+  //     A shared sit belongs to its creator; other members cannot write prep
+  //     to it (routes reject with SHARED_DEVICE_SESSION), and any stray
+  //     non-creator prep row is ignored here and by generation.
   //   - Solo sessions (no pairing_id): at least one completed prep
   async bothPrepsComplete(promptSessionId) {
     const session = await this.queryOne(
-      `SELECT pairing_id FROM prompt_sessions WHERE id = ?`,
+      `SELECT pairing_id, shared_device, created_by_user_id FROM prompt_sessions WHERE id = ?`,
       [promptSessionId]
     );
     if (!session) return false;
+
+    if (session.pairing_id && session.shared_device) {
+      const row = await this.queryOne(
+        `SELECT COUNT(*) as count FROM prompt_session_preps
+         WHERE prompt_session_id = ? AND user_id = ? AND completed_at IS NOT NULL`,
+        [promptSessionId, session.created_by_user_id]
+      );
+      return (row?.count || 0) >= 1;
+    }
 
     const required = session.pairing_id ? 2 : 1;
     const row = await this.queryOne(
