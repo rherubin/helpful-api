@@ -89,6 +89,8 @@ You need Owner/Admin access to the Helpful Play Console developer account and to
 
 The new columns on `android_subscriptions` are added automatically at startup, and all are nullable. Rows written under `TEST_MOCK_IAP` leave them `NULL`.
 
+`purchase_token` and `linked_purchase_token` are `VARCHAR(1000)` with an `ascii_bin` collation, matching Google's documented 1,000-character maximum for purchase tokens (the original `VARCHAR(255)` would reject or truncate a long token). `purchase_token` is unique, so two Helpful accounts cannot be granted premium for the same Play purchase, including when two submits race.
+
 | Column | Meaning |
 |---|---|
 | `subscription_state` | Google's `SubscriptionState`, or `SUPERSEDED` (replaced via `linkedPurchaseToken`), `TOKEN_INVALID` (Google 404/410 on refresh), or `UNKNOWN_PRODUCT` |
@@ -99,9 +101,11 @@ The new columns on `android_subscriptions` are added automatically at startup, a
 
 A row is looked up by `order_id` first, then by `purchase_token`. A renewal keeps the token, while Google's latest order id gains a `..N` suffix, so the existing row is updated in place.
 
+Premium is granted from `expiration_date` only when the stored state is not lapsed (`EXPIRED`, `ON_HOLD`, `PAUSED`, `SUPERSEDED`, `TOKEN_INVALID`, `UNKNOWN_PRODUCT`). That way a paused or superseded row cannot keep premium just because its old expiry is still in the future.
+
 ## Follow-up: Real-time developer notifications (RTDN)
 
-Without RTDN, the hourly refresh job is the only way renewals, cancellations, refunds, holds and revocations reach the database. Changes can lag by up to `GOOGLE_PLAY_REFRESH_INTERVAL_HOURS`, plus the 1-hour minimum between re-checks of a row. A refund in the middle of a period is only noticed once the row is near its expiry. To make all of this instant:
+Without RTDN, the hourly refresh job is the only way renewals, cancellations, refunds, holds and revocations reach the database. Changes can lag by up to `GOOGLE_PLAY_REFRESH_INTERVAL_HOURS`. Rows that are still in an entitled state and already past their stored expiry are re-checked immediately (the usual 1-hour minimum between re-checks does not apply), and a verified subscription stays premium for two hours after its stored expiry so a renewal is not dropped while the job catches up. A refund in the middle of a period is only noticed once the row is near its expiry. To make all of this instant:
 
 1. Create a Pub/Sub topic. Grant `google-play-developer-notifications@system.gserviceaccount.com` the **Pub/Sub Publisher** role on it, then set it under Play Console → **Monetize → Monetization setup → Real-time developer notifications**.
 2. Add a push subscription pointing at a new authenticated endpoint (e.g. `POST /api/subscription/google-play/rtdn`). Verify the Pub/Sub OIDC token on each request.

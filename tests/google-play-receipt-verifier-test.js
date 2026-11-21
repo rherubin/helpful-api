@@ -7,6 +7,7 @@ const {
   ANDROID_PUBLISHER_SCOPE
 } = require('../services/GooglePlayReceiptVerifier');
 const { SubscriptionService, SubscriptionError } = require('../services/SubscriptionService');
+const AndroidSubscription = require('../models/AndroidSubscription');
 
 /**
  * Google Play receipt verification unit tests.
@@ -97,10 +98,12 @@ class FakeAndroidModel {
     return this.rows.filter((r) => r.last_verified_at && r.expiration_date <= Date.now() + DAY);
   }
   async hasActiveSubscription(userId) {
-    return this.rows.some((r) => r.user_id === userId && r.expiration_date > Date.now());
+    const now = Date.now();
+    return this.rows.some((r) => r.user_id === userId && AndroidSubscription.rowGrantsPremium(r, now));
   }
   async getActiveByUserId(userId) {
-    return this.rows.filter((r) => r.user_id === userId && r.expiration_date > Date.now());
+    const now = Date.now();
+    return this.rows.filter((r) => r.user_id === userId && AndroidSubscription.rowGrantsPremium(r, now));
   }
 }
 
@@ -540,6 +543,62 @@ class GooglePlayReceiptVerifierTestRunner {
     });
   }
 
+  async testEntitlementGraceAndLapsedStates() {
+    this.log('🧪 Entitlement: renewal grace and lapsed states', 'section');
+    const now = 1_700_000_000_000;
+    const grace = AndroidSubscription.ENTITLEMENT_GRACE_MS;
+    const base = {
+      user_id: 'user-1',
+      purchase_token: 'tok',
+      order_id: 'GPA.1',
+      expiration_date: now + 30 * DAY,
+      subscription_state: 'SUBSCRIPTION_STATE_ACTIVE',
+      last_verified_at: now - 60 * 60 * 1000
+    };
+
+    this.assert(AndroidSubscription.rowGrantsPremium({ ...base }, now),
+      'Active subscription with time left grants premium');
+    this.assert(AndroidSubscription.rowGrantsPremium({
+      ...base,
+      expiration_date: now - 30 * 60 * 1000
+    }, now),
+      'Verified subscription still grants premium in the 2h window after stored expiry');
+    this.assert(!AndroidSubscription.rowGrantsPremium({
+      ...base,
+      expiration_date: now - grace - 1000
+    }, now),
+      'Premium ends once the grace window after stored expiry has passed');
+    this.assert(!AndroidSubscription.rowGrantsPremium({
+      ...base,
+      expiration_date: now - 30 * 60 * 1000,
+      last_verified_at: null
+    }, now),
+      'TEST_MOCK_IAP rows (never verified) do not get the renewal grace');
+
+    for (const state of [
+      'SUBSCRIPTION_STATE_ON_HOLD',
+      'SUBSCRIPTION_STATE_PAUSED',
+      'SUBSCRIPTION_STATE_EXPIRED',
+      'SUPERSEDED',
+      'TOKEN_INVALID',
+      'UNKNOWN_PRODUCT'
+    ]) {
+      this.assert(!AndroidSubscription.rowGrantsPremium({
+        ...base,
+        subscription_state: state,
+        expiration_date: now + 30 * DAY
+      }, now),
+        `${state} does not grant premium even if stored expiry is still in the future`);
+    }
+
+    this.assert(AndroidSubscription.rowGrantsPremium({
+      ...base,
+      subscription_state: 'SUBSCRIPTION_STATE_CANCELED',
+      expiration_date: now + DAY
+    }, now),
+      'Canceled subscription with paid time left still grants premium');
+  }
+
   async run() {
     this.log('🤖 Starting Google Play Receipt Verifier Unit Tests', 'section');
     try {
@@ -557,6 +616,7 @@ class GooglePlayReceiptVerifierTestRunner {
         await this.testServiceOwnership();
         await this.testServiceNotConfigured();
         await this.testRefreshJob();
+        await this.testEntitlementGraceAndLapsedStates();
       });
     } catch (error) {
       this.log(`Unexpected failure: ${error.stack}`, 'fail');

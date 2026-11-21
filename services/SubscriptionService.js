@@ -4,6 +4,7 @@ const {
   GooglePlayReceiptVerifier,
   parseRfc3339
 } = require('./GooglePlayReceiptVerifier');
+const { AndroidSubscriptionConflictError } = require('../models/AndroidSubscription');
 
 // `code` is an optional machine-readable reason, returned alongside `error`
 // so clients can branch without parsing the message.
@@ -290,6 +291,17 @@ class SubscriptionService {
   async ensureSubscriptionOwnership(existingRecord, userId) {
     if (existingRecord && existingRecord.user_id !== userId) {
       throw new SubscriptionError('Subscription receipt already belongs to another user', 409);
+    }
+  }
+
+  async upsertAndroidSubscription(userId, data) {
+    try {
+      return await this.androidSubscriptionModel.upsertSubscription(userId, data);
+    } catch (error) {
+      if (error instanceof AndroidSubscriptionConflictError) {
+        throw new SubscriptionError(error.message, 409);
+      }
+      throw error;
     }
   }
 
@@ -663,7 +675,7 @@ class SubscriptionService {
       );
       await this.ensureSubscriptionOwnership(existing, userId);
       await this.ensureSubscriptionOwnership(existingToken, userId);
-      return this.androidSubscriptionModel.upsertSubscription(userId, validated);
+      return this.upsertAndroidSubscription(userId, validated);
     }
 
     const verifier = this.getGooglePlayReceiptVerifier();
@@ -689,7 +701,7 @@ class SubscriptionService {
       ? await this.androidSubscriptionModel.getByPurchaseToken(verified.linked_purchase_token)
       : null;
 
-    const result = await this.androidSubscriptionModel.upsertSubscription(userId, verified);
+    const result = await this.upsertAndroidSubscription(userId, verified);
 
     // An upgrade, downgrade or re-signup issues a new token that replaces the
     // old one. Google's guidance is to stop honouring the linked token, so the
