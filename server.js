@@ -193,6 +193,45 @@ function startStripeSubscriptionReconcileJob(stripeBillingService) {
 }
 
 /**
+ * Periodically re-verify Google Play subscriptions near or just past their
+ * stored expiry, so renewals extend premium and cancellations/refunds/holds
+ * end it. The Android app only submits a receipt once per purchase, so this is
+ * how renewals reach the database until Real-time developer notifications are
+ * wired up. No-op unless GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is set (and never
+ * under TEST_MOCK_IAP). Set GOOGLE_PLAY_REFRESH_INTERVAL_HOURS=0 to disable.
+ */
+function startGooglePlaySubscriptionRefreshJob(subscriptionService) {
+  const intervalHours = parseFloat(process.env.GOOGLE_PLAY_REFRESH_INTERVAL_HOURS || '1');
+  if (!intervalHours || intervalHours <= 0) {
+    console.log('[google-play-refresh] disabled via GOOGLE_PLAY_REFRESH_INTERVAL_HOURS');
+    return;
+  }
+
+  const intervalMs = intervalHours * 60 * 60 * 1000;
+  const batchLimit = parseInt(process.env.GOOGLE_PLAY_REFRESH_BATCH_LIMIT || '50', 10);
+
+  const run = async (label) => {
+    try {
+      const result = await subscriptionService.refreshAndroidSubscriptions({ limit: batchLimit });
+      if (result.skipped) {
+        console.log(`[google-play-refresh] ${label}: skipped (${result.reason})`);
+        return;
+      }
+      console.log(
+        `[google-play-refresh] ${label}: checked=${result.checked} renewed=${result.updated} `
+        + `lapsed=${result.lapsed} errors=${result.errors}`
+      );
+    } catch (e) {
+      console.warn(`[google-play-refresh] ${label} failed:`, e.message);
+    }
+  };
+
+  setTimeout(() => run('initial'), 6 * 60 * 1000);
+  setInterval(() => run('periodic'), intervalMs);
+  console.log(`[google-play-refresh] scheduled every ${intervalHours}h (batch ${batchLimit})`);
+}
+
+/**
  * Periodically cancel abandoned free-trial subscriptions: a placeholder account
  * (trial.*@sit-together.local) is created silently the moment someone reaches
  * the checkout screen, and a live Stripe subscription is created with it before
@@ -386,6 +425,12 @@ async function initializeApp() {
     if (stripeBillingService) {
       startStripeSubscriptionReconcileJob(stripeBillingService);
       startOrphanedTrialCleanupJob(stripeBillingService, pairingModel, refreshTokenModel);
+    }
+
+    // Google Play renewals/cancellations: only meaningful with real Play credentials.
+    if ((process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || '').trim()
+      && process.env.TEST_MOCK_IAP !== 'true') {
+      startGooglePlaySubscriptionRefreshJob(subscriptionService);
     }
     
     console.log('Application initialized successfully.');

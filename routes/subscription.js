@@ -33,7 +33,11 @@ function createSubscriptionRoutes(subscriptionService, authService) {
     } catch (error) {
       console.error('Subscription error:', error);
       if (error instanceof SubscriptionError) {
-        return res.status(error.statusCode).json({ error: error.message });
+        const body = { error: error.message };
+        if (error.code) {
+          body.code = error.code;
+        }
+        return res.status(error.statusCode).json(body);
       }
       return res.status(500).json({ error: 'Failed to process subscription receipt' });
     }
