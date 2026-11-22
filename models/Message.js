@@ -97,7 +97,7 @@ class Message {
                m.created_at, m.updated_at
         FROM messages m
         WHERE m.step_id = ?
-        ORDER BY m.created_at ASC
+        ORDER BY m.created_at ASC, m.id ASC
       `;
 
       const messages = await this.query(query, [conversationId]);
@@ -284,7 +284,7 @@ class Message {
                m.metadata, m.created_at, m.updated_at
         FROM messages m
         WHERE m.step_id = ?
-        ORDER BY m.created_at ASC
+        ORDER BY m.created_at ASC, m.id ASC
       `;
 
       const messages = await this.query(query, [stepId]);
