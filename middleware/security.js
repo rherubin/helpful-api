@@ -1,11 +1,21 @@
 const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
+const { isMockFlagEnabled } = require('../config/runtimeEnv');
+
+function redactIdentifier(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return 'unknown';
+  return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 12);
+}
+
 
 // Detect automated test / CI runs so we can relax non-security-critical rate limits
 // (e.g. device token registration and user updates) without changing every test command.
+// TEST_MOCK_* flags are ignored in production (see config/runtimeEnv.js).
 function isTestOrLoadRun() {
   return process.env.NODE_ENV === 'test' ||
-         process.env.TEST_MOCK_LLM === 'true' ||
-         process.env.TEST_MOCK_OPENAI === 'true' ||
+         isMockFlagEnabled('TEST_MOCK_LLM') ||
+         isMockFlagEnabled('TEST_MOCK_OPENAI') ||
          process.env.TEST_MODE === 'true' ||
          process.env.SKIP_RATE_LIMITS === 'true';
 }
@@ -134,7 +144,7 @@ function recordFailedAttempt(email) {
     lockedAccounts.set(email, { unlockTime, attempts: recentAttempts.length });
     
     // Log security event
-    console.warn(`SECURITY ALERT: Account ${email} locked due to ${recentAttempts.length} failed login attempts`);
+    console.warn(`SECURITY ALERT: Account ${redactIdentifier(email)} locked due to ${recentAttempts.length} failed login attempts`);
     
     return true; // Account is now locked
   }
@@ -168,7 +178,7 @@ function securityLogger(req, res, next) {
     // Log failed login attempts
     if (req.path === '/login' && req.method === 'POST' && res.statusCode === 401) {
       const { email } = req.body;
-      console.warn(`Failed login attempt for ${email} from IP ${req.ip}`);
+      console.warn(`Failed login attempt for ${redactIdentifier(email)} from IP ${redactIdentifier(req.ip)}`);
     }
     
     originalSend.call(this, data);

@@ -1,5 +1,33 @@
 const mysql = require('mysql2/promise');
 
+// Refuse the mysql_clear_password auth-switch even if a server (or MITM)
+// requests it. mysql2 3.22+ also guards this, but an explicit rejection is
+// a defense in depth if TLS verification is still off (see ssl options).
+function mysqlAuthPlugins() {
+  return {
+    mysql_clear_password() {
+      return () => {
+        throw new Error('mysql_clear_password authentication is disabled');
+      };
+    }
+  };
+}
+
+// MYSQL_SSL_REJECT_UNAUTHORIZED defaults to false so existing Railway MySQL
+// connections keep working if the server cert is not verifiable with public
+// CAs. Set it to true once the cert chain is trusted (recommended).
+function sslRejectUnauthorized() {
+  const raw = String(process.env.MYSQL_SSL_REJECT_UNAUTHORIZED || '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  return false;
+}
+
+function mysqlSslOptions(enabled) {
+  if (!enabled) return false;
+  return { rejectUnauthorized: sslRejectUnauthorized() };
+}
+
 // Database connection configuration
 const dbConfig = {
   host: process.env.MYSQL_HOST || 'localhost',
@@ -12,9 +40,10 @@ const dbConfig = {
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
-  // SSL configuration for local development
-  ssl: false,
-  allowPublicKeyRetrieval: true,
+  // Local / individual-var setups typically talk to MySQL without TLS.
+  // Enable TLS with MYSQL_SSL=true and optionally MYSQL_SSL_REJECT_UNAUTHORIZED=true.
+  ssl: mysqlSslOptions(String(process.env.MYSQL_SSL || '').trim().toLowerCase() === 'true'),
+  authPlugins: mysqlAuthPlugins(),
   // Railway MySQL URLs come in format: mysql://user:password@host:port/database
   // If MYSQL_URL is provided, it will be parsed and used instead
 };
@@ -38,13 +67,17 @@ function createPool() {
         queueLimit: 0,
         enableKeepAlive: true,
         keepAliveInitialDelay: 0,
-        // SSL configuration for Railway
-        ssl: {
-          rejectUnauthorized: false,
-        },
-        allowPublicKeyRetrieval: true,
+        // Railway MySQL often requires TLS but may present a cert that does
+        // not verify against public CAs. Default rejectUnauthorized is false
+        // (same as before). Set MYSQL_SSL_REJECT_UNAUTHORIZED=true to verify.
+        ssl: mysqlSslOptions(true),
+        authPlugins: mysqlAuthPlugins(),
       });
-      console.log('MySQL connection pool created from MYSQL_URL');
+      const verify = sslRejectUnauthorized();
+      console.log(
+        'MySQL connection pool created from MYSQL_URL '
+        + `(ssl rejectUnauthorized=${verify})`
+      );
     } catch (error) {
       console.error('Error parsing MYSQL_URL:', error.message);
       throw error;
@@ -88,6 +121,8 @@ module.exports = {
   getPool,
   testConnection,
   closePool,
-  createPool
+  createPool,
+  sslRejectUnauthorized,
+  mysqlAuthPlugins,
 };
 

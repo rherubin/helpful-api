@@ -1,5 +1,6 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
+const { isMockFlagEnabled, isProductionEnv } = require('../config/runtimeEnv');
 const {
   loginLimiter,
   isAccountLocked,
@@ -19,7 +20,7 @@ function filterAdminUserData(user) {
 
 function createAdminAuthRoutes(adminAuthService, adminUserModel) {
   const router = express.Router();
-  const authenticateToken = createAuthenticateToken(adminAuthService);
+  const authenticateToken = createAuthenticateToken(adminAuthService, { allowAdmin: true });
 
   // Apply security logging to all admin auth routes
   router.use(securityLogger);
@@ -82,11 +83,16 @@ function createAdminAuthRoutes(adminAuthService, adminUserModel) {
     try {
       const { email, password, registration_secret } = req.body;
 
-      // Explicit opt-in, or common test-harness flags (never set on production).
+      // Explicit opt-in, or common test-harness flags. All of these are
+      // ignored when NODE_ENV or the Railway environment is production —
+      // production can only bootstrap when no admin exists yet, or with
+      // ADMIN_REGISTRATION_SECRET.
       const allowOpen =
-        process.env.ALLOW_ADMIN_REGISTRATION === 'true' ||
-        process.env.TEST_MOCK_LLM === 'true' ||
-        process.env.TEST_MOCK_STRIPE === 'true';
+        !isProductionEnv() && (
+          process.env.ALLOW_ADMIN_REGISTRATION === 'true' ||
+          isMockFlagEnabled('TEST_MOCK_LLM') ||
+          isMockFlagEnabled('TEST_MOCK_STRIPE')
+        );
       const configuredSecret = process.env.ADMIN_REGISTRATION_SECRET || '';
       const providedSecret =
         req.get('x-admin-registration-secret') || registration_secret || '';

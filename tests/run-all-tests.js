@@ -26,6 +26,7 @@ const PushNotificationServiceTestRunner = require('./push-notification-service-t
 const AdminAuthRefreshTestRunner = require('./admin-auth-refresh-test');
 const AdminPushTestRunner = require('./admin-push-test-test');
 const PromptSessionsTestRunner = require('./prompt-sessions-test');
+const RuntimeEnvTestRunner = require('./runtime-env-test');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -70,6 +71,7 @@ class TestSuiteRunner {
     };
     
     this.results = {
+      runtimeEnv: null,
       security: null,
       load: null,
       auth: null,
@@ -1185,6 +1187,22 @@ class TestSuiteRunner {
 
     let overallSuccess = true;
 
+    // Runtime env / production-guard unit tests (no server required)
+    {
+      this.log('🔐 Running Runtime Env Unit Tests', 'section');
+      const runner = new RuntimeEnvTestRunner();
+      const success = await runner.run();
+      this.results.runtimeEnv = {
+        success,
+        skipped: false,
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+      if (!success) overallSuccess = false;
+      console.log('');
+    }
+
     // Run security tests
     if (this.options.runSecurity) {
       await this.runSecurityTests();
@@ -1448,6 +1466,14 @@ class TestSuiteRunner {
     this.log('🎯 Comprehensive Test Suite Summary', 'section');
     this.log(`Total Duration: ${(duration / 1000).toFixed(2)} seconds`);
     console.log('');
+
+    if (this.results.runtimeEnv) {
+      if (this.results.runtimeEnv.success) {
+        this.log(`🔐 Runtime Env Tests: PASSED (${this.results.runtimeEnv.passed}/${this.results.runtimeEnv.total})`, 'success');
+      } else {
+        this.log(`🔐 Runtime Env Tests: FAILED (${this.results.runtimeEnv.failed}/${this.results.runtimeEnv.total} failures)`, 'error');
+      }
+    }
 
     // Security test results
     if (this.results.security) {
@@ -1749,7 +1775,8 @@ class TestSuiteRunner {
     return {
       timestamp: new Date().toISOString(),
       duration: this.results.endTime - this.results.startTime,
-      success: this.results.security?.success && this.results.load?.success &&
+      success: (this.results.runtimeEnv == null || this.results.runtimeEnv.success) &&
+               this.results.security?.success && this.results.load?.success &&
                this.results.auth?.success && this.results.userCreation?.success &&
                this.results.pairingsEndpoint?.success && this.results.userProfile?.success &&
                this.results.refreshTokenReset?.success &&
@@ -1768,6 +1795,7 @@ class TestSuiteRunner {
                this.results.hopefulPromptService?.success && this.results.programOrgContext?.success &&
                this.results.pushNotificationService?.success && this.results.promptSessions?.success,
       results: {
+        runtimeEnv: this.results.runtimeEnv,
         security: this.results.security,
         load: this.results.load,
         auth: this.results.auth,

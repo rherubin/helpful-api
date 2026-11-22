@@ -2,6 +2,13 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
+const {
+  assertJwtSecretsForCurrentEnv,
+  isMockFlagEnabled,
+  isRailwayEnv,
+} = require('./config/runtimeEnv');
+assertJwtSecretsForCurrentEnv();
+
 // Import MySQL database configuration
 const { getPool, testConnection, closePool } = require('./config/database');
 
@@ -78,10 +85,11 @@ app.get('/health', (req, res) => {
 });
 
 // JSON diagnostics for local / integration tests (not used by Railway liveness).
+// Deliberately does not report TEST_MOCK_* flags — those must not be
+// discoverable without authentication. /health stays a plain "OK" for Railway.
 app.get('/health/diagnostics', (req, res) => {
   res.json({
-    ok: true,
-    test_mock_llm: process.env.TEST_MOCK_LLM === 'true'
+    ok: true
   });
 });
 
@@ -290,8 +298,34 @@ function startOrphanedTrialCleanupJob(stripeBillingService, pairingModel, refres
   );
 }
 
+// Trust the first proxy hop on Railway (and when TRUST_PROXY=true) so
+// rate limits and req.ip use the client address from X-Forwarded-For
+// instead of the edge. Leave this off for local processes that are not
+// behind a proxy, so a spoofed X-Forwarded-For is not trusted.
+if (process.env.TRUST_PROXY === 'true' || isRailwayEnv()) {
+  app.set('trust proxy', 1);
+}
+
+// CORS_ORIGIN is a comma-separated allowlist. When unset, the previous
+// cors() default is kept (reflect any Origin) so existing web and mobile
+// clients keep working. Set CORS_ORIGIN in production once the app
+// origins are known.
+function corsOptions() {
+  const raw = String(process.env.CORS_ORIGIN || '').trim();
+  if (!raw) return {};
+  const allowed = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (allowed.includes('*')) return {};
+  return {
+    origin(origin, callback) {
+      // Non-browser clients (no Origin header) are allowed.
+      if (!origin || allowed.includes(origin)) return callback(null, true);
+      return callback(null, false);
+    }
+  };
+}
+
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions()));
 app.use(securityHeaders); // Apply security headers to all responses
 
 // Stripe webhooks need the raw body for signature verification. Register before
@@ -429,7 +463,7 @@ async function initializeApp() {
 
     // Google Play renewals/cancellations: only meaningful with real Play credentials.
     if ((process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || '').trim()
-      && process.env.TEST_MOCK_IAP !== 'true') {
+      && !isMockFlagEnabled('TEST_MOCK_IAP')) {
       startGooglePlaySubscriptionRefreshJob(subscriptionService);
     }
     

@@ -5,8 +5,15 @@ const { userUpdateLimiter } = require('../middleware/security');
 // Helper function to filter sensitive fields from user objects
 function filterUserData(user) {
   if (!user) return null;
-  // Remove password_hash, is_premium (returned as computed `premium`), and premium
-  const { password_hash, premium, is_premium, ...filteredUser } = user;
+  // Remove secrets and internal columns. `is_premium` is returned as computed `premium`.
+  const {
+    password_hash,
+    premium,
+    is_premium,
+    bypass_password,
+    stripe_customer_id,
+    ...filteredUser
+  } = user;
   return filteredUser;
 }
 

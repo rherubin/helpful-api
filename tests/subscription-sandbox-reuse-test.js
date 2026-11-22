@@ -82,14 +82,21 @@ class SubscriptionSandboxReuseTestRunner {
     };
   }
 
-  service(ios, pairings) {
+  service(ios, pairings, claims) {
+    // Stub the verifier so these cases exercise the real verified path
+    // (TEST_MOCK_IAP is inert in production) without needing a signed JWS.
+    const appleReceiptVerifier = {
+      verify() {
+        return claims;
+      }
+    };
     return new SubscriptionService(
       ios,
       { hasActiveSubscription: async () => false },
       null,
       pairings,
       null,
-      null
+      appleReceiptVerifier
     );
   }
 
@@ -139,17 +146,30 @@ class SubscriptionSandboxReuseTestRunner {
   async submit(env, { environment = 'Sandbox', owner = 'user-a', caller = 'user-b' } = {}) {
     const ios = this.memoryIos([this.stuckRow()]);
     const pairings = this.pairings();
-    const subscriptionService = this.service(ios, pairings);
+    const payload = this.payload({ environment });
+    const claims = {
+      transactionId: payload.transaction_id,
+      originalTransactionId: payload.original_transaction_id,
+      productId: payload.product_id,
+      expiresDate: payload.expiration_date,
+      purchaseDate: payload.purchase_date,
+      environment: payload.environment,
+      bundleId: 'com.helpful.couples'
+    };
+    const subscriptionService = this.service(ios, pairings, claims);
     let error = null;
     let result = null;
     await this.withEnv({
-      TEST_MOCK_IAP: 'true',
+      // Intentionally do not set TEST_MOCK_IAP: production ignores it, and
+      // the stub verifier covers the signed-claims path in every environment.
+      TEST_MOCK_IAP: 'false',
+      APPLE_BUNDLE_ID: 'com.helpful.couples',
       NODE_ENV: env.NODE_ENV,
       RAILWAY_ENVIRONMENT_NAME: env.RAILWAY_ENVIRONMENT_NAME,
       RAILWAY_ENVIRONMENT: env.RAILWAY_ENVIRONMENT
     }, async () => {
       try {
-        result = await subscriptionService.processReceipt(caller, this.payload({ environment }));
+        result = await subscriptionService.processReceipt(caller, payload);
       } catch (err) {
         error = err;
       }

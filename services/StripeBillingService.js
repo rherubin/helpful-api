@@ -1,4 +1,5 @@
 const Stripe = require('stripe');
+const { isMockFlagEnabled } = require('../config/runtimeEnv');
 
 class StripeBillingError extends Error {
   constructor(message, { status = 400, code = null } = {}) {
@@ -281,7 +282,7 @@ class StripeBillingService {
       .filter(Boolean);
 
     const useMock = options.useMock
-      || process.env.TEST_MOCK_STRIPE === 'true'
+      || isMockFlagEnabled('TEST_MOCK_STRIPE')
       || !process.env.STRIPE_SECRET_KEY;
 
     if (useMock && !process.env.STRIPE_SECRET_KEY) {
@@ -303,7 +304,7 @@ class StripeBillingService {
     this.stripe = options.stripeClient
       || (useMock && !process.env.STRIPE_SECRET_KEY
         ? createMockStripe()
-        : (process.env.TEST_MOCK_STRIPE === 'true'
+        : (isMockFlagEnabled('TEST_MOCK_STRIPE')
           ? createMockStripe()
           : new Stripe(process.env.STRIPE_SECRET_KEY)));
 
@@ -311,7 +312,7 @@ class StripeBillingService {
   }
 
   isConfigured() {
-    if (process.env.TEST_MOCK_STRIPE === 'true' || this.isMock) return true;
+    if (isMockFlagEnabled('TEST_MOCK_STRIPE') || this.isMock) return true;
     return Boolean(
       process.env.STRIPE_SECRET_KEY
       && this.priceIds.monthly
@@ -320,7 +321,7 @@ class StripeBillingService {
   }
 
   assertConfigured() {
-    if (this.isMock || process.env.TEST_MOCK_STRIPE === 'true' || !process.env.STRIPE_SECRET_KEY) {
+    if (this.isMock || isMockFlagEnabled('TEST_MOCK_STRIPE') || !process.env.STRIPE_SECRET_KEY) {
       this.priceIds.monthly = this.priceIds.monthly || 'price_mock_monthly';
       this.priceIds.yearly = this.priceIds.yearly || 'price_mock_yearly';
       return;
@@ -995,7 +996,7 @@ class StripeBillingService {
    * Safety net when webhooks are delayed or missed (failed renewals, cancels).
    */
   async reconcileSubscriptions({ limit = 50 } = {}) {
-    if (!this.isConfigured() && process.env.TEST_MOCK_STRIPE !== 'true') {
+    if (!this.isConfigured() && !isMockFlagEnabled('TEST_MOCK_STRIPE')) {
       return { checked: 0, updated: 0, skipped: true };
     }
 
@@ -1044,7 +1045,7 @@ class StripeBillingService {
     pairingModel = null,
     refreshTokenModel = null
   } = {}) {
-    if (!this.isConfigured() && process.env.TEST_MOCK_STRIPE !== 'true') {
+    if (!this.isConfigured() && !isMockFlagEnabled('TEST_MOCK_STRIPE')) {
       return { checked: 0, canceled: 0, skipped: true };
     }
 
@@ -1117,13 +1118,13 @@ class StripeBillingService {
     // Only allow that insecure path when tests explicitly opt in via TEST_MOCK_STRIPE.
     // Otherwise a publicly reachable API without Stripe keys would accept forged
     // webhooks and grant arbitrary users premium.
-    if (!process.env.STRIPE_SECRET_KEY && process.env.TEST_MOCK_STRIPE !== 'true') {
+    if (!process.env.STRIPE_SECRET_KEY && !isMockFlagEnabled('TEST_MOCK_STRIPE')) {
       throw new StripeBillingError(
         'Stripe webhooks disabled: configure STRIPE_SECRET_KEY (or TEST_MOCK_STRIPE=true for tests)',
         { status: 503 }
       );
     }
-    if (!this.webhookSecret && process.env.TEST_MOCK_STRIPE !== 'true' && process.env.STRIPE_SECRET_KEY) {
+    if (!this.webhookSecret && !isMockFlagEnabled('TEST_MOCK_STRIPE') && process.env.STRIPE_SECRET_KEY) {
       throw new StripeBillingError('STRIPE_WEBHOOK_SECRET is not configured', { status: 503 });
     }
     const secret = this.webhookSecret || 'whsec_mock_secret';
