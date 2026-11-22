@@ -5,7 +5,6 @@ require('dotenv').config();
 const {
   assertJwtSecretsForCurrentEnv,
   isMockFlagEnabled,
-  isProductionEnv,
   isRailwayEnv,
 } = require('./config/runtimeEnv');
 assertJwtSecretsForCurrentEnv();
@@ -303,7 +302,7 @@ function startOrphanedTrialCleanupJob(stripeBillingService, pairingModel, refres
 // rate limits and req.ip use the client address from X-Forwarded-For
 // instead of the edge. Leave this off for local processes that are not
 // behind a proxy, so a spoofed X-Forwarded-For is not trusted.
-if (process.env.TRUST_PROXY === 'true' || isRailwayEnv() || isProductionEnv()) {
+if (process.env.TRUST_PROXY === 'true' || isRailwayEnv()) {
   app.set('trust proxy', 1);
 }
 
@@ -320,7 +319,7 @@ function corsOptions() {
     origin(origin, callback) {
       // Non-browser clients (no Origin header) are allowed.
       if (!origin || allowed.includes(origin)) return callback(null, true);
-      return callback(new Error('Not allowed by CORS'));
+      return callback(null, false);
     }
   };
 }
