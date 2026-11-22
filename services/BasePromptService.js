@@ -1,3 +1,4 @@
+const { isMockFlagEnabled } = require('../config/runtimeEnv');
 /**
  * BasePromptService
  *
@@ -21,7 +22,7 @@ class BasePromptService {
     this.model = process.env.OPENAI_MODEL || 'gpt-5.4';
     this.apiUrl = 'https://api.openai.com/v1/chat/completions';
 
-    this.mockMode = process.env.TEST_MOCK_LLM === 'true';
+    this.mockMode = isMockFlagEnabled('TEST_MOCK_LLM');
     // Mock responses normally return instantly, which makes it impossible for a
     // test to observe a generation while it is still in flight. Setting this
     // holds each mocked call open for a fixed duration so concurrency behaviour

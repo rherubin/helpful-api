@@ -64,6 +64,8 @@ const FCM_DEAD_TOKEN_CODES = new Set([
 // FCM hard cap for sendEachForMulticast. Larger fan-outs are chunked.
 const MAX_TOKENS_PER_REQUEST = 500;
 
+const { isMockFlagEnabled } = require('../config/runtimeEnv');
+
 class PushNotificationService {
   /**
    * @param {Object} options
@@ -93,7 +95,7 @@ class PushNotificationService {
       return;
     }
 
-    if (process.env.TEST_MOCK_PUSH === 'true') {
+    if (isMockFlagEnabled('TEST_MOCK_PUSH')) {
       this._messaging = this._buildMockMessaging();
       this._configured = true;
       this._mockMode = true;

@@ -5,6 +5,7 @@ const {
   parseRfc3339
 } = require('./GooglePlayReceiptVerifier');
 const { AndroidSubscriptionConflictError } = require('../models/AndroidSubscription');
+const { isMockFlagEnabled } = require('../config/runtimeEnv');
 
 // `code` is an optional machine-readable reason, returned alongside `error`
 // so clients can branch without parsing the message.
@@ -726,7 +727,7 @@ class SubscriptionService {
   // affected user. Real-time developer notifications (RTDN) would make this
   // instant; this polling job is the no-extra-infrastructure safety net.
   async refreshAndroidSubscriptions({ limit = 50 } = {}) {
-    if (process.env.TEST_MOCK_IAP === 'true') {
+    if (isMockFlagEnabled('TEST_MOCK_IAP')) {
       return { skipped: true, reason: 'TEST_MOCK_IAP' };
     }
     let verifier;
@@ -799,7 +800,7 @@ class SubscriptionService {
     // for dev environments running against a throwaway database — never enable
     // it anywhere production-adjacent, since it reopens the hole this gate was
     // added to close. Mirrors StripeBillingService's TEST_MOCK_STRIPE gate.
-    const trustClientPayload = process.env.TEST_MOCK_IAP === 'true';
+    const trustClientPayload = isMockFlagEnabled('TEST_MOCK_IAP');
     const platform = this.normalizePlatform(payload.platform);
     let subscriptionResult;
 
