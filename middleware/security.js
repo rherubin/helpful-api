@@ -1,11 +1,13 @@
 const rateLimit = require('express-rate-limit');
+const { isMockFlagEnabled } = require('../config/runtimeEnv');
 
 // Detect automated test / CI runs so we can relax non-security-critical rate limits
 // (e.g. device token registration and user updates) without changing every test command.
+// TEST_MOCK_* flags are ignored in production (see config/runtimeEnv.js).
 function isTestOrLoadRun() {
   return process.env.NODE_ENV === 'test' ||
-         process.env.TEST_MOCK_LLM === 'true' ||
-         process.env.TEST_MOCK_OPENAI === 'true' ||
+         isMockFlagEnabled('TEST_MOCK_LLM') ||
+         isMockFlagEnabled('TEST_MOCK_OPENAI') ||
          process.env.TEST_MODE === 'true' ||
          process.env.SKIP_RATE_LIMITS === 'true';
 }

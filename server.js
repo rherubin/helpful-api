@@ -2,6 +2,12 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
+const {
+  assertJwtSecretsForCurrentEnv,
+  isMockFlagEnabled,
+} = require('./config/runtimeEnv');
+assertJwtSecretsForCurrentEnv();
+
 // Import MySQL database configuration
 const { getPool, testConnection, closePool } = require('./config/database');
 
@@ -78,10 +84,11 @@ app.get('/health', (req, res) => {
 });
 
 // JSON diagnostics for local / integration tests (not used by Railway liveness).
+// Deliberately does not report TEST_MOCK_* flags — those must not be
+// discoverable without authentication. /health stays a plain "OK" for Railway.
 app.get('/health/diagnostics', (req, res) => {
   res.json({
-    ok: true,
-    test_mock_llm: process.env.TEST_MOCK_LLM === 'true'
+    ok: true
   });
 });
 
@@ -429,7 +436,7 @@ async function initializeApp() {
 
     // Google Play renewals/cancellations: only meaningful with real Play credentials.
     if ((process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || '').trim()
-      && process.env.TEST_MOCK_IAP !== 'true') {
+      && !isMockFlagEnabled('TEST_MOCK_IAP')) {
       startGooglePlaySubscriptionRefreshJob(subscriptionService);
     }
     
