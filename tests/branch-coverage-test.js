@@ -1201,7 +1201,7 @@ class BranchCoverageTestRunner {
       const origUrl = process.env.MYSQL_URL;
       process.env.MYSQL_URL = 'not a url';
       try { db.createPool(); this.assert(false, 'createPool rejects invalid MYSQL_URL'); }
-      catch (e) { this.assert(!!e.message, 'createPool rejects invalid MYSQL_URL', e.message); }
+      catch (e) { this.assert(/Invalid URL/.test(e.message), 'createPool rejects invalid MYSQL_URL', e.message); }
       finally {
         if (origUrl === undefined) delete process.env.MYSQL_URL;
         else process.env.MYSQL_URL = origUrl;

@@ -81,7 +81,7 @@ class ResourceCoverageTestRunner {
       this.assert(steps.parseMetadata('not-json') === 'not-json', 'ProgramStep parseMetadata invalid returns original string');
     }
     await this.assertResolves(() => steps.deleteProgramSteps('p1'), 'ProgramStep deleteProgramSteps success');
-    await this.assertResolves(() => steps.getDayStep('p1', 1), 'ProgramStep getDayStep success', (r) => r == null || typeof r === 'object');
+    await this.assertResolves(() => steps.getDayStep('p1', 1), 'ProgramStep getDayStep success', (r) => r && r.id === 's1' && r.day === 1 && r.started === false);
     await this.assertResolves(() => steps.getProgramDays('p1'), 'ProgramStep getProgramDays success', Array.isArray);
     await this.assertResolves(() => steps.getProgramSteps('p1'), 'ProgramStep getProgramSteps success', Array.isArray);
     await this.assertResolves(() => steps.getStepById('s1'), 'ProgramStep getStepById success', (r) => r && r.id === 's1');
@@ -252,7 +252,7 @@ class ResourceCoverageTestRunner {
   async testDeviceToken() {
     this.log('DeviceToken model', 'section');
     const dt = new DeviceToken(okPool([{ id: 't1', device_token: 'tok', user_id: 'u1' }]));
-    await this.assertResolves(async () => dt.registerDeviceToken('u1', 'a'.repeat(64), 'ios'), 'DeviceToken registerDeviceToken', (r) => r && (r.id || r.device_token || r.message || r.platform === 'ios' || typeof r === 'object'));
+    await this.assertResolves(async () => dt.registerDeviceToken('u1', 'a'.repeat(64), 'ios'), 'DeviceToken registerDeviceToken', (r) => r && r.id === 't1' && r.isNew === false);
     await dt.getUserDeviceTokens('u1');
     await dt.getUserDeviceTokensWithStrings('u1');
     await dt.getDeviceTokensForUsers(['u1', 'u2']);

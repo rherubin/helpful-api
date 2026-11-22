@@ -1789,8 +1789,17 @@ class Coverage80TestRunner {
     await this.expectThrow(() => userOk.updateUser('u1', { children: -1 }), 'Children must be a non-negative integer', 'updateUser rejects invalid children');
     await this.expectThrow(() => userOk.updateUser('u1', {}), 'At least one field must be provided', 'updateUser requires a field');
 
-    const updated = await userOk.updateUser('u1', { max_pairings: 4, bypass_password: true, user_name: 'Ada' });
-    this.assert(updated === null || typeof updated === 'object', 'updateUser with max_pairings and bypass_password runs');
+    const updatePool = new User(mockPool(async (sql) => {
+      if (/UPDATE users SET/.test(String(sql))) return [{ affectedRows: 1 }];
+      return [[{ id: 'u1', user_name: 'Ada', max_pairings: 4, bypass_password: 1 }]];
+    }));
+    const updated = await updatePool.updateUser('u1', { max_pairings: 4, bypass_password: true, user_name: 'Ada' });
+    this.assert(
+      updated && updated.id === 'u1' && updated.user_name === 'Ada'
+        && updated.max_pairings === 4 && Number(updated.bypass_password) === 1,
+      'updateUser with max_pairings and bypass_password persists fields',
+      JSON.stringify(updated)
+    );
 
     const dupUser = new User(mockPool(async () => {
       const err = new Error('dup');
@@ -1814,11 +1823,11 @@ class Coverage80TestRunner {
 
     this.assert(await userOk.logOrgCodeLinkChange('u1', 'admin', null, null) === null, 'logOrgCodeLinkChange noops when both ids are empty');
     const attach = await userOk.logOrgCodeLinkChange('u1', 'admin', null, 'org2');
-    this.assert(attach === null || typeof attach === 'object', 'logOrgCodeLinkChange attach path');
+    this.assert(attach && attach.change_type === 'attach' && typeof attach.id === 'string', 'logOrgCodeLinkChange attach path', JSON.stringify(attach));
     const detach = await userOk.logOrgCodeLinkChange('u1', 'admin', 'org1', null);
-    this.assert(detach === null || typeof detach === 'object', 'logOrgCodeLinkChange detach path');
+    this.assert(detach && detach.change_type === 'detach' && typeof detach.id === 'string', 'logOrgCodeLinkChange detach path', JSON.stringify(detach));
     const switched = await userOk.logOrgCodeLinkChange('u1', 'admin', 'org1', 'org2');
-    this.assert(switched === null || typeof switched === 'object', 'logOrgCodeLinkChange switch path');
+    this.assert(switched && switched.change_type === 'switch' && typeof switched.id === 'string', 'logOrgCodeLinkChange switch path', JSON.stringify(switched));
 
     const auditSqls = [];
     const auditor = new User(mockPool(async (sql, params) => {
@@ -1839,7 +1848,14 @@ class Coverage80TestRunner {
       }, {
         deleteRefreshTokensByUserId: async () => { throw new Error('token revoke failed'); }
       });
-      this.assert(result && (result.id === 'u1' || result.message || typeof result === 'object'), 'softDeleteUser continues after cascade failures');
+      this.assert(
+        result
+          && result.message === 'User deleted successfully'
+          && typeof result.deleted_at === 'string'
+          && result.cascade_result === null,
+        'softDeleteUser continues after cascade failures',
+        JSON.stringify(result)
+      );
       this.assert(softWarns.some((w) => /token revoke failed/.test(w)), 'softDeleteUser warns when refresh-token revoke fails');
       this.assert(softWarns.some((w) => /pairing cascade failed/.test(w)), 'softDeleteUser warns when pairing cascade fails');
     } finally {
@@ -1959,8 +1975,21 @@ class Coverage80TestRunner {
     await this.expectThrow(() => adminMissing.getAdminUserByIdIncludingDeleted('gone'), 'Failed to fetch admin user', 'getAdminUserByIdIncludingDeleted missing is wrapped');
 
     await this.expectThrow(() => admin.updateAdminUser('a1', {}), 'At least one field must be provided', 'updateAdminUser requires a field');
-    const adminUpdated = await admin.updateAdminUser('a1', { max_pairings: 2, partner_name: 'Bea', children: 1, user_name: 'Ada' });
-    this.assert(adminUpdated === null || typeof adminUpdated === 'object', 'updateAdminUser writes max_pairings, partner_name, and children');
+    const adminUpdater = new AdminUser(mockPool(async (sql) => {
+      if (/UPDATE admin_users SET/.test(String(sql))) return [{ affectedRows: 1 }];
+      return [[{ id: 'a1', user_name: 'Ada', partner_name: 'Bea', children: 1, max_pairings: 2 }]];
+    }));
+    const adminUpdated = await adminUpdater.updateAdminUser('a1', { max_pairings: 2, partner_name: 'Bea', children: 1, user_name: 'Ada' });
+    this.assert(
+      adminUpdated
+        && adminUpdated.id === 'a1'
+        && adminUpdated.user_name === 'Ada'
+        && adminUpdated.partner_name === 'Bea'
+        && adminUpdated.children === 1
+        && adminUpdated.max_pairings === 2,
+      'updateAdminUser writes max_pairings, partner_name, and children',
+      JSON.stringify(adminUpdated)
+    );
 
     const adminZero = new AdminUser(mockPool(async () => [{ affectedRows: 0 }]));
     await this.expectThrow(() => adminZero.updateAdminUser('a1', { user_name: 'Ada' }), 'Admin user not found', 'updateAdminUser zero rows');
@@ -2004,16 +2033,12 @@ class Coverage80TestRunner {
     const userJwt = jwt.sign({ id: 'u1', type: 'user' }, authSvc.jwtRefreshSecret, { expiresIn: '1h' });
     await this.expectThrow(() => authSvc.verifyAndRefreshTokens('access', userJwt), 'Token refresh failed', 'verifyAndRefreshTokens rejects non-admin refresh tokens');
 
-    // loginAdmin should swallow deleteRefreshTokens errors
-    if (typeof authSvc.loginAdmin === 'function') {
-      try {
-        const login = await authSvc.loginAdmin('a@x.com', strong);
-        this.assert(login && (login.access_token || login.data || login.token || login.message), 'loginAdmin swallows missing-token delete errors');
-      } catch (e) {
-        // If login still requires a real hash compare, at least the delete error was reached and wrapped specifically.
-        this.assert(!/no tokens/.test(e.message), 'loginAdmin does not surface deleteRefreshTokens errors', e.message);
-      }
-    }
+    const login = await authSvc.loginAdmin('a@x.com', strong);
+    this.assert(login.message === 'Admin login successful', 'loginAdmin swallows missing-token delete errors', login.message);
+    this.assert(login.token_type === 'Bearer' && login.user_type === 'admin', 'loginAdmin returns Bearer admin tokens', `${login.token_type}/${login.user_type}`);
+    this.assert(typeof login.access_token === 'string' && typeof login.refresh_token === 'string', 'loginAdmin returns access and refresh tokens');
+    const loginClaims = jwt.verify(login.access_token, authSvc.jwtSecret);
+    this.assert(loginClaims.id === 'a1' && loginClaims.email === 'a@x.com' && loginClaims.type === 'admin', 'loginAdmin access token has admin claims', JSON.stringify(loginClaims));
   }
 
   async runAllTests() {
