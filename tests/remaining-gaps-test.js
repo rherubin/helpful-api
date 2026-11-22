@@ -552,8 +552,9 @@ class RemainingGapsTestRunner {
     const deleteMissing = await this.request('DELETE', '/api/programs/does-not-exist-id', { token: owner.token });
     this.assert(deleteMissing.status === 404, 'DELETE missing program → 404', `status=${deleteMissing.status}`);
 
-    // Therapy response on the next program should be allowed for the owner;
-    // an already-in-flight generation may 202 or 409, both are valid.
+    // therapy_response is posted against the original program (programId), not
+    // the next_program. 202 means generation started; 409 means complete steps
+    // already exist.
     const therapy = await this.request('POST', `/api/programs/${programId}/therapy_response`, {
       token: owner.token
     });
