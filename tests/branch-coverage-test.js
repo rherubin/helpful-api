@@ -87,6 +87,16 @@ class BranchCoverageTestRunner {
     }
   }
 
+  async expectThrow(fn, match, name) {
+    try {
+      await fn();
+      this.assert(false, name, 'did not throw');
+    } catch (e) {
+      const ok = !match || (typeof match === 'string' ? (e.message || '').includes(match) : match.test(e.message || ''));
+      this.assert(ok, name, e.message);
+    }
+  }
+
   async listen(app) {
     const server = http.createServer(app);
     await new Promise((resolve, reject) => {
@@ -323,6 +333,10 @@ class BranchCoverageTestRunner {
       pairingService.pairingModel.restorePairingAtomic = async () => { throw new Error('db'); };
       this.assert((await this.request('PATCH', `${baseURL}/api/pairing/p1/restore`, { token })).status === 500, 'Pairing restore 500');
       this.assert((await this.request('GET', `${baseURL}/api/pairing/deleted/all`, { token })).status === 403, 'Deleted pairings requires admin');
+      pairingService.pairingModel.getDeletedPairings = async () => [{ id: 'p_del', status: 'deleted', user1_id: 'u1', user2_id: 'u2' }];
+      const deletedOk = await this.request('GET', `${baseURL}/api/pairing/deleted/all`, { token: adminToken() });
+      this.assert(deletedOk.status === 200, 'Deleted pairings admin 200', `status=${deletedOk.status}`);
+      this.assert(Array.isArray(deletedOk.data) && deletedOk.data[0] && deletedOk.data[0].id === 'p_del', 'Deleted pairings admin returns a list');
       pairingService.pairingModel.getDeletedPairings = async () => { throw new Error('db'); };
       this.assert((await this.request('GET', `${baseURL}/api/pairing/deleted/all`, { token: adminToken() })).status === 500, 'Deleted pairings admin 500');
     } finally {
@@ -625,8 +639,8 @@ class BranchCoverageTestRunner {
     this.assert(!!(await stSvc.handleInvoicePaymentFailed({ subscription: 'sub_from_str' })), 'invoice.payment_failed with string subscription id');
     this.assert(!!(await stSvc.handleInvoicePaid({ subscription: { id: 'sub_from_str' } })), 'invoice.paid with object subscription id');
     this.assert(await stSvc.handleWebhookEvent({ type: 'ping', data: { object: {} } }) === null, 'handleWebhookEvent default');
-    await stSvc.handleWebhookEvent({ type: 'customer.subscription.updated', data: { object: { id: 'sub_from_str', status: 'active', metadata: { user_id: 'u1' } } } });
-    this.assert(true, 'handleWebhookEvent subscription.updated');
+    const updatedEvent = await stSvc.handleWebhookEvent({ type: 'customer.subscription.updated', data: { object: { id: 'sub_from_str', status: 'active', metadata: { user_id: 'u1' } } } });
+    this.assert(updatedEvent && updatedEvent.status === 'active' && updatedEvent.stripe_subscription_id === 'sub_from_str', 'handleWebhookEvent subscription.updated');
 
     const saved = { TEST_MOCK_STRIPE: process.env.TEST_MOCK_STRIPE, STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET };
     try {
@@ -681,9 +695,13 @@ class BranchCoverageTestRunner {
     canStore.set('sub_b', { stripe_subscription_id: null, user_id: 'u1', plan: 'monthly', status: 'active' });
     canSvc.stripe.subscriptions.cancel = async (id) => { if (id === 'sub_a') throw new Error('cancel failed'); return { id, status: 'canceled', metadata: {} }; };
     this.assert(Array.isArray(await canSvc.cancelActiveSubscriptionsForUser('u1')), 'cancelActiveSubscriptionsForUser handles cancel failure');
+    const emailUpdates = [];
+    canSvc.stripe.customers = canSvc.stripe.customers || {};
+    canSvc.stripe.customers.update = async (id, body) => { emailUpdates.push({ id, body }); return { id, ...body }; };
     await canSvc.updateCustomerEmail('u1', 'new@x.com');
+    this.assert(emailUpdates.length === 1 && emailUpdates[0].id === 'cus_1' && emailUpdates[0].body.email === 'new@x.com', 'updateCustomerEmail updates Stripe customer email');
     await canSvc.updateCustomerEmail('missing', 'x@y.com');
-    this.assert(true, 'updateCustomerEmail skips users without a Stripe customer');
+    this.assert(emailUpdates.length === 1, 'updateCustomerEmail skips users without a Stripe customer');
     const u = { id: 'u2', email: 'u2@x.com', stripe_customer_id: 'cus_existing' };
     const { service: ens, userModel } = this.makeBillingHarness(u);
     this.assert(await ens.ensureStripeCustomer(u) === 'cus_existing', 'ensureStripeCustomer existing');
@@ -741,14 +759,29 @@ class BranchCoverageTestRunner {
     this.assert((await android.upsertSubscription('u1', { ...data, expiration_date: now + 2000, auto_renewing: true, is_test_purchase: false })).created !== true, 'Android upsert updates same user');
     try { await android.upsertSubscription('u2', data); this.assert(false, 'Android upsert conflict'); }
     catch (e) { this.assert(e.name === 'AndroidSubscriptionConflictError' || /already belongs/.test(e.message), 'Android upsert conflict', e.name + e.message); }
+    const androidSqls = [];
+    const origExecute = android.db.execute;
+    android.db.execute = async (sql, params) => {
+      androidSqls.push({ sql: String(sql), params });
+      if (/DELETE/.test(sql)) return [{ affectedRows: 1 }];
+      return origExecute(sql, params);
+    };
     await android.updateVerifiedState('id1', { product_id: 'sku', order_id: 'ord1', expiration_date: now, auto_renewing: null, is_test_purchase: undefined, last_verified_at: now });
+    const verifiedNull = androidSqls.find((s) => /SET product_id/.test(s.sql));
+    this.assert(verifiedNull && verifiedNull.params[4] === null && verifiedNull.params[5] === null, 'Android updateVerifiedState stores null auto_renewing and is_test_purchase');
     await android.updateVerifiedState('id1', { product_id: 'sku', order_id: 'ord1', expiration_date: now, auto_renewing: false, is_test_purchase: true, last_verified_at: now });
+    const verifiedFlags = androidSqls.filter((s) => /SET product_id/.test(s.sql)).pop();
+    this.assert(verifiedFlags && verifiedFlags.params[4] === 0 && verifiedFlags.params[5] === 1, 'Android updateVerifiedState stores boolean flags as 0/1');
     await android.markLapsed('id1', 'SUBSCRIPTION_STATE_EXPIRED', now);
-    await android.getRefreshCandidates({ limit: 'bad' });
-    await android.getRefreshCandidates({ limit: 0 });
-    await android.deleteById('id1');
-    await android.deleteByUserId('u1');
-    this.assert(true, 'Android updateVerifiedState / markLapsed / refresh / delete');
+    this.assert(androidSqls.some((s) => /LEAST\(expiration_date/.test(s.sql) && s.params[0] === 'SUBSCRIPTION_STATE_EXPIRED'), 'Android markLapsed writes expired state');
+    const beforeRefresh = androidSqls.length;
+    const candBad = await android.getRefreshCandidates({ limit: 'bad' });
+    const candZero = await android.getRefreshCandidates({ limit: 0 });
+    this.assert(Array.isArray(candBad) && Array.isArray(candZero), 'Android getRefreshCandidates returns arrays');
+    const refreshSqls = androidSqls.slice(beforeRefresh).filter((s) => /LIMIT/.test(s.sql));
+    this.assert(refreshSqls.length >= 2 && refreshSqls.every((s) => /LIMIT 50\b/.test(s.sql)), 'Android getRefreshCandidates invalid/zero limit falls back to 50');
+    this.assert(await android.deleteById('id1') === true, 'Android deleteById returns true when a row is deleted');
+    this.assert(await android.deleteByUserId('u1') === 1, 'Android deleteByUserId returns affected row count');
 
     const raceRows = [];
     let inserts = 0;
@@ -802,8 +835,8 @@ class BranchCoverageTestRunner {
     this.assert((await stripeModel.getAllActiveForUser('u')).length >= 1, 'StripeSubscription getAllActiveForUser');
     this.assert((await stripeModel.listForReconcile(5)).length >= 1, 'StripeSubscription listForReconcile');
     this.assert((await stripeModel.listOrphanedTrialsForCleanup({ olderThanHours: 1, limit: 1 })).length >= 1, 'StripeSubscription listOrphanedTrialsForCleanup');
-    await stripeModel.upsertByStripeSubscriptionId('u', { stripe_subscription_id: 'sub', stripe_price_id: 'p', plan: 'monthly', status: 'active' });
-    this.assert(true, 'StripeSubscription upsertByStripeSubscriptionId');
+    const upserted = await stripeModel.upsertByStripeSubscriptionId('u', { stripe_subscription_id: 'sub', stripe_price_id: 'p', plan: 'monthly', status: 'active' });
+    this.assert(upserted && upserted.updated === true && upserted.status === 'active' && upserted.stripe_price_id === 'p', 'StripeSubscription upsertByStripeSubscriptionId updates an existing row');
   }
 
   async testPairingService() {
@@ -816,10 +849,18 @@ class BranchCoverageTestRunner {
       createPairingWithPartnerCode: async () => ({ id: 'p1', partner_code: 'ABC' })
     };
     const svcNoSub = new PairingService(userModel, pairingModel, null);
-    await svcNoSub.reconcilePairingPremium('u1');
-    this.assert(true, 'reconcilePairingPremium no-ops without subscriptionService');
-    await new PairingService(userModel, pairingModel, { reconcilePremiumStatus: async () => { throw new Error('reconcile failed'); } }).reconcilePairingPremium('u1');
-    this.assert(true, 'reconcilePairingPremium swallows subscription errors');
+    const noSubResult = await svcNoSub.reconcilePairingPremium('u1');
+    this.assert(noSubResult === undefined, 'reconcilePairingPremium no-ops without subscriptionService');
+    let reconcileCalled = false;
+    let reconcileThrew = false;
+    try {
+      const swallowed = await new PairingService(userModel, pairingModel, { reconcilePremiumStatus: async () => { reconcileCalled = true; throw new Error('reconcile failed'); } }).reconcilePairingPremium('u1');
+      this.assert(reconcileCalled && swallowed === undefined, 'reconcilePairingPremium swallows subscription errors');
+    } catch (e) {
+      reconcileThrew = true;
+      this.assert(false, 'reconcilePairingPremium swallows subscription errors', e.message);
+    }
+    this.assert(reconcileThrew === false, 'reconcilePairingPremium does not rethrow subscription errors');
     try { await svcNoSub.requestPairing('u1'); this.assert(false, 'requestPairing max pairings'); }
     catch (e) { this.assert(/maximum number of pairings/.test(e.message), 'requestPairing max pairings', e.message); }
     pairingModel.countAcceptedPairings = async () => 0;
@@ -830,8 +871,7 @@ class BranchCoverageTestRunner {
     this.assert((await svcNoSub.requestPairing('u1')).partner_code === 'ABC', 'requestPairing creates new code');
     if (typeof svcNoSub.acceptPairing === 'function') {
       pairingModel.getPairingById = async () => { throw new Error('Pairing not found'); };
-      try { await svcNoSub.acceptPairing('u2', 'p1'); this.assert(true, 'acceptPairing missing pairing'); }
-      catch (e) { this.assert(true, 'acceptPairing missing pairing', e.message); }
+      await this.expectThrow(() => svcNoSub.acceptPairing('u2', 'p1'), 'Pairing not found', 'acceptPairing missing pairing');
     }
     if (typeof svcNoSub.getPendingPairings === 'function') {
       pairingModel.getPendingPairings = async () => [];
@@ -839,8 +879,7 @@ class BranchCoverageTestRunner {
     }
     if (typeof svcNoSub.getUserPairingStats === 'function') {
       pairingModel.countAcceptedPairings = async () => { throw new Error('stats failed'); };
-      try { await svcNoSub.getUserPairingStats('u1'); this.assert(true, 'getUserPairingStats handled'); }
-      catch (e) { this.assert(true, 'getUserPairingStats surfaces error', e.message); }
+      await this.expectThrow(() => svcNoSub.getUserPairingStats('u1'), 'stats failed', 'getUserPairingStats surfaces error');
     }
   }
 
@@ -903,9 +942,9 @@ class BranchCoverageTestRunner {
     this.assert(/scripture|faith|partner/i.test((await helpful.callLLM('faith-based scripture', 'reflect', { jsonMode: false })).content), 'BasePrompt mock hopeful text');
     this.assert(/partner|communication|trust/i.test((await helpful.callLLM('couples therapy', 'talk', { jsonMode: false })).content), 'BasePrompt mock helpful text');
     helpful.mockDelayMs = 1;
-    await helpful.callLLM('x', 'y', { jsonMode: false });
+    const delayed = await helpful.callLLM('x', 'y', { jsonMode: false });
     helpful.mockDelayMs = 0;
-    this.assert(true, 'BasePrompt mockDelayMs path');
+    this.assert(typeof delayed.content === 'string' && delayed.content.length > 0, 'BasePrompt mockDelayMs path returns mock content');
     this.assert(helpful.modelSupportsSamplingTemperature('gpt-4o') === true, 'modelSupportsSamplingTemperature gpt-4o');
     this.assert(helpful.modelSupportsSamplingTemperature('gpt-5') === false, 'modelSupportsSamplingTemperature gpt-5');
     this.assert(helpful.modelSupportsSamplingTemperature('o3-mini') === false, 'modelSupportsSamplingTemperature o-series');
@@ -927,8 +966,7 @@ class BranchCoverageTestRunner {
       this.assert(Array.isArray(helpful.splitTherapyResponse('word '.repeat(400))), 'splitTherapyResponse long text');
       this.assert(Array.isArray(helpful.splitTherapyResponse('A single short sentence.')), 'splitTherapyResponse single sentence');
     }
-    try { await helpful.processOpenAIRequest({}); this.assert(true, 'processOpenAIRequest invoked'); }
-    catch (e) { this.assert(true, 'processOpenAIRequest thrown or abstract', e.message); }
+    await this.expectThrow(() => helpful.processOpenAIRequest({}), 'Failed to generate couples therapy program', 'processOpenAIRequest rejects an empty request');
     helpful.QUEUE_TIMEOUT = 10;
     helpful.processing = false;
     helpful.activeRequests = 0;
@@ -949,14 +987,12 @@ class BranchCoverageTestRunner {
       try { return await helpful._callOpenAI('sys', 'user', { maxTokens: 10, temperature: 0.2, jsonMode: true }); }
       finally { global.fetch = originalFetch; }
     };
-    try { await runCall(async () => ({ ok: false, status: 500, text: async () => 'err' })); this.assert(false, '_callOpenAI HTTP error'); }
-    catch (e) { this.assert(true, '_callOpenAI HTTP error', e.message); }
+    try { await runCall(async () => ({ ok: false, status: 500, json: async () => ({}), text: async () => 'err' })); this.assert(false, '_callOpenAI HTTP error'); }
+    catch (e) { this.assert(e.status === 500 && /OpenAI API request failed/.test(e.message), '_callOpenAI HTTP error', e.message); }
     const emptyRes = await runCall(async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '' } }] }) }));
     this.assert(emptyRes.content === '', '_callOpenAI empty content returns empty string');
-    try {
-      const res = await runCall(async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{not-json' }, finish_reason: 'stop' }], model: 'gpt', id: '1', usage: {} }) }));
-      this.assert(typeof res.content === 'string', '_callOpenAI returns raw malformed content');
-    } catch (e) { this.assert(true, '_callOpenAI malformed content throws', e.message); }
+    const malformed = await runCall(async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{not-json' }, finish_reason: 'stop' }], model: 'gpt', id: '1', usage: {} }) }));
+    this.assert(malformed.content === '{not-json', '_callOpenAI returns raw malformed content');
 
     const h = new HelpfulPromptService();
     h.mockMode = false;
@@ -964,23 +1000,26 @@ class BranchCoverageTestRunner {
     let calls = 0;
     h.callLLM = async () => {
       calls++;
-      if (calls === 1) { const err = new Error('LLM timeout'); err.__prompt = 'prompt-1'; throw err; }
+      if (calls === 1) return { content: 'not-json ' + 'x'.repeat(120), finishReason: 'stop' };
       return { content: JSON.stringify(sevenDayProgram()), finishReason: 'stop' };
     };
+    h.retryBaseDelayMs = 1;
+    h.parseRetryDelayMs = 1;
     if (typeof h.generateInitialProgram === 'function') {
-      try {
-        const prog = await h.generateInitialProgram({ userName: 'Ada', partnerName: 'Bea', userInput: 'We want to connect more this season together.' });
-        this.assert(!!prog || calls >= 1, 'Helpful generateInitialProgram retries then succeeds');
-      } catch (e) { this.assert(true, 'Helpful generateInitialProgram exercised', e.message); }
+      const prog = await h.generateInitialProgram({ userName: 'Ada', partnerName: 'Bea', userInput: 'We want to connect more this season together.' });
+      this.assert(h.validateProgramStructure(prog) === true && calls >= 2, 'Helpful generateInitialProgram retries then succeeds');
     }
     if (typeof h.generateSingleUserChimeInPrompt === 'function') {
       h.callLLM = async () => ({ content: 'A reflective follow-up question about how you felt heard this week with your partner and what you need next.', finishReason: 'stop' });
-      try { this.assert(!!(await h.generateSingleUserChimeInPrompt({ userName: 'Ada', conversationStarter: 'How did you feel this week?', userMessages: ['I felt distant'] })), 'Helpful generateSingleUserChimeInPrompt'); }
-      catch (e) { this.assert(true, 'Helpful generateSingleUserChimeInPrompt exercised', e.message); }
+      const chime = await h.generateSingleUserChimeInPrompt({ userName: 'Ada', conversationStarter: 'How did you feel this week?', userMessages: ['I felt distant'] });
+      const chimeText = Array.isArray(chime) ? chime.join(' ') : String(chime);
+      this.assert(/felt heard|partner/i.test(chimeText) && chimeText.length > 20, 'Helpful generateSingleUserChimeInPrompt');
     }
     if (typeof h.generateChimeInPrompt === 'function') {
-      try { h.mockMode = true; this.assert(!!(await h.generateChimeInPrompt('Ada', 'starter', ['hello'])), 'Helpful generateChimeInPrompt mock'); }
-      catch (e) { this.assert(true, 'Helpful generateChimeInPrompt exercised', e.message); }
+      h.mockMode = true;
+      const mockChime = await h.generateChimeInPrompt('Ada', 'starter', ['hello']);
+      const mockText = Array.isArray(mockChime) ? mockChime.join(' ') : String(mockChime || '');
+      this.assert(mockText.length > 0, 'Helpful generateChimeInPrompt mock');
     }
     if (typeof h.validateSitSessionStructure === 'function') {
       this.assert(h.validateSitSessionStructure(null) === false, 'validateSitSessionStructure null');
@@ -988,39 +1027,41 @@ class BranchCoverageTestRunner {
     }
     if (typeof h.generateSitSession === 'function') {
       h.mockMode = true;
-      try { this.assert(!!(await h.generateSitSession({ partners: [{ name: 'Ada' }, { name: 'Bea' }] })), 'Helpful generateSitSession mock'); }
-      catch (e) { this.assert(true, 'Helpful generateSitSession exercised', e.message); }
+      h.callLLM = HelpfulPromptService.prototype.callLLM.bind(h);
+      const sit = await h.generateSitSession({ partners: [{ name: 'Ada' }, { name: 'Bea' }] });
+      this.assert(sit && (sit.session_content || sit.bridge_content || sit.session || sit.bridge), 'Helpful generateSitSession mock');
     }
 
     const hope = new HopefulPromptService();
     hope.mockMode = false;
     hope.apiKey = 'sk-test';
+    hope.retryBaseDelayMs = 1;
+    hope.parseRetryDelayMs = 1;
     let hcalls = 0;
     hope.callLLM = async () => {
       hcalls++;
-      if (hcalls === 1) return { content: 'not-json', finishReason: 'stop' };
+      if (hcalls === 1) return { content: 'not-json ' + 'x'.repeat(120), finishReason: 'stop' };
       return { content: JSON.stringify(sevenDayFaithProgram()), finishReason: 'stop' };
     };
-    try {
-      this.assert(!!(await hope.generateInitialProgram({
-        userName: 'Ada',
-        userInput: 'We want to grow in faith together this month as a couple.',
-        customPrompts: { organizationName: 'Grace Church', organizationCity: 'Austin', organizationState: 'TX', initialProgramPrompt: 'Remember our congregation values honesty and grace.' }
-      })), 'Hopeful generateInitialProgram org prompt + retry');
-    } catch (e) { this.assert(true, 'Hopeful generateInitialProgram exercised', e.message); }
+    const initial = await hope.generateInitialProgram({
+      userName: 'Ada',
+      userInput: 'We want to grow in faith together this month as a couple.',
+      customPrompts: { organizationName: 'Grace Church', organizationCity: 'Austin', organizationState: 'TX', initialProgramPrompt: 'Remember our congregation values honesty and grace.' }
+    });
+    this.assert(!!(initial && initial.program && Array.isArray(initial.program.days)), 'Hopeful generateInitialProgram org prompt + retry');
     if (typeof hope.generateSingleUserChimeInPrompt === 'function') {
       hope.callLLM = async () => ({ content: 'What scripture comes to mind as you think about how you can show grace to your partner this week in a small, concrete way?', finishReason: 'stop' });
-      try { this.assert(!!(await hope.generateSingleUserChimeInPrompt({ userName: 'Ada', conversationStarter: 'How can you show grace?', userMessages: ['I was impatient'], customPrompts: { organizationName: 'Grace Church', organizationCity: 'Austin', organizationState: 'TX' } })), 'Hopeful generateSingleUserChimeInPrompt with org prompts'); }
-      catch (e) { this.assert(true, 'Hopeful generateSingleUserChimeInPrompt exercised', e.message); }
+      const chime = await hope.generateSingleUserChimeInPrompt({ userName: 'Ada', conversationStarter: 'How can you show grace?', userMessages: ['I was impatient'], customPrompts: { organizationName: 'Grace Church', organizationCity: 'Austin', organizationState: 'TX' } });
+      this.assert(typeof chime === 'string' && chime.length > 10, 'Hopeful generateSingleUserChimeInPrompt with org prompts');
     }
     if (typeof hope.generateNextProgram === 'function') {
       hope.callLLM = async () => ({ content: JSON.stringify(sevenDayFaithProgram()), finishReason: 'stop' });
-      try { await hope.generateNextProgram({ userName: 'Ada', userInput: 'Continue please with a new week of faith-centered reflections.', customPrompts: null }); this.assert(true, 'Hopeful generateNextProgram'); }
-      catch (e) { this.assert(true, 'Hopeful generateNextProgram exercised', e.message); }
+      const nextProg = await hope.generateNextProgram({ userName: 'Ada', userInput: 'Continue please with a new week of faith-centered reflections.', customPrompts: null });
+      this.assert(!!(nextProg && nextProg.program && Array.isArray(nextProg.program.days)), 'Hopeful generateNextProgram returns a program');
     }
     hope.mockMode = true;
-    try { await hope.generateCouplesProgram('Ada', 'Bea', 'We want to grow.'); this.assert(true, 'Hopeful generateCouplesProgram mock'); }
-    catch (e) { this.assert(true, 'Hopeful generateCouplesProgram exercised', e.message); }
+    const mockProgram = await hope.generateCouplesProgram('Ada', 'Bea', 'We want to grow in faith together this month as a couple.');
+    this.assert(!!(mockProgram && (mockProgram.program || mockProgram.title || mockProgram.__prompt)), 'Hopeful generateCouplesProgram mock returns a program');
   }
 
   async testProgramGeneration() {
@@ -1030,10 +1071,16 @@ class BranchCoverageTestRunner {
     try {
       delete process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS;
       this.assert(getGenerationFollowUpDelayMs() === 60000, 'follow-up delay defaults to 60000');
+      process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS = '';
+      this.assert(getGenerationFollowUpDelayMs() === 60000, 'follow-up delay empty falls back to 60000');
+      process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS = '0';
+      this.assert(getGenerationFollowUpDelayMs() === 60000, 'follow-up delay 0 falls back to 60000');
       process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS = 'not-a-number';
       this.assert(getGenerationFollowUpDelayMs() === 60000, 'follow-up delay invalid falls back to 60000');
       process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS = '10';
-      this.assert(getGenerationFollowUpDelayMs() === 10, 'follow-up delay read at call time');
+      this.assert(getGenerationFollowUpDelayMs() === 10, 'follow-up delay positive overrides at call time');
+      process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS = '50';
+      this.assert(getGenerationFollowUpDelayMs() === 50, 'follow-up delay 50 (coverage runner) overrides');
       delete process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED;
       this.assert(isGenerationFollowUpEnabled() === true, 'follow-up enabled by default');
       process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED = 'false';
@@ -1052,8 +1099,11 @@ class BranchCoverageTestRunner {
         deleteProgramSteps: async () => { throw new Error('should not delete complete'); },
         updateTherapyResponse: async () => {}
       };
-      await generateAndPersistProgramContent({ programModel: completeModel, programStepModel: completeModel, programId: 'p1', generateResponse: async () => { throw new Error('should not call LLM'); }, successLogPrefix: '[test]', forceRegenerate: false });
-      this.assert(true, 'generateAndPersist skips complete programs');
+      let llmCalled = false;
+      let deleted = false;
+      completeModel.deleteProgramSteps = async () => { deleted = true; throw new Error('should not delete complete'); };
+      const skipped = await generateAndPersistProgramContent({ programModel: completeModel, programStepModel: completeModel, programId: 'p1', generateResponse: async () => { llmCalled = true; throw new Error('should not call LLM'); }, successLogPrefix: '[test]', forceRegenerate: false });
+      this.assert(skipped === undefined && llmCalled === false && deleted === false, 'generateAndPersist skips complete programs');
 
       const steps = [{ day: 1 }];
       const model = {
@@ -1151,7 +1201,7 @@ class BranchCoverageTestRunner {
       const origUrl = process.env.MYSQL_URL;
       process.env.MYSQL_URL = 'not a url';
       try { db.createPool(); this.assert(false, 'createPool rejects invalid MYSQL_URL'); }
-      catch (e) { this.assert(!!e.message, 'createPool rejects invalid MYSQL_URL', e.message); }
+      catch (e) { this.assert(/Invalid URL/.test(e.message), 'createPool rejects invalid MYSQL_URL', e.message); }
       finally {
         if (origUrl === undefined) delete process.env.MYSQL_URL;
         else process.env.MYSQL_URL = origUrl;

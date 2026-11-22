@@ -104,6 +104,36 @@ function pidsOnPort(p) {
   }
 }
 
+// Descendants of a process we spawned (c8 wrapper → node server.js).
+function descendantPids(parentPid) {
+  if (!parentPid) return [];
+  try {
+    const out = execSync(`pgrep -P ${parentPid}`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const kids = out.trim().split(/\s+/).map(Number).filter(Boolean);
+    return kids.concat(kids.flatMap(descendantPids));
+  } catch (_) {
+    return [];
+  }
+}
+
+function startedPids(serverProc) {
+  if (!serverProc || !serverProc.pid) return [];
+  return [serverProc.pid, ...descendantPids(serverProc.pid)];
+}
+
+function signalPids(pids, signal) {
+  for (const pid of pids) {
+    try {
+      process.kill(pid, signal);
+    } catch (_) {
+      /* already gone */
+    }
+  }
+}
+
 function waitForHealth(timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
@@ -134,47 +164,27 @@ function sleep(ms) {
 }
 
 async function stopInstrumentedServer(serverProc) {
-  // SIGINT the actual `node server.js` process so the graceful shutdown
-  // handler runs and c8 can flush coverage. Killing the c8 wrapper alone
-  // leaves the server running and drops the server-side report.
-  const pids = pidsOnPort(port);
-  for (const pid of pids) {
-    try {
-      process.kill(pid, 'SIGINT');
-    } catch (_) {
-      /* already gone */
-    }
-  }
-  if (serverProc && !serverProc.killed) {
-    try {
-      serverProc.kill('SIGINT');
-    } catch (_) {
-      /* already gone */
-    }
-  }
+  // Only signal processes this script started (the c8 wrapper and its
+  // node server.js child). Never kill some other listener on PORT/9010.
+  // SIGINT the actual server process so graceful shutdown flushes c8.
+  const pids = startedPids(serverProc);
+  signalPids(pids, 'SIGINT');
 
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    const still = pidsOnPort(port);
-    const wrapperAlive = serverProc && serverProc.exitCode == null && !serverProc.killed;
-    if (still.length === 0 && !wrapperAlive) return;
+    const still = startedPids(serverProc).filter((pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    });
+    if (still.length === 0) return;
     await sleep(200);
   }
 
-  for (const pid of pidsOnPort(port)) {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch (_) {
-      /* already gone */
-    }
-  }
-  if (serverProc && !serverProc.killed) {
-    try {
-      serverProc.kill('SIGKILL');
-    } catch (_) {
-      /* already gone */
-    }
-  }
+  signalPids(startedPids(serverProc), 'SIGKILL');
 }
 
 async function main() {
@@ -185,6 +195,12 @@ async function main() {
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
   fs.mkdirSync(tmpDir, { recursive: true });
+
+  const already = pidsOnPort(port);
+  if (already.length > 0) {
+    console.error(`[coverage] ${baseUrl} is already in use by pid(s) ${already.join(', ')}. Refusing to start or signal a server this script did not launch.`);
+    process.exit(1);
+  }
 
   let serverProc;
   const serverCodePromise = run(c8Bin, c8Args(false).concat(['node', 'server.js']), {

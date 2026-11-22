@@ -48,6 +48,15 @@ class BasePromptService {
     };
   }
 
+  // Test-only overrides default to production values. Leave unset in prod.
+  getRetryBaseDelayMs() {
+    return this.retryBaseDelayMs ?? 1000;
+  }
+
+  getParseRetryDelayMs() {
+    return this.parseRetryDelayMs ?? 500;
+  }
+
   validateApiKey() {
     if (this.mockMode) {
       const delayNote = this.mockDelayMs > 0 ? `, mock_delay_ms=${this.mockDelayMs}` : '';

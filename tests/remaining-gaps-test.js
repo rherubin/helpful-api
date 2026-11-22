@@ -552,14 +552,16 @@ class RemainingGapsTestRunner {
     const deleteMissing = await this.request('DELETE', '/api/programs/does-not-exist-id', { token: owner.token });
     this.assert(deleteMissing.status === 404, 'DELETE missing program → 404', `status=${deleteMissing.status}`);
 
-    // Therapy response on the next program should be allowed for the owner;
-    // an already-in-flight generation may 202 or 409, both are valid.
+    // therapy_response is posted against the original program (programId), not
+    // the next_program. This owner has no pairing, so initial generation does
+    // not leave a complete step set; the request starts generation and returns
+    // 202.
     const therapy = await this.request('POST', `/api/programs/${programId}/therapy_response`, {
       token: owner.token
     });
     this.assert(
-      [202, 409].includes(therapy.status),
-      'Owner therapy_response is accepted or already in progress',
+      therapy.status === 202,
+      'Owner therapy_response starts generation → 202',
       `status=${therapy.status}`
     );
 

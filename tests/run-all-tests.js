@@ -32,6 +32,7 @@ const SubscriptionSandboxReuseTestRunner = require('./subscription-sandbox-reuse
 const UrgentGapsTestRunner = require('./urgent-gaps-test');
 const RemainingGapsTestRunner = require('./remaining-gaps-test');
 const BranchCoverageTestRunner = require('./branch-coverage-test');
+const Coverage80TestRunner = require('./coverage-80-test');
 const RefreshTokenHashingTestRunner = require('./test-refresh-token-hashing');
 
 /**
@@ -76,6 +77,7 @@ class TestSuiteRunner {
       runUrgentGaps: options.runUrgentGaps !== false, // Default true
       runRemainingGaps: options.runRemainingGaps !== false, // Default true
       runBranchCoverage: options.runBranchCoverage !== false, // Default true
+      runCoverage80: options.runCoverage80 !== false, // Default true
       runRefreshTokenHashing: options.runRefreshTokenHashing !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
@@ -117,6 +119,7 @@ class TestSuiteRunner {
       urgentGaps: null,
       remainingGaps: null,
       branchCoverage: null,
+      coverage80: null,
       refreshTokenHashing: null,
       startTime: Date.now(),
       endTime: null
@@ -225,7 +228,7 @@ class TestSuiteRunner {
     this.log('🔐 Running Authentication Tests', 'section');
     
     try {
-      const authRunner = new AuthTestRunner();
+      const authRunner = new AuthTestRunner({ baseURL: this.options.baseURL });
       const success = await authRunner.runAllTests();
       
       this.results.auth = { 
@@ -485,7 +488,7 @@ class TestSuiteRunner {
     this.log('📋 Running Programs Test Suite', 'section');
 
     try {
-      const programsRunner = new ProgramsTestRunner();
+      const programsRunner = new ProgramsTestRunner({ baseURL: this.options.baseURL });
       const success = await programsRunner.runAllTests();
 
       this.results.programs = {
@@ -520,7 +523,7 @@ class TestSuiteRunner {
     this.log('📝 Running Program Steps Test Suite', 'section');
 
     try {
-      const programStepsRunner = new ProgramStepsTestRunner();
+      const programStepsRunner = new ProgramStepsTestRunner({ baseURL: this.options.baseURL });
       const success = await programStepsRunner.runAllTests();
 
       this.results.programSteps = {
@@ -555,7 +558,7 @@ class TestSuiteRunner {
     this.log('💬 Running Messages Test Suite', 'section');
 
     try {
-      const messagesRunner = new MessagesTestRunner();
+      const messagesRunner = new MessagesTestRunner({ baseURL: this.options.baseURL });
       const success = await messagesRunner.runAllTests();
 
       this.results.messages = {
@@ -590,7 +593,7 @@ class TestSuiteRunner {
     this.log('💕 Running Therapy Trigger Test Suite', 'section');
 
     try {
-      const therapyTriggerRunner = new TherapyTriggerTestRunner();
+      const therapyTriggerRunner = new TherapyTriggerTestRunner({ baseURL: this.options.baseURL });
       const success = await therapyTriggerRunner.runAllTests();
 
       this.results.therapyTrigger = {
@@ -1354,6 +1357,43 @@ class TestSuiteRunner {
     }
   }
 
+  async runCoverage80Tests() {
+    if (!this.options.runCoverage80) {
+      this.log('Skipping coverage-80 tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🎯 Running Coverage 80 Target Tests', 'section');
+
+    try {
+      const runner = new Coverage80TestRunner({
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.coverage80 = {
+        success,
+        skipped: false,
+        details: 'Programs poller and HTTP errors, users, prompt sessions, AuthService, Helpful/Hopeful, pairing/IAP/Stripe model branches',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Coverage 80 tests completed successfully', 'success');
+      } else {
+        this.log('Coverage 80 tests failed', 'error');
+      }
+
+      return this.results.coverage80;
+    } catch (error) {
+      this.log(`Coverage 80 tests failed: ${error.message}`, 'error');
+      this.results.coverage80 = { success: false, error: error.message };
+      return this.results.coverage80;
+    }
+  }
+
   async runRefreshTokenHashingTests() {
     if (!this.options.runRefreshTokenHashing) {
       this.log('Skipping refresh-token hashing tests', 'warn');
@@ -1423,6 +1463,7 @@ class TestSuiteRunner {
     this.log(`  Urgent Coverage-Gap Tests: ${this.options.runUrgentGaps ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Remaining Coverage-Gap Tests: ${this.options.runRemainingGaps ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Branch Coverage Tests: ${this.options.runBranchCoverage ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Coverage 80 Tests: ${this.options.runCoverage80 ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Refresh Token Hashing Tests: ${this.options.runRefreshTokenHashing ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
@@ -1733,6 +1774,15 @@ class TestSuiteRunner {
     if (this.options.runBranchCoverage) {
       await this.runBranchCoverageTests();
       if (this.results.branchCoverage && !this.results.branchCoverage.success && !this.results.branchCoverage.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Finish 80% coverage target: remaining routes/services/models
+    if (this.options.runCoverage80) {
+      await this.runCoverage80Tests();
+      if (this.results.coverage80 && !this.results.coverage80.success && !this.results.coverage80.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -2092,6 +2142,14 @@ class TestSuiteRunner {
       } else {
         this.log(`🌿 Branch Coverage Tests: FAILED (${this.results.branchCoverage.failed}/${this.results.branchCoverage.total} failures)`, 'error');
       }
+
+      if (this.results.coverage80?.skipped) {
+        this.log('🎯 Coverage 80 Tests: SKIPPED', 'warn');
+      } else if (this.results.coverage80?.success) {
+        this.log(`🎯 Coverage 80 Tests: PASSED (${this.results.coverage80.passed}/${this.results.coverage80.total})`, 'success');
+      } else {
+        this.log(`🎯 Coverage 80 Tests: FAILED (${this.results.coverage80?.failed}/${this.results.coverage80?.total} failures)`, 'error');
+      }
     }
 
     // Refresh-token hashing results
@@ -2183,6 +2241,7 @@ class TestSuiteRunner {
                && this.suiteSucceeded(this.results.urgentGaps)
                && this.suiteSucceeded(this.results.remainingGaps)
                && this.suiteSucceeded(this.results.branchCoverage)
+               && this.suiteSucceeded(this.results.coverage80)
                && this.suiteSucceeded(this.results.refreshTokenHashing)
                && this.suiteSucceeded(this.results.promptSessions),
       results: {
@@ -2192,6 +2251,8 @@ class TestSuiteRunner {
         auth: this.results.auth,
         userCreation: this.results.userCreation,
         pairingsEndpoint: this.results.pairingsEndpoint,
+        pairingLifecycle: this.results.pairingLifecycle,
+        userSoftDelete: this.results.userSoftDelete,
         userProfile: this.results.userProfile,
         refreshTokenReset: this.results.refreshTokenReset,
         programs: this.results.programs,
@@ -2217,6 +2278,7 @@ class TestSuiteRunner {
         urgentGaps: this.results.urgentGaps,
         remainingGaps: this.results.remainingGaps,
         branchCoverage: this.results.branchCoverage,
+        coverage80: this.results.coverage80,
         refreshTokenHashing: this.results.refreshTokenHashing,
         promptSessions: this.results.promptSessions
       },
@@ -2301,6 +2363,7 @@ function parseArgs() {
     if (arg === '--no-urgent-gaps') options.runUrgentGaps = false;
     if (arg === '--no-remaining-gaps') options.runRemainingGaps = false;
     if (arg === '--no-branch-coverage') options.runBranchCoverage = false;
+    if (arg === '--no-coverage-80') options.runCoverage80 = false;
     if (arg === '--no-refresh-token-hashing') options.runRefreshTokenHashing = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];

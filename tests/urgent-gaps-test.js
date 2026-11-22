@@ -242,8 +242,6 @@ class UrgentGapsTestRunner {
     });
     this.assert(login.status === 200 && login.data?.access_token, 'Admin login → 200 with access_token');
     const adminToken = login.data?.access_token;
-    const adminId = login.data?.admin?.id || login.data?.user?.id;
-
     const profile = await this.request('GET', '/api/profile', { token: adminToken });
     this.assert(profile.status === 403, 'Admin JWT on GET /api/profile → 403', `status=${profile.status}`);
 
@@ -274,8 +272,6 @@ class UrgentGapsTestRunner {
       'User profile is the expected account',
       `id=${userProfile.data?.profile?.id}`
     );
-
-    void adminId;
   }
 
   postWebhook(event, { signature = 't=mock,v1=mock' } = {}) {
@@ -315,14 +311,12 @@ class UrgentGapsTestRunner {
       `error=${missingSig.data?.error}`
     );
 
-    const badJson = await this.postWebhook('not-json');
-    // postWebhook JSON.stringify's the argument — pass raw invalid body instead
+    // postWebhook JSON.stringify's its argument, so send a raw invalid body instead
     const badRaw = await this.request('POST', '/api/billing/webhook', {
       raw: '{not json',
       headers: { 'Content-Type': 'application/json', 'stripe-signature': 't=mock,v1=mock' }
     });
     this.assert(badRaw.status === 400, 'Webhook with invalid JSON → 400', `status=${badRaw.status}`);
-    void badJson;
 
     const unknown = await this.postWebhook({
       id: `evt_unknown_${Date.now()}`,

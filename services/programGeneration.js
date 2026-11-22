@@ -11,7 +11,9 @@ function getGenerationFollowUpDelayMs() {
   const raw = process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS;
   if (raw === undefined || raw === '') return 60000;
   const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : 60000;
+  // Zero and other non-positive values fall back to the 60s production default.
+  // Any positive value (including the coverage runner's 50) still overrides.
+  return Number.isFinite(n) && n > 0 ? n : 60000;
 }
 
 function isGenerationFollowUpEnabled() {
