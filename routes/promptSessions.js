@@ -16,6 +16,14 @@ const { validatePrepAnswers } = require('../services/prepValidation');
 // Solo / single-device mode: POST without pairing_id creates a session owned by
 // the caller. Prep and other member endpoints work without an accepted pairing.
 //
+// Shared-device mode: a *paired* couple sitting together on one device. POST
+// with pairing_id + shared_device: true. The session belongs to the pairing (so
+// both partners see it in GET /api/prompt-sessions), but only the creator's
+// single prep is needed before generation, exactly like solo. A shared sit
+// belongs to its creator: only the creator can write prep (anyone else gets
+// 409 SHARED_DEVICE_SESSION), generation uses only the creator's prep, and the
+// pairing must be accepted (both members present) to create one.
+//
 // Generation: POST /:id/generate builds a prompt from completed prep(s) via
 // HelpfulPromptService.generateSitSessionContent and persists bridge/session
 // content. When prep becomes ready, generation is also kicked off in the
@@ -60,6 +68,17 @@ function createPromptSessionRoutes(
     return !!(session && session.bridge_content && session.session_content);
   }
 
+  // One-device sit for a paired couple (see header). Owned by its creator.
+  function isSharedSession(session) {
+    return !!(session && session.pairing_id && session.shared_device);
+  }
+
+  function prepNotReadyMessage(session) {
+    return session && session.pairing_id && !isSharedSession(session)
+      ? 'Both partners must complete prep before generating'
+      : 'Prep must be complete before generating';
+  }
+
   // Resolve pairing membership for a session even when the pairing was soft-
   // deleted. Generation still needs both partners' prep answers; live-only
   // lookup would silently drop Partner B after unpair.
@@ -93,7 +112,10 @@ function createPromptSessionRoutes(
     const creatorId = session.created_by_user_id;
     let partnerUserIds = [creatorId];
 
-    if (session.pairing_id) {
+    // Shared-device sits generate from the creator's single prep only, even if
+    // a stray partner prep row exists (e.g. written before non-creator prep
+    // was rejected), so nothing is ever double-counted or leaked into content.
+    if (session.pairing_id && !isSharedSession(session)) {
       const pairing = await loadPairingForGeneration(session.pairing_id);
       if (pairing) {
         const otherId = partnerIdFor(pairing, creatorId);
@@ -140,7 +162,7 @@ function createPromptSessionRoutes(
     }
     // Paired sessions must not silently degrade to a single-prep generate when
     // the second completed prep exists but membership resolution failed.
-    if (session.pairing_id && completedPreps.length >= 2 && partners.length < 2) {
+    if (session.pairing_id && !isSharedSession(session) && completedPreps.length >= 2 && partners.length < 2) {
       throw new Error('Paired Sit Session generation requires both partners\' completed preps');
     }
     return partners;
@@ -173,9 +195,7 @@ function createPromptSessionRoutes(
 
     const bothComplete = await promptSessionModel.bothPrepsComplete(promptSessionId);
     if (!bothComplete) {
-      const err = new Error(session.pairing_id
-        ? 'Both partners must complete prep before generating'
-        : 'Prep must be complete before generating');
+      const err = new Error(prepNotReadyMessage(session));
       err.code = 'PREP_NOT_READY';
       throw err;
     }
@@ -306,7 +326,12 @@ function createPromptSessionRoutes(
   router.post('/', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
-      const { pairing_id } = req.body;
+      const { pairing_id, shared_device } = req.body || {};
+
+      if (shared_device !== undefined && typeof shared_device !== 'boolean') {
+        return res.status(400).json({ error: 'shared_device must be a boolean' });
+      }
+      const sharedDevice = shared_device === true && !!pairing_id;
 
       let pairing = null;
 
@@ -320,6 +345,16 @@ function createPromptSessionRoutes(
         const isMember = pairing.user1_id === userId || pairing.user2_id === userId;
         if (!isMember) {
           return res.status(403).json({ error: 'Not authorized to create a prompt session for this pairing' });
+        }
+
+        // A one-device sit is generated and revealed from a single prep, so
+        // it needs a real couple: an accepted pairing with both members. (Plain
+        // two-device sits may still start on a pending pairing; see above.)
+        if (sharedDevice && !(pairing.status === 'accepted' && pairing.user1_id && pairing.user2_id)) {
+          return res.status(409).json({
+            error: 'A one-device Sit Session needs an accepted pairing with both partners',
+            code: 'PAIRING_NOT_ACCEPTED'
+          });
         }
 
         // Policy: only one non-terminal prompt session per pairing at a time.
@@ -343,7 +378,8 @@ function createPromptSessionRoutes(
 
       const session = await promptSessionModel.createPromptSession({
         pairingId: pairing_id || null,
-        createdByUserId: userId
+        createdByUserId: userId,
+        sharedDevice
       });
 
       res.status(201).json({
@@ -352,8 +388,10 @@ function createPromptSessionRoutes(
       });
 
       // Notify the partner when a paired session is started (if they exist).
+      // Not for shared-device sessions: the partner is in the room and has no
+      // prep of their own to complete.
       const partnerId = partnerIdFor(pairing, userId);
-      if (pushNotificationService && partnerId) {
+      if (pushNotificationService && partnerId && !sharedDevice) {
         pushNotificationService.sendToUser(partnerId, {
           title: 'New Sit Session',
           body: 'Your partner started a Sit Session. Complete your prep to begin.',
@@ -430,11 +468,23 @@ function createPromptSessionRoutes(
       const userId = req.user.id;
 
       // Ensure the session exists (404) before access checks (403).
-      await promptSessionModel.getPromptSessionById(id);
+      const existingSession = await promptSessionModel.getPromptSessionById(id);
 
       const hasAccess = await promptSessionModel.checkAccess(userId, id);
       if (!hasAccess) {
         return res.status(403).json({ error: 'Not authorized to access this prompt session' });
+      }
+
+      // A shared-device sit belongs to whoever started it on their login; its
+      // one prep already folds in both partners. A second prep from the other
+      // partner would be ignored for readiness/generation but could leak, so
+      // reject it outright and let the client offer to end and restart.
+      if (isSharedSession(existingSession) && existingSession.created_by_user_id !== userId) {
+        return res.status(409).json({
+          error: 'This one-device Sit Session was started on your partner\'s login, so only that login can add prep',
+          code: 'SHARED_DEVICE_SESSION',
+          prompt_session_id: id
+        });
       }
 
       // Keep only recognized prep fields and reject prompt-injection / unsafe
@@ -473,7 +523,7 @@ function createPromptSessionRoutes(
 
       if (bothComplete) {
         triggerGenerationInBackground(id);
-      } else if (prep.completed && pushNotificationService && partnerId) {
+      } else if (prep.completed && pushNotificationService && partnerId && !isSharedSession(session)) {
         // My prep is done but my partner's is not — nudge them.
         pushNotificationService.sendToUser(partnerId, {
           title: 'Your partner finished prep',
@@ -491,7 +541,10 @@ function createPromptSessionRoutes(
   });
 
   // Get the caller's prep plus the partner's completion status. Partner's raw
-  // answers are only revealed once BOTH preps are complete (visibility policy).
+  // answers are only revealed once the session's prep is ready AND that
+  // partner's own prep is completed (visibility policy). For two-device sits
+  // the first implies the second; for shared-device sits it means a partner's
+  // unfinished draft is never shown.
   // Solo sessions have no partner_prep.
   router.get('/:id/prep', authenticateToken, async (req, res) => {
     try {
@@ -519,7 +572,7 @@ function createPromptSessionRoutes(
       let partnerPrep = null;
       if (partnerId) {
         const rawPartnerPrep = await promptSessionModel.getPrep(id, partnerId);
-        if (bothComplete) {
+        if (bothComplete && rawPartnerPrep && rawPartnerPrep.completed) {
           partnerPrep = rawPartnerPrep; // reveal full answers
         } else {
           // Only expose completion status until both are done.
@@ -620,10 +673,7 @@ function createPromptSessionRoutes(
       // abandoned sessions permanently un-retryable.
       const bothComplete = await promptSessionModel.bothPrepsComplete(id);
       if (!bothComplete) {
-        const message = session.pairing_id
-          ? 'Both partners must complete prep before generating'
-          : 'Prep must be complete before generating';
-        return res.status(409).json({ error: message, code: 'PREP_NOT_READY' });
+        return res.status(409).json({ error: prepNotReadyMessage(session), code: 'PREP_NOT_READY' });
       }
 
       if (!helpfulPromptService || !helpfulPromptService.isConfigured()) {
