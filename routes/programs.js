@@ -600,11 +600,16 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
 // Background poller that watches for programs with regenerate_therapy_response = TRUE
 // and re-runs initial-program generation for each one, then clears the flag.
 // Picks Hopeful or Helpful per-user based on the user's org_code / custom org fields.
-function startRegenerationPoller(programModel, programStepModel, hopefulPromptService, helpfulPromptService, userModel, pairingModel, userModelForOrgCode) {
-  const POLL_INTERVAL_MS = Number(process.env.REGENERATION_POLL_INTERVAL_MS || 30000);
-
-  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
+// Exported so tests can drive one poll without starting the infinite loop.
+async function runRegenerationPollOnce({
+  programModel,
+  programStepModel,
+  hopefulPromptService,
+  helpfulPromptService,
+  userModel,
+  pairingModel,
+  userModelForOrgCode
+} = {}) {
   function pickPromptService(customPrompts) {
     return customPrompts ? hopefulPromptService : helpfulPromptService;
   }
@@ -646,125 +651,141 @@ function startRegenerationPoller(programModel, programStepModel, hopefulPromptSe
     return Array.isArray(steps) && steps.length > 0;
   }
 
-  async function pollOnce() {
-    let flaggedPrograms;
+  let flaggedPrograms;
+  try {
+    flaggedPrograms = await programModel.getProgramsFlaggedForRegeneration();
+  } catch (err) {
+    console.error('[regen_poller] Failed to query flagged programs:', err.message);
+    return;
+  }
+
+  if (!flaggedPrograms.length) return;
+
+  console.log(`[regen_poller] Found ${flaggedPrograms.length} program(s) flagged for regeneration.`);
+
+  for (const program of flaggedPrograms) {
+    // Claim the flag first (CAS) so a crash mid-generation cannot loop forever
+    // and multi-instance pollers cannot both regenerate the same program.
+    // Existing steps/messages are preserved until a successful LLM response
+    // is ready to swap in — deleting first CASCADE-wiped messages on failure.
+    let claimed = false;
     try {
-      flaggedPrograms = await programModel.getProgramsFlaggedForRegeneration();
+      claimed = await programModel.claimRegenerateFlag(program.id);
     } catch (err) {
-      console.error('[regen_poller] Failed to query flagged programs:', err.message);
-      return;
+      console.error(`[regen_poller] Could not claim flag for program ${program.id}:`, err.message);
+      continue;
+    }
+    if (!claimed) {
+      console.log(`[regen_poller] Skipping program ${program.id}: regenerate flag already claimed.`);
+      continue;
     }
 
-    if (!flaggedPrograms.length) return;
+    console.log(`[regen_poller] Starting regeneration for program:`, program.id);
 
-    console.log(`[regen_poller] Found ${flaggedPrograms.length} program(s) flagged for regeneration.`);
-
-    for (const program of flaggedPrograms) {
-      // Claim the flag first (CAS) so a crash mid-generation cannot loop forever
-      // and multi-instance pollers cannot both regenerate the same program.
-      // Existing steps/messages are preserved until a successful LLM response
-      // is ready to swap in — deleting first CASCADE-wiped messages on failure.
-      let claimed = false;
+    // Resolve user name (and partner name when available — required by
+    // HelpfulPromptService.generateInitialProgram for couples users).
+    let userName = null;
+    let partnerName = null;
+    if (userModel) {
       try {
-        claimed = await programModel.claimRegenerateFlag(program.id);
-      } catch (err) {
-        console.error(`[regen_poller] Could not claim flag for program ${program.id}:`, err.message);
-        continue;
-      }
-      if (!claimed) {
-        console.log(`[regen_poller] Skipping program ${program.id}: regenerate flag already claimed.`);
-        continue;
-      }
+        const user = await userModel.getUserById(program.user_id);
+        userName = user.user_name || null;
+        partnerName = user.partner_name || null;
 
-      console.log(`[regen_poller] Starting regeneration for program:`, program.id);
-
-      // Resolve user name (and partner name when available — required by
-      // HelpfulPromptService.generateInitialProgram for couples users).
-      let userName = null;
-      let partnerName = null;
-      if (userModel) {
-        try {
-          const user = await userModel.getUserById(program.user_id);
-          userName = user.user_name || null;
-          partnerName = user.partner_name || null;
-
-          if (program.pairing_id && pairingModel && !partnerName) {
-            try {
-              const pairing = await pairingModel.getPairingById(program.pairing_id);
-              const partnerId = pairing.user1_id === program.user_id ? pairing.user2_id : pairing.user1_id;
-              if (partnerId) {
-                const partner = await userModel.getUserById(partnerId);
-                partnerName = partner.user_name || partnerName;
-              }
-            } catch (pairingError) {
-              console.log(`[regen_poller] Could not fetch partner name from pairing for program ${program.id}:`, pairingError.message);
+        if (program.pairing_id && pairingModel && !partnerName) {
+          try {
+            const pairing = await pairingModel.getPairingById(program.pairing_id);
+            const partnerId = pairing.user1_id === program.user_id ? pairing.user2_id : pairing.user1_id;
+            if (partnerId) {
+              const partner = await userModel.getUserById(partnerId);
+              partnerName = partner.user_name || partnerName;
             }
+          } catch (pairingError) {
+            console.log(`[regen_poller] Could not fetch partner name from pairing for program ${program.id}:`, pairingError.message);
           }
-        } catch (err) {
-          console.error(`[regen_poller] Could not fetch user name for program ${program.id}:`, err.message);
         }
+      } catch (err) {
+        console.error(`[regen_poller] Could not fetch user name for program ${program.id}:`, err.message);
       }
+    }
 
-      if (!userName) {
-        console.error(`[regen_poller] Skipping program ${program.id}: user_name not set.`);
-        await programModel.updateGenerationError(program.id, 'Regeneration skipped: user_name not set on account.');
+    if (!userName) {
+      console.error(`[regen_poller] Skipping program ${program.id}: user_name not set.`);
+      await programModel.updateGenerationError(program.id, 'Regeneration skipped: user_name not set on account.');
+      continue;
+    }
+
+    // Run generation (no follow-up for poller-triggered regenerations).
+    try {
+      const customPrompts = await getCustomPromptsForUser(program.user_id);
+      const service = pickPromptService(customPrompts);
+
+      // Helpful requires partnerName; Hopeful does not.
+      if (service === helpfulPromptService && !partnerName) {
+        console.error(`[regen_poller] Skipping program ${program.id}: partner_name required for couples generation but not set.`);
+        await programModel.updateGenerationError(program.id, 'Regeneration skipped: partner_name required for couples generation but not set.');
         continue;
       }
 
-      // Run generation (no follow-up for poller-triggered regenerations).
-      try {
-        const customPrompts = await getCustomPromptsForUser(program.user_id);
-        const service = pickPromptService(customPrompts);
+      const generationStart = Date.now();
+      const therapyResponse = await service.generateInitialProgram({
+        userName,
+        partnerName,
+        userInput: program.user_input,
+        customPrompts
+      });
+      const secondsToLoad = parseFloat(((Date.now() - generationStart) / 1000).toFixed(4));
+      const therapyResponseString = typeof therapyResponse === 'object'
+        ? JSON.stringify(therapyResponse)
+        : therapyResponse;
 
-        // Helpful requires partnerName; Hopeful does not.
-        if (service === helpfulPromptService && !partnerName) {
-          console.error(`[regen_poller] Skipping program ${program.id}: partner_name required for couples generation but not set.`);
-          await programModel.updateGenerationError(program.id, 'Regeneration skipped: partner_name required for couples generation but not set.');
-          continue;
-        }
+      const generationPrompt = (therapyResponse && typeof therapyResponse === 'object')
+        ? (therapyResponse.__prompt || null)
+        : null;
 
-        const generationStart = Date.now();
-        const therapyResponse = await service.generateInitialProgram({
-          userName,
-          partnerName,
-          userInput: program.user_input,
-          customPrompts
-        });
-        const secondsToLoad = parseFloat(((Date.now() - generationStart) / 1000).toFixed(4));
-        const therapyResponseString = typeof therapyResponse === 'object'
-          ? JSON.stringify(therapyResponse)
-          : therapyResponse;
-
-        const generationPrompt = (therapyResponse && typeof therapyResponse === 'object')
-          ? (therapyResponse.__prompt || null)
-          : null;
-
-        // Swap steps in a transaction (validate payload → DELETE+INSERT) so a
-        // failed/malformed regenerate cannot CASCADE-wipe messages without a
-        // successful replacement.
-        let newSteps = [];
-        if (programStepModel) {
-          newSteps = await programStepModel.replaceProgramSteps(program.id, therapyResponseString);
-        }
-
-        await programModel.updateTherapyResponse(program.id, therapyResponseString, secondsToLoad, generationPrompt);
-
-        console.log(`[regen_poller] Regeneration complete for program:`, program.id, `(${newSteps.length} steps)`);
-      } catch (err) {
-        console.error(`[regen_poller] Regeneration failed for program ${program.id}:`, err.message);
-        try {
-          const failurePrompt = (err && err.__prompt) ? err.__prompt : null;
-          await programModel.updateGenerationError(program.id, `Regeneration failed: ${err.message}`, failurePrompt);
-        } catch { /* non-fatal */ }
+      // Swap steps in a transaction (validate payload → DELETE+INSERT) so a
+      // failed/malformed regenerate cannot CASCADE-wipe messages without a
+      // successful replacement.
+      let newSteps = [];
+      if (programStepModel) {
+        newSteps = await programStepModel.replaceProgramSteps(program.id, therapyResponseString);
       }
+
+      await programModel.updateTherapyResponse(program.id, therapyResponseString, secondsToLoad, generationPrompt);
+
+      console.log(`[regen_poller] Regeneration complete for program:`, program.id, `(${newSteps.length} steps)`);
+    } catch (err) {
+      console.error(`[regen_poller] Regeneration failed for program ${program.id}:`, err.message);
+      try {
+        const failurePrompt = (err && err.__prompt) ? err.__prompt : null;
+        await programModel.updateGenerationError(program.id, `Regeneration failed: ${err.message}`, failurePrompt);
+      } catch { /* non-fatal */ }
     }
   }
+
+  // Keep the unused helper so its behavior stays identical to the previous
+  // in-poller definition (tests may invoke it via this reference in the future).
+  void hasProgramSteps;
+}
+
+function startRegenerationPoller(programModel, programStepModel, hopefulPromptService, helpfulPromptService, userModel, pairingModel, userModelForOrgCode) {
+  const POLL_INTERVAL_MS = Number(process.env.REGENERATION_POLL_INTERVAL_MS || 30000);
+
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   async function loop() {
     while (true) {
       await sleep(POLL_INTERVAL_MS);
       try {
-        await pollOnce();
+        await runRegenerationPollOnce({
+          programModel,
+          programStepModel,
+          hopefulPromptService,
+          helpfulPromptService,
+          userModel,
+          pairingModel,
+          userModelForOrgCode
+        });
       } catch (err) {
         console.error('[regen_poller] Unexpected error in poll loop:', err.message);
       }
@@ -775,4 +796,4 @@ function startRegenerationPoller(programModel, programStepModel, hopefulPromptSe
   loop();
 }
 
-module.exports = { createProgramRoutes, startRegenerationPoller };
+module.exports = { createProgramRoutes, startRegenerationPoller, runRegenerationPollOnce };

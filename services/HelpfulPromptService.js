@@ -212,7 +212,7 @@ class HelpfulPromptService extends BasePromptService {
 
   async generateSitSession({ partners }, retryCount = 0, parseRetryCount = 0) {
     const MAX_RETRIES = 2;
-    const BASE_DELAY = 1000;
+    const BASE_DELAY = this.getRetryBaseDelayMs();
     const MAX_PARSE_RETRIES = 1;
 
     let prompt = null;
@@ -704,7 +704,7 @@ Respond with ONLY a JSON object. No markdown. No extra top-level keys. Use exact
     parseRetryCount = 0,
   ) {
     const MAX_RETRIES = 2;
-    const BASE_DELAY = 1000;
+    const BASE_DELAY = this.getRetryBaseDelayMs();
     const MAX_PARSE_RETRIES = 1;
 
     // Hoisted so the outer catch can attach the prompt to thrown errors,
@@ -854,7 +854,7 @@ Please format your response as a JSON object with the following structure:
         );
 
         if (parseRetryCount < MAX_PARSE_RETRIES) {
-          const retryDelay = 500;
+          const retryDelay = this.getParseRetryDelayMs();
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
           return this.generateInitialProgram(
             { userName, partnerName, userInput },
@@ -916,7 +916,7 @@ Please format your response as a JSON object with the following structure:
     parseRetryCount = 0,
   ) {
     const MAX_RETRIES = 2;
-    const BASE_DELAY = 1000;
+    const BASE_DELAY = this.getRetryBaseDelayMs();
     const MAX_PARSE_RETRIES = 1;
 
     // Hoisted so the outer catch can attach the prompt to thrown errors.
@@ -1085,7 +1085,7 @@ Please format your response as a JSON object with the following structure:
         );
 
         if (parseRetryCount < MAX_PARSE_RETRIES) {
-          const retryDelay = 500;
+          const retryDelay = this.getParseRetryDelayMs();
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
           return this.generateNextProgram(
             { userName, partnerName, previousConversationStarters, userInput },
@@ -1148,7 +1148,7 @@ Please format your response as a JSON object with the following structure:
     retryCount = 0,
   ) {
     const MAX_RETRIES = 2;
-    const BASE_DELAY = 1000;
+    const BASE_DELAY = this.getRetryBaseDelayMs();
 
     try {
       const sanitizedUserName = this.sanitizePromptInput(userName);
@@ -1256,7 +1256,7 @@ Do not reference Emotionally Focused Therapy or Gottman Couples Therapy by name.
     retryCount = 0,
   ) {
     const MAX_RETRIES = 2;
-    const BASE_DELAY = 1000;
+    const BASE_DELAY = this.getRetryBaseDelayMs();
 
     try {
       const sanitizedUser1Name = this.sanitizePromptInput(user1Name);
