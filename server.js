@@ -5,6 +5,7 @@ require('dotenv').config();
 const {
   assertJwtSecretsForCurrentEnv,
   isMockFlagEnabled,
+  isRailwayEnv,
 } = require('./config/runtimeEnv');
 assertJwtSecretsForCurrentEnv();
 
@@ -297,8 +298,34 @@ function startOrphanedTrialCleanupJob(stripeBillingService, pairingModel, refres
   );
 }
 
+// Trust the first proxy hop on Railway (and when TRUST_PROXY=true) so
+// rate limits and req.ip use the client address from X-Forwarded-For
+// instead of the edge. Leave this off for local processes that are not
+// behind a proxy, so a spoofed X-Forwarded-For is not trusted.
+if (process.env.TRUST_PROXY === 'true' || isRailwayEnv()) {
+  app.set('trust proxy', 1);
+}
+
+// CORS_ORIGIN is a comma-separated allowlist. When unset, the previous
+// cors() default is kept (reflect any Origin) so existing web and mobile
+// clients keep working. Set CORS_ORIGIN in production once the app
+// origins are known.
+function corsOptions() {
+  const raw = String(process.env.CORS_ORIGIN || '').trim();
+  if (!raw) return {};
+  const allowed = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (allowed.includes('*')) return {};
+  return {
+    origin(origin, callback) {
+      // Non-browser clients (no Origin header) are allowed.
+      if (!origin || allowed.includes(origin)) return callback(null, true);
+      return callback(null, false);
+    }
+  };
+}
+
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions()));
 app.use(securityHeaders); // Apply security headers to all responses
 
 // Stripe webhooks need the raw body for signature verification. Register before
