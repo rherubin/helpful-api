@@ -27,6 +27,9 @@ const AdminAuthRefreshTestRunner = require('./admin-auth-refresh-test');
 const AdminPushTestRunner = require('./admin-push-test-test');
 const PromptSessionsTestRunner = require('./prompt-sessions-test');
 const RuntimeEnvTestRunner = require('./runtime-env-test');
+const AuthzIdorRegressionTestRunner = require('./authz-idor-regression-test');
+const SubscriptionSandboxReuseTestRunner = require('./subscription-sandbox-reuse-test');
+const UrgentGapsTestRunner = require('./urgent-gaps-test');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -65,6 +68,9 @@ class TestSuiteRunner {
       runAdminAuthRefresh: options.runAdminAuthRefresh !== false, // Default true
       runAdminPushTest: options.runAdminPushTest !== false, // Default true
       runPromptSessions: options.runPromptSessions !== false, // Default true
+      runAuthzIdor: options.runAuthzIdor !== false, // Default true
+      runSubscriptionSandboxReuse: options.runSubscriptionSandboxReuse !== false, // Default true
+      runUrgentGaps: options.runUrgentGaps !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
@@ -100,6 +106,9 @@ class TestSuiteRunner {
       adminAuthRefresh: null,
       adminPushTest: null,
       promptSessions: null,
+      authzIdor: null,
+      subscriptionSandboxReuse: null,
+      urgentGaps: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -1146,6 +1155,118 @@ class TestSuiteRunner {
     }
   }
 
+
+  async runAuthzIdorTests() {
+    if (!this.options.runAuthzIdor) {
+      this.log('Skipping authz / IDOR regression tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🛡️ Running Authz / IDOR Regression Tests', 'section');
+
+    try {
+      const runner = new AuthzIdorRegressionTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.run();
+
+      this.results.authzIdor = {
+        success,
+        skipped: false,
+        details: 'GET /api/pairing/:id, GET /api/users/:id, GET /api/messages-stats IDOR; admin register gate',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Authz / IDOR regression tests completed successfully', 'success');
+      } else {
+        this.log('Authz / IDOR regression tests failed', 'error');
+      }
+
+      return this.results.authzIdor;
+    } catch (error) {
+      this.log(`Authz / IDOR regression tests failed: ${error.message}`, 'error');
+      this.results.authzIdor = { success: false, error: error.message };
+      return this.results.authzIdor;
+    }
+  }
+
+  async runSubscriptionSandboxReuseTests() {
+    if (!this.options.runSubscriptionSandboxReuse) {
+      this.log('Skipping subscription sandbox-reuse tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('♻️ Running Subscription Sandbox-Reuse Unit Tests', 'section');
+
+    try {
+      const runner = new SubscriptionSandboxReuseTestRunner();
+      const success = await runner.run();
+
+      this.results.subscriptionSandboxReuse = {
+        success,
+        skipped: false,
+        details: 'Recycled Apple Sandbox original_transaction_id reuse; TEST_MOCK_IAP inert in production',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Subscription sandbox-reuse tests completed successfully', 'success');
+      } else {
+        this.log('Subscription sandbox-reuse tests failed', 'error');
+      }
+
+      return this.results.subscriptionSandboxReuse;
+    } catch (error) {
+      this.log(`Subscription sandbox-reuse tests failed: ${error.message}`, 'error');
+      this.results.subscriptionSandboxReuse = { success: false, error: error.message };
+      return this.results.subscriptionSandboxReuse;
+    }
+  }
+
+  async runUrgentGapsTests() {
+    if (!this.options.runUrgentGaps) {
+      this.log('Skipping urgent coverage-gap tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🚨 Running Urgent Coverage-Gap Tests', 'section');
+
+    try {
+      const runner = new UrgentGapsTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.urgentGaps = {
+        success,
+        skipped: false,
+        details: 'Login lockout, admin JWT on user routes, logout, token-info, Stripe invoice webhooks',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Urgent coverage-gap tests completed successfully', 'success');
+      } else {
+        this.log('Urgent coverage-gap tests failed', 'error');
+      }
+
+      return this.results.urgentGaps;
+    } catch (error) {
+      this.log(`Urgent coverage-gap tests failed: ${error.message}`, 'error');
+      this.results.urgentGaps = { success: false, error: error.message };
+      return this.results.urgentGaps;
+    }
+  }
+
   // Run all test suites
   async runAllTests() {
     this.log('🎯 Starting Comprehensive Test Suite', 'section');
@@ -1175,6 +1296,9 @@ class TestSuiteRunner {
     this.log(`  HopefulPromptService Unit Tests: ${this.options.runHopefulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Program Org Context Tests: ${this.options.runProgramOrgContext ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  PushNotificationService Unit Tests: ${this.options.runPushNotificationService ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Authz / IDOR Regression Tests: ${this.options.runAuthzIdor ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Subscription Sandbox-Reuse Tests: ${this.options.runSubscriptionSandboxReuse ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Urgent Coverage-Gap Tests: ${this.options.runUrgentGaps ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
     // Check server health
@@ -1439,6 +1563,33 @@ class TestSuiteRunner {
     if (this.options.runAdminPushTest) {
       await this.runAdminPushTestTests();
       if (this.results.adminPushTest && !this.results.adminPushTest.success && !this.results.adminPushTest.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Authz / IDOR regressions (pairing, users, messages-stats, admin register)
+    if (this.options.runAuthzIdor) {
+      await this.runAuthzIdorTests();
+      if (this.results.authzIdor && !this.results.authzIdor.success && !this.results.authzIdor.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Recycled Apple Sandbox receipt unit tests (no server)
+    if (this.options.runSubscriptionSandboxReuse) {
+      await this.runSubscriptionSandboxReuseTests();
+      if (this.results.subscriptionSandboxReuse && !this.results.subscriptionSandboxReuse.success && !this.results.subscriptionSandboxReuse.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Urgent coverage gaps: lockout, admin JWT, logout, invoice webhooks
+    if (this.options.runUrgentGaps) {
+      await this.runUrgentGapsTests();
+      if (this.results.urgentGaps && !this.results.urgentGaps.success && !this.results.urgentGaps.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -1736,6 +1887,39 @@ class TestSuiteRunner {
       }
     }
 
+    // Authz / IDOR regression results
+    if (this.results.authzIdor) {
+      if (this.results.authzIdor.skipped) {
+        this.log('🛡️ Authz / IDOR Regression Tests: SKIPPED', 'warn');
+      } else if (this.results.authzIdor.success) {
+        this.log(`🛡️ Authz / IDOR Regression Tests: PASSED (${this.results.authzIdor.passed}/${this.results.authzIdor.total})`, 'success');
+      } else {
+        this.log(`🛡️ Authz / IDOR Regression Tests: FAILED (${this.results.authzIdor.failed}/${this.results.authzIdor.total} failures)`, 'error');
+      }
+    }
+
+    // Subscription sandbox-reuse results
+    if (this.results.subscriptionSandboxReuse) {
+      if (this.results.subscriptionSandboxReuse.skipped) {
+        this.log('♻️ Subscription Sandbox-Reuse Tests: SKIPPED', 'warn');
+      } else if (this.results.subscriptionSandboxReuse.success) {
+        this.log(`♻️ Subscription Sandbox-Reuse Tests: PASSED (${this.results.subscriptionSandboxReuse.passed}/${this.results.subscriptionSandboxReuse.total})`, 'success');
+      } else {
+        this.log(`♻️ Subscription Sandbox-Reuse Tests: FAILED (${this.results.subscriptionSandboxReuse.failed}/${this.results.subscriptionSandboxReuse.total} failures)`, 'error');
+      }
+    }
+
+    // Urgent coverage-gap results
+    if (this.results.urgentGaps) {
+      if (this.results.urgentGaps.skipped) {
+        this.log('🚨 Urgent Coverage-Gap Tests: SKIPPED', 'warn');
+      } else if (this.results.urgentGaps.success) {
+        this.log(`🚨 Urgent Coverage-Gap Tests: PASSED (${this.results.urgentGaps.passed}/${this.results.urgentGaps.total})`, 'success');
+      } else {
+        this.log(`🚨 Urgent Coverage-Gap Tests: FAILED (${this.results.urgentGaps.failed}/${this.results.urgentGaps.total} failures)`, 'error');
+      }
+    }
+
     // Prompt sessions test results
     if (this.results.promptSessions) {
       if (this.results.promptSessions.skipped) {
@@ -1821,6 +2005,9 @@ class TestSuiteRunner {
         pushNotificationService: this.results.pushNotificationService,
         adminAuthRefresh: this.results.adminAuthRefresh,
         adminPushTest: this.results.adminPushTest,
+        authzIdor: this.results.authzIdor,
+        subscriptionSandboxReuse: this.results.subscriptionSandboxReuse,
+        urgentGaps: this.results.urgentGaps,
         promptSessions: this.results.promptSessions
       },
       summary: {
@@ -1835,7 +2022,7 @@ class TestSuiteRunner {
                    (this.results.stripeBilling?.total || 0) + (this.results.stripeCustomerEmailSync?.total || 0) + (this.results.appleReceiptVerifier?.total || 0) + (this.results.googlePlayReceiptVerifier?.total || 0) +
                    (this.results.helpfulPromptService?.total || 0) +
                    (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0) +
-                   (this.results.pushNotificationService?.total || 0) + (this.results.promptSessions?.total || 0),
+                   (this.results.pushNotificationService?.total || 0) + (this.results.authzIdor?.total || 0) + (this.results.subscriptionSandboxReuse?.total || 0) + (this.results.urgentGaps?.total || 0) + (this.results.promptSessions?.total || 0),
         totalPassed: (this.results.security?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) +
                     (this.results.pairingLifecycle?.passed || 0) + (this.results.userSoftDelete?.passed || 0) +
@@ -1847,7 +2034,7 @@ class TestSuiteRunner {
                     (this.results.stripeBilling?.passed || 0) + (this.results.stripeCustomerEmailSync?.passed || 0) + (this.results.appleReceiptVerifier?.passed || 0) + (this.results.googlePlayReceiptVerifier?.passed || 0) +
                     (this.results.helpfulPromptService?.passed || 0) +
                     (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0) +
-                    (this.results.pushNotificationService?.passed || 0) + (this.results.promptSessions?.passed || 0),
+                    (this.results.pushNotificationService?.passed || 0) + (this.results.authzIdor?.passed || 0) + (this.results.subscriptionSandboxReuse?.passed || 0) + (this.results.urgentGaps?.passed || 0) + (this.results.promptSessions?.passed || 0),
         totalFailed: (this.results.security?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) +
                     (this.results.pairingLifecycle?.failed || 0) + (this.results.userSoftDelete?.failed || 0) +
@@ -1859,7 +2046,7 @@ class TestSuiteRunner {
                     (this.results.stripeBilling?.failed || 0) + (this.results.stripeCustomerEmailSync?.failed || 0) + (this.results.appleReceiptVerifier?.failed || 0) + (this.results.googlePlayReceiptVerifier?.failed || 0) +
                     (this.results.helpfulPromptService?.failed || 0) +
                     (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0) +
-                    (this.results.pushNotificationService?.failed || 0) + (this.results.promptSessions?.failed || 0)
+                    (this.results.pushNotificationService?.failed || 0) + (this.results.authzIdor?.failed || 0) + (this.results.subscriptionSandboxReuse?.failed || 0) + (this.results.urgentGaps?.failed || 0) + (this.results.promptSessions?.failed || 0)
       }
     };
   }
@@ -1899,6 +2086,9 @@ function parseArgs() {
     if (arg === '--no-admin-auth-refresh') options.runAdminAuthRefresh = false;
     if (arg === '--no-admin-push-test') options.runAdminPushTest = false;
     if (arg === '--no-prompt-sessions') options.runPromptSessions = false;
+    if (arg === '--no-authz-idor') options.runAuthzIdor = false;
+    if (arg === '--no-subscription-sandbox-reuse') options.runSubscriptionSandboxReuse = false;
+    if (arg === '--no-urgent-gaps') options.runUrgentGaps = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];
     if (arg.startsWith('--timeout=')) options.timeout = parseInt(arg.split('=')[1]);

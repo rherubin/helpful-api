@@ -28,7 +28,10 @@
     "test:user-soft-delete": "node tests/user-soft-delete-test.js",
     "test:authz-idor": "node tests/authz-idor-regression-test.js",
     "purge:prompt-sessions": "node scripts/purge-prompt-sessions.js",
-    "purge:prompt-sessions:confirm": "node scripts/purge-prompt-sessions.js --confirm"
+    "purge:prompt-sessions:confirm": "node scripts/purge-prompt-sessions.js --confirm",
+    "test:coverage": "node scripts/run-coverage.js",
+    "test:urgent-gaps": "node tests/urgent-gaps-test.js",
+    "test:subscription-sandbox-reuse": "node tests/subscription-sandbox-reuse-test.js"
   },
   "keywords": [
     "api",
@@ -56,6 +59,7 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
+    "c8": "^10.1.3",
     "nodemon": "^3.0.2",
     "supertest": "^7.1.4"
   },
