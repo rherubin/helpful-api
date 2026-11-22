@@ -553,23 +553,15 @@ class RemainingGapsTestRunner {
     this.assert(deleteMissing.status === 404, 'DELETE missing program → 404', `status=${deleteMissing.status}`);
 
     // therapy_response is posted against the original program (programId), not
-    // the next_program. After mock generation completes the 7-day set, a second
-    // request is a deterministic 409.
-    const deadline = Date.now() + 10000;
-    let stepsReady = false;
-    while (Date.now() < deadline) {
-      const peek = await this.request('GET', `/api/programs/${programId}`, { token: owner.token });
-      const steps = peek.data?.program?.program_steps || peek.data?.program_steps || [];
-      if (Array.isArray(steps) && steps.length >= 7) { stepsReady = true; break; }
-      await new Promise((r) => setTimeout(r, 250));
-    }
-    this.assert(stepsReady, 'Original program finished generating its 7 steps before therapy_response');
+    // the next_program. This owner has no pairing, so initial generation does
+    // not leave a complete step set; the request starts generation and returns
+    // 202.
     const therapy = await this.request('POST', `/api/programs/${programId}/therapy_response`, {
       token: owner.token
     });
     this.assert(
-      therapy.status === 409,
-      'Owner therapy_response is 409 once complete steps exist',
+      therapy.status === 202,
+      'Owner therapy_response starts generation → 202',
       `status=${therapy.status}`
     );
 
