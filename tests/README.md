@@ -40,7 +40,8 @@ Orchestrator: `run-all-tests.js` (order roughly: security → load → auth → 
 | `messages-test.js` | Step message list/create/update |
 | `therapy-trigger-test.js` | Couples therapy auto-trigger, welcome, chime-in |
 | `www-authenticate-test.js` | 401 `WWW-Authenticate` header |
-| `subscription-test.js` | iOS/Android receipts, premium, GET status/receipts |
+| `subscription-test.js` | iOS/Android receipts, premium, GET status/receipts (Android payloads match the real app: `com.helpful.couples`, `expiration_date: null`) |
+| `google-play-receipt-verifier-test.js` | Google Play verification unit tests: service-account JWT/token caching, `subscriptionsv2.get` (mocked HTTP), accept/reject rules, linked tokens, renewal refresh job. No server/DB/credentials |
 | `user-org-code-test.js` | Org code + custom org premium on `PUT /users` |
 | `device-tokens-test.js` | Device token CRUD |
 | `helpful-prompt-service-test.js` | Helpful track unit tests (mocked fetch) |

@@ -17,6 +17,7 @@ Deeper docs (this README is the client contract):
 
 - Sit Sessions — [Prompt sessions (“Sit Sessions”)](#prompt-sessions-sit-sessions) and [`docs/prompt-sessions-design.md`](./docs/prompt-sessions-design.md)
 - Stripe — [`docs/stripe-billing.md`](./docs/stripe-billing.md)
+- Google Play (Android IAP) — [`docs/google-play-billing.md`](./docs/google-play-billing.md)
 - Tests — [`tests/README.md`](./tests/README.md)
 
 ## Contents
@@ -47,7 +48,7 @@ Deeper docs (this README is the client contract):
 | **14-day programs** | Async AI generation of day steps; user messages; couples therapy system replies; unlock tracking | **Mobile** (web does not call these) |
 | **Helpful vs Hopeful** | Same OpenAI model; Hopeful (faith-based) when the user has an org code or custom org name/city/state | Any client |
 | **Stripe (web)** | `POST /api/billing/subscription-intent` for in-app Payment Element; Customer Portal; webhooks; reconcile + orphaned-trial jobs | **Web** |
-| **IAP (mobile)** | `POST /api/subscription` — iOS verifies StoreKit 2 JWS (needs `APPLE_BUNDLE_ID`); Android **503** until Play verification exists. `TEST_MOCK_IAP=true` trusts the client (tests only) | **Mobile** |
+| **IAP (mobile)** | `POST /api/subscription` — iOS verifies StoreKit 2 JWS (needs `APPLE_BUNDLE_ID`); Android verifies the purchase token with the Google Play Developer API (needs `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`, else **503**) — see [`docs/google-play-billing.md`](./docs/google-play-billing.md). `TEST_MOCK_IAP=true` trusts the client (tests only) | **Mobile** |
 | **Org codes** | Admin CRUD + audit; app users may list (secrets stripped); linking sets `users.is_premium` | Admin + mobile |
 | **Push** | Device-token CRUD; FCM send is a no-op if Firebase is unconfigured | **Mobile** |
 | **Admin** | Separate `admin_users` JWT (`type: "admin"`); org-code mutations; push-test | Internal |
@@ -162,6 +163,8 @@ OPENAI_API_KEY=your-openai-api-key
 # IAP receipts (POST /api/subscription)
 # APPLE_BUNDLE_ID=com.helpfullabs.couples
 # APPLE_IAP_ENVIRONMENT=Production,Sandbox
+# GOOGLE_PLAY_SERVICE_ACCOUNT_JSON={"type":"service_account","client_email":"...","private_key":"..."}
+# GOOGLE_PLAY_PACKAGE_NAMES=com.helpful.couples
 # TEST_MOCK_IAP=true
 ```
 
@@ -183,7 +186,13 @@ OPENAI_API_KEY=your-openai-api-key
 | `TEST_MOCK_PUSH` | No | — | Mock FCM success |
 | `APPLE_BUNDLE_ID` | For live iOS IAP | — | Comma-separated bundle ids (prod: `com.helpfullabs.couples`). Fail-closes `POST /api/subscription` with **503** if unset. Receipts for any other bundle are rejected |
 | `APPLE_IAP_ENVIRONMENT` | No | `Production,Sandbox` | Comma-separated Apple environments to accept. Both by default because App Review buys with sandbox accounts against the production build; each subscription row records its environment |
-| `TEST_MOCK_IAP` | No | — | Trust client IAP receipt fields (`POST /api/subscription`). Tests only; Android still **503** without Play verification |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | For live Android IAP | — | Google Cloud service account key (full JSON, or base64 of it) with access to the app in Play Console. Without it Android receipts fail-close with **503**. Setup: [`docs/google-play-billing.md`](./docs/google-play-billing.md) |
+| `GOOGLE_PLAY_PACKAGE_NAMES` | No | `com.helpful.couples` | Comma-separated Android application ids to accept; receipts for any other package are rejected before Google is called |
+| `GOOGLE_PLAY_PRODUCT_IDS` | No | `com.helpful.yearly.29.99,com.helpful.monthly.9.99` | Comma-separated subscription product ids that grant premium |
+| `GOOGLE_PLAY_ALLOW_TEST_PURCHASES` | No | `true` | License-tester purchases are accepted (and flagged `is_test_purchase`) like Apple Sandbox; `false` rejects them |
+| `GOOGLE_PLAY_REFRESH_INTERVAL_HOURS` | No | `1` | Renewal refresh job (re-checks verified Android rows near/past expiry with Google); `0` disables. Only runs with `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` set and no `TEST_MOCK_IAP` |
+| `GOOGLE_PLAY_REFRESH_BATCH_LIMIT` | No | `50` | Rows checked per refresh run |
+| `TEST_MOCK_IAP` | No | — | Trust client IAP receipt fields (`POST /api/subscription`), skipping Apple/Google verification. Tests only. A null Android `expiration_date` gets +365d (yearly) / +30d |
 | `ALLOW_ADMIN_REGISTRATION` | No | — | Opt-in open `POST /api/admin/auth/register`. Also allowed when `TEST_MOCK_LLM`/`TEST_MOCK_STRIPE` is true, or no admins exist yet |
 | `ADMIN_REGISTRATION_SECRET` | No | — | Alternate admin-register unlock (header `x-admin-registration-secret` or body `registration_secret`) |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` / `_PATH` | No | — | Real FCM |
@@ -342,13 +351,14 @@ Login, profile, and GET/PUT user all compute `premium` as pairing premium **or**
 
 ### Background jobs
 
-All four run **in-process** (`setInterval`/`setTimeout` in `server.js`, plus the poller's own loop in `routes/programs.js`) — there is no external cron/worker process or queue. Each is started once at boot inside `initializeApp()`, guarded by whether the service it depends on is configured. All logs are prefixed with the job's tag below.
+All five run **in-process** (`setInterval`/`setTimeout` in `server.js`, plus the poller's own loop in `routes/programs.js`) — there is no external cron/worker process or queue. Each is started once at boot inside `initializeApp()`, guarded by whether the service it depends on is configured. All logs are prefixed with the job's tag below.
 
 | Job | Log tag | Runs when | Interval env var | Default | Other env vars |
 |-----|---------|-----------|-------------------|---------|-----------------|
 | Program regeneration poller | `[regen_poller]` | An LLM service is configured (`OPENAI_API_KEY`, or `TEST_MOCK_LLM`) | `REGENERATION_POLL_INTERVAL_MS` | `30000` (30s) | — (always on while configured; no `0`-disables switch) |
 | Device token cleanup | `[push-cleanup]` | Always | `PUSH_TOKEN_CLEANUP_INTERVAL_HOURS` | `24` | Age threshold fixed at 180 days in code (not configurable) |
 | Stripe subscription reconcile | `[stripe-reconcile]` | Stripe billing configured (`STRIPE_SECRET_KEY` or `TEST_MOCK_STRIPE`) | `STRIPE_RECONCILE_INTERVAL_HOURS` | `6` | `STRIPE_RECONCILE_BATCH_LIMIT` (default `50`) |
+| Google Play subscription refresh | `[google-play-refresh]` | `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` set and `TEST_MOCK_IAP` not `true` | `GOOGLE_PLAY_REFRESH_INTERVAL_HOURS` | `1` | `GOOGLE_PLAY_REFRESH_BATCH_LIMIT` (default `50`) |
 | Orphaned-trial cleanup | `[orphaned-trial-cleanup]` | Stripe billing configured | `ORPHANED_CLEANUP_INTERVAL_HOURS` | `24` | `ORPHANED_CLEANUP_AGE_HOURS` (default `48`), `ORPHANED_CLEANUP_BATCH_LIMIT` (default `50`), `ORPHANED_CLEANUP_DRY_RUN` (default `true`) |
 
 Any job with an `_INTERVAL_HOURS` env var is disabled by setting it to `0` (logged at boot, e.g. `[stripe-reconcile] disabled via STRIPE_RECONCILE_INTERVAL_HOURS`). The regeneration poller has no such switch — it runs whenever an LLM backend is configured at all.
@@ -356,6 +366,7 @@ Any job with an `_INTERVAL_HOURS` env var is disabled by setting it to `0` (logg
 - **Program regeneration poller** (`routes/programs.js` — `startRegenerationPoller`) — polls for programs with `regenerate_therapy_response = true`, claims each with a compare-and-swap flag (so a crash mid-run or multiple instances can't double-process or loop forever), regenerates via the Helpful/Hopeful prompt service, and pushes `program_ready` on success. See [Program generation](#program-generation).
 - **Device token cleanup** (`server.js` — `startDeviceTokenCleanupJob`) — deletes FCM device tokens whose `last_used_at` (falling back to `updated_at`) is older than 180 days. First run 4 minutes after boot, then on the configured interval.
 - **Stripe subscription reconcile** (`services/StripeBillingService.js` — `reconcileSubscriptions`, scheduled by `startStripeSubscriptionReconcileJob`) — re-fetches local `trialing`/`active`/`past_due`/`unpaid`/`incomplete` subscriptions from Stripe and re-applies them, so a missed or delayed webhook (failed renewal, cancellation) still clears or restores `users.is_premium`. First run 5 minutes after boot. See [`docs/stripe-billing.md`](./docs/stripe-billing.md).
+- **Google Play subscription refresh** (`services/SubscriptionService.js` — `refreshAndroidSubscriptions`, scheduled by `startGooglePlaySubscriptionRefreshJob`) — the Android app submits each purchase once and never again, so renewals, cancellations, refunds and holds would otherwise never reach the API. Re-asks Google about verified `android_subscriptions` rows whose expiry is within 24h or passed in the last 30 days (each row at most hourly), stores the new expiry/state (404/410 → `TOKEN_INVALID`), then reconciles pairing premium for each affected user. First run 6 minutes after boot. Real-time developer notifications are the planned follow-up — see [`docs/google-play-billing.md`](./docs/google-play-billing.md).
 - **Orphaned-trial cleanup** (`services/StripeBillingService.js` — `cleanupOrphanedTrials`, scheduled by `startOrphanedTrialCleanupJob`) — `helpful-web` silently creates a placeholder account (`trial.*@sit-together.local`) and a real Stripe trial subscription the moment someone reaches the checkout screen, before any payment method is entered; most abandoned checkouts never come back to finish. This job finds trials still `trialing`/`incomplete`, owned by an un-claimed placeholder account, older than `ORPHANED_CLEANUP_AGE_HOURS`, double-checks each against **live** Stripe (status + no `default_payment_method`/`default_source`) immediately before acting so an in-progress checkout is never touched, then cancels the Stripe subscription (via the same `cancelActiveSubscriptionsForUser` used on manual account delete — the Stripe **customer** object is left alone) and soft-deletes the placeholder user (`softDeleteUser`, cascades pairings, revokes refresh tokens). Ships with `ORPHANED_CLEANUP_DRY_RUN=true` — logs candidates without acting until explicitly set to `false`. First run 10 minutes after boot.
 
 ### Push kinds (`data.kind`)
@@ -547,11 +558,11 @@ Message types: `user_message`, `system`, legacy `openai_response`.
 
 #### POST `/api/subscription`
 
-Auth. Platform-specific body. iOS receipts are verified as StoreKit 2 JWS against a pinned Apple root (`APPLE_BUNDLE_ID` required). Android still returns **503** until Play verification exists. `TEST_MOCK_IAP=true` trusts client fields (tests only).
+Auth. Platform-specific body. iOS receipts are verified as StoreKit 2 JWS against a pinned Apple root (`APPLE_BUNDLE_ID` required). Android purchase tokens are verified with Google's `purchases.subscriptionsv2.get` (`GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` required, else **503**); Google's product, expiry, order id and state replace the client's. Rules and error `code`s: [`docs/google-play-billing.md`](./docs/google-play-billing.md). `TEST_MOCK_IAP=true` trusts client fields (tests only).
 
 **iOS:** `platform: "ios"`, `product_id`, `transaction_id`, `original_transaction_id`, `jws_receipt`, `environment` (`Production`|`Sandbox`), `purchase_date`, `expiration_date` (epoch **ms**).
 
-**Android:** `platform: "android"`, `product_id`, `purchase_token`, `order_id`, `package_name`, `purchase_date`, `expiration_date` (epoch **ms**).
+**Android:** `platform: "android"`, `product_id`, `purchase_token`, `order_id`, `package_name`, `purchase_date` (epoch **ms**). `expiration_date` is optional (the app sends `null`); the expiry comes from Google.
 
 **200** update / **201** create:
 
@@ -569,7 +580,7 @@ Auth. Platform-specific body. iOS receipts are verified as StoreKit 2 JWS agains
 }
 ```
 
-Conflict if receipt belongs to another user (**409** via `SubscriptionError`). On a non-production server, a Sandbox receipt whose transaction id was reused — Xcode local StoreKit resets ids to 0, 1, 2… — is reassigned to the caller instead. Production, including App Review sandbox purchases, still returns 409.
+Errors are `{ "error": "..." }`, plus a machine-readable `code` for Android verification failures. Conflict if receipt belongs to another user (**409** via `SubscriptionError`). On a non-production server, a Sandbox receipt whose transaction id was reused — Xcode local StoreKit resets ids to 0, 1, 2… — is reassigned to the caller instead. Production, including App Review sandbox purchases, still returns 409.
 
 #### GET `/api/subscription`
 
@@ -659,7 +670,7 @@ Max **25** tokens per user. Raw FCM token never returned after register (only re
 | **Solo / single-device** | omit `pairing_id` (or `{}`) | Creator only | **1** completed prep | **Yes** — pairing not required |
 | **Paired** | `{ "pairing_id" }` | Creator or pairing member | **2** completed preps | **Yes** — after both preps |
 
-**Product note for web / app:** Sit Sessions are always written as a **couple experience** (two reflections, partner comparison, shared challenge), even in single-device mode. Pairing can happen **after** the first Sit Session. On one phone/shared web session, create a solo session (`pairing_id: null`), complete prep, then generate — the LLM still returns couple-shaped Bridge + Session content. When only one prep exists, Partner 2 may be labeled `"Partner"` (or similar) and inferred carefully from Partner 1’s answers.
+**Product note for web / app:** Sit Sessions are always written as a **couple experience** (two reflections, partner comparison, shared challenge), even in single-device mode. Pairing can happen **after** the first Sit Session. On one phone/shared web session, an **unpaired** user creates a solo session (`pairing_id: null`); a **paired** couple sharing one device creates `{ pairing_id, shared_device: true }` instead, so the sit stays on the pairing and shows up in **both** partners' `GET /api/prompt-sessions` (a solo session is only ever visible to its creator). Either way, one complete prep is enough, then generate — the LLM still returns couple-shaped Bridge + Session content. When only one prep exists, Partner 2 may be labeled `"Partner"` (or similar) and inferred carefully from Partner 1’s answers.
 
 - Pairing status need **not** be `accepted`. If `pairing_id` is sent, the caller must be a **member** (pending is fine). Soft-deleted pairings do not grant partner access.
 - **One** active (non-terminal) session **per pairing**; **one** active solo session **per user**. Active = status not `complete` / `abandoned`.
@@ -955,10 +966,10 @@ Clients should bind UI to these fields only (not free-form prose blobs).
 
 | Method | Path | Notes |
 |--------|------|--------|
-| POST | `/api/prompt-sessions` | Body optional `{ "pairing_id" }` · **201** · **409** if an active session already exists |
+| POST | `/api/prompt-sessions` | Body optional `{ "pairing_id", "shared_device" }` (`shared_device: true` = paired couple on one device; ready after the creator's one prep; ignored without `pairing_id`; non-boolean → **400**; needs an **accepted** pairing with both members, else **409** `PAIRING_NOT_ACCEPTED`) · **201** · **409** if an active session already exists (body includes `prompt_session` with `created_by_user_id` / `shared_device`) |
 | GET | `/api/prompt-sessions` | Optional `?pairing_id=` · list; items include `bridge_content` / `session_content` when generated |
 | GET | `/api/prompt-sessions/:id` | Creator or pairing member · **primary read path** for Bridge/Session after generate or auto-generate |
-| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields. Strings only (≤2000 chars). Prompt-injection / jailbreak content → **400** `PREP_UNSAFE_INPUT`. Response: `prep`, `both_preps_complete` |
+| POST | `/api/prompt-sessions/:id/prep` | Merge prep fields. Strings only (≤2000 chars). Prompt-injection / jailbreak content → **400** `PREP_UNSAFE_INPUT`. Response: `prep`, `both_preps_complete`. On a `shared_device` session only the **creator** may write prep; anyone else → **409** `SHARED_DEVICE_SESSION` |
 | GET | `/api/prompt-sessions/:id/prep` | Own prep; partner answers only when both complete (paired). Solo: `partner_prep: null` |
 | PATCH | `/api/prompt-sessions/:id` | Body `status` and/or `current_phase` |
 | POST | `/api/prompt-sessions/:id/generate` | **Working** (solo or paired). **200** + full `prompt_session` with Bridge/Session · **409** `PREP_NOT_READY` or `GENERATION_RUNNING` (branch on `code`) · **503** LLM not configured · idempotent once `succeeded`; retries when `failed` |
@@ -1414,6 +1425,7 @@ helpful-api/
 │   ├── query-mysql-database.js
 │   └── purge-prompt-sessions.js
 ├── docs/
+│   ├── google-play-billing.md
 │   ├── prompt-sessions-design.md
 │   └── stripe-billing.md
 ├── tests/
