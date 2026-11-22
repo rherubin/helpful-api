@@ -13,6 +13,11 @@ function createOrgCodeRoutes(orgCodeModel, userModel, authService, adminAuthServ
       next_program_prompt,
       therapy_response_prompt,
       org_code,
+      address1,
+      address2,
+      city,
+      state,
+      postalCode,
       ...safeFields
     } = orgCode;
     return safeFields;

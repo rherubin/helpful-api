@@ -1197,10 +1197,11 @@ class UserOrgCodeTestRunner {
 
       if (listResponse.data.org_codes.length > 0) {
         const orgCode = listResponse.data.org_codes[0];
-        this.assert(orgCode.address1 !== undefined, 'GET /api/org-codes - includes address1');
-        this.assert(orgCode.city !== undefined, 'GET /api/org-codes - includes city');
-        this.assert(orgCode.state !== undefined, 'GET /api/org-codes - includes state');
-        this.assert(orgCode.postalCode !== undefined, 'GET /api/org-codes - includes postalCode');
+        this.assert(orgCode.address1 === undefined, 'GET /api/org-codes - excludes address1');
+        this.assert(orgCode.address2 === undefined, 'GET /api/org-codes - excludes address2');
+        this.assert(orgCode.city === undefined, 'GET /api/org-codes - excludes city');
+        this.assert(orgCode.state === undefined, 'GET /api/org-codes - excludes state');
+        this.assert(orgCode.postalCode === undefined, 'GET /api/org-codes - excludes postalCode');
         this.assert(orgCode.initial_program_prompt === undefined, 'GET /api/org-codes - excludes initial_program_prompt');
         this.assert(orgCode.next_program_prompt === undefined, 'GET /api/org-codes - excludes next_program_prompt');
         this.assert(orgCode.therapy_response_prompt === undefined, 'GET /api/org-codes - excludes therapy_response_prompt');
