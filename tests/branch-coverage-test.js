@@ -323,6 +323,10 @@ class BranchCoverageTestRunner {
       pairingService.pairingModel.restorePairingAtomic = async () => { throw new Error('db'); };
       this.assert((await this.request('PATCH', `${baseURL}/api/pairing/p1/restore`, { token })).status === 500, 'Pairing restore 500');
       this.assert((await this.request('GET', `${baseURL}/api/pairing/deleted/all`, { token })).status === 403, 'Deleted pairings requires admin');
+      pairingService.pairingModel.getDeletedPairings = async () => [{ id: 'p_del', status: 'deleted', user1_id: 'u1', user2_id: 'u2' }];
+      const deletedOk = await this.request('GET', `${baseURL}/api/pairing/deleted/all`, { token: adminToken() });
+      this.assert(deletedOk.status === 200, 'Deleted pairings admin 200', `status=${deletedOk.status}`);
+      this.assert(Array.isArray(deletedOk.data) && deletedOk.data[0] && deletedOk.data[0].id === 'p_del', 'Deleted pairings admin returns a list');
       pairingService.pairingModel.getDeletedPairings = async () => { throw new Error('db'); };
       this.assert((await this.request('GET', `${baseURL}/api/pairing/deleted/all`, { token: adminToken() })).status === 500, 'Deleted pairings admin 500');
     } finally {
@@ -995,32 +999,33 @@ class BranchCoverageTestRunner {
     const hope = new HopefulPromptService();
     hope.mockMode = false;
     hope.apiKey = 'sk-test';
+    hope.retryBaseDelayMs = 1;
+    hope.parseRetryDelayMs = 1;
     let hcalls = 0;
     hope.callLLM = async () => {
       hcalls++;
-      if (hcalls === 1) return { content: 'not-json', finishReason: 'stop' };
+      if (hcalls === 1) return { content: 'not-json ' + 'x'.repeat(120), finishReason: 'stop' };
       return { content: JSON.stringify(sevenDayFaithProgram()), finishReason: 'stop' };
     };
-    try {
-      this.assert(!!(await hope.generateInitialProgram({
-        userName: 'Ada',
-        userInput: 'We want to grow in faith together this month as a couple.',
-        customPrompts: { organizationName: 'Grace Church', organizationCity: 'Austin', organizationState: 'TX', initialProgramPrompt: 'Remember our congregation values honesty and grace.' }
-      })), 'Hopeful generateInitialProgram org prompt + retry');
-    } catch (e) { this.assert(true, 'Hopeful generateInitialProgram exercised', e.message); }
+    const initial = await hope.generateInitialProgram({
+      userName: 'Ada',
+      userInput: 'We want to grow in faith together this month as a couple.',
+      customPrompts: { organizationName: 'Grace Church', organizationCity: 'Austin', organizationState: 'TX', initialProgramPrompt: 'Remember our congregation values honesty and grace.' }
+    });
+    this.assert(!!(initial && initial.program && Array.isArray(initial.program.days)), 'Hopeful generateInitialProgram org prompt + retry');
     if (typeof hope.generateSingleUserChimeInPrompt === 'function') {
       hope.callLLM = async () => ({ content: 'What scripture comes to mind as you think about how you can show grace to your partner this week in a small, concrete way?', finishReason: 'stop' });
-      try { this.assert(!!(await hope.generateSingleUserChimeInPrompt({ userName: 'Ada', conversationStarter: 'How can you show grace?', userMessages: ['I was impatient'], customPrompts: { organizationName: 'Grace Church', organizationCity: 'Austin', organizationState: 'TX' } })), 'Hopeful generateSingleUserChimeInPrompt with org prompts'); }
-      catch (e) { this.assert(true, 'Hopeful generateSingleUserChimeInPrompt exercised', e.message); }
+      const chime = await hope.generateSingleUserChimeInPrompt({ userName: 'Ada', conversationStarter: 'How can you show grace?', userMessages: ['I was impatient'], customPrompts: { organizationName: 'Grace Church', organizationCity: 'Austin', organizationState: 'TX' } });
+      this.assert(typeof chime === 'string' && chime.length > 10, 'Hopeful generateSingleUserChimeInPrompt with org prompts');
     }
     if (typeof hope.generateNextProgram === 'function') {
       hope.callLLM = async () => ({ content: JSON.stringify(sevenDayFaithProgram()), finishReason: 'stop' });
-      try { await hope.generateNextProgram({ userName: 'Ada', userInput: 'Continue please with a new week of faith-centered reflections.', customPrompts: null }); this.assert(true, 'Hopeful generateNextProgram'); }
-      catch (e) { this.assert(true, 'Hopeful generateNextProgram exercised', e.message); }
+      const nextProg = await hope.generateNextProgram({ userName: 'Ada', userInput: 'Continue please with a new week of faith-centered reflections.', customPrompts: null });
+      this.assert(!!(nextProg && nextProg.program && Array.isArray(nextProg.program.days)), 'Hopeful generateNextProgram returns a program');
     }
     hope.mockMode = true;
-    try { await hope.generateCouplesProgram('Ada', 'Bea', 'We want to grow.'); this.assert(true, 'Hopeful generateCouplesProgram mock'); }
-    catch (e) { this.assert(true, 'Hopeful generateCouplesProgram exercised', e.message); }
+    const mockProgram = await hope.generateCouplesProgram('Ada', 'Bea', 'We want to grow in faith together this month as a couple.');
+    this.assert(!!(mockProgram && (mockProgram.program || mockProgram.title || mockProgram.__prompt)), 'Hopeful generateCouplesProgram mock returns a program');
   }
 
   async testProgramGeneration() {
@@ -1030,10 +1035,16 @@ class BranchCoverageTestRunner {
     try {
       delete process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS;
       this.assert(getGenerationFollowUpDelayMs() === 60000, 'follow-up delay defaults to 60000');
+      process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS = '';
+      this.assert(getGenerationFollowUpDelayMs() === 60000, 'follow-up delay empty falls back to 60000');
+      process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS = '0';
+      this.assert(getGenerationFollowUpDelayMs() === 60000, 'follow-up delay 0 falls back to 60000');
       process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS = 'not-a-number';
       this.assert(getGenerationFollowUpDelayMs() === 60000, 'follow-up delay invalid falls back to 60000');
       process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS = '10';
-      this.assert(getGenerationFollowUpDelayMs() === 10, 'follow-up delay read at call time');
+      this.assert(getGenerationFollowUpDelayMs() === 10, 'follow-up delay positive overrides at call time');
+      process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS = '50';
+      this.assert(getGenerationFollowUpDelayMs() === 50, 'follow-up delay 50 (coverage runner) overrides');
       delete process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED;
       this.assert(isGenerationFollowUpEnabled() === true, 'follow-up enabled by default');
       process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED = 'false';
