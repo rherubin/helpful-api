@@ -211,6 +211,7 @@ class AuthService {
         premium: _legacyPremium,
         bypass_password,
         is_premium,
+        stripe_customer_id,
         ...userData
       } = user;
 

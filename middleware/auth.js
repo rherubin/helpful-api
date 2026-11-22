@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 // JWT Middleware to verify token and reset refresh token expiration
-function createAuthenticateToken(authService) {
+function createAuthenticateToken(authService, { allowAdmin = false } = {}) {
   return async function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
@@ -36,6 +36,14 @@ function createAuthenticateToken(authService) {
       }
 
       req.user = user;
+
+      // Admin JWTs share JWT_SECRET but belong to admin_users, not app users.
+      // User routes reject them (existing user tokens have no `type` claim and
+      // still pass). Pass { allowAdmin: true } for admin or mixed routes.
+      if (!allowAdmin && user && user.type === 'admin') {
+        res.setHeader('WWW-Authenticate', 'Bearer realm="API", error="insufficient_scope"');
+        return res.status(403).json({ error: 'Admin tokens cannot be used on user routes' });
+      }
 
       // Reset refresh token expiration to 14 days asynchronously (non-blocking)
       if (authService && user && user.id) {

@@ -4,7 +4,7 @@ const { adminActionLimiter } = require('../middleware/security');
 
 function createAdminRoutes(adminAuthService, pushNotificationService, userModel) {
   const router = express.Router();
-  const authenticateToken = createAuthenticateToken(adminAuthService);
+  const authenticateToken = createAuthenticateToken(adminAuthService, { allowAdmin: true });
 
   // Manually send a push notification to a specific user.
   // Useful for smoke-testing FCM credentials and device token registration.

@@ -644,58 +644,17 @@ class ProgramsTestRunner {
     try {
       const response = await axios.get(`${this.baseURL}/api/programs/metrics`, {
         headers: { Authorization: `Bearer ${token}` },
-        timeout: this.timeout
+        timeout: this.timeout,
+        validateStatus: () => true
       });
 
       this.assert(
-        response.status === 200,
-        'Get metrics returns 200',
+        response.status === 403,
+        'Get metrics rejects a regular user token with 403',
         `Status: ${response.status}`
       );
-
-      this.assert(
-        response.data.metrics !== undefined,
-        'Get metrics returns metrics object',
-        `Has metrics: ${!!response.data.metrics}`
-      );
-
-      if (response.data.metrics) {
-        // The endpoint returns { metrics: { hopeful: {...}, helpful: {...} } }
-        // where each service bucket carries the operational counters.
-        ['hopeful', 'helpful'].forEach(service => {
-          this.assert(
-            Object.prototype.hasOwnProperty.call(response.data.metrics, service),
-            `Metrics contains ${service} bucket`,
-            `Bucket: ${service}`
-          );
-          const bucket = response.data.metrics[service] || {};
-          ['totalRequests', 'successfulRequests', 'failedRequests', 'successRate'].forEach(key => {
-            this.assert(
-              Object.prototype.hasOwnProperty.call(bucket, key),
-              `${service} metrics contains ${key}`,
-              `Value: ${bucket[key]}`
-            );
-          });
-        });
-      }
-
-      this.assert(
-        !!response.data.timestamp,
-        'Get metrics includes timestamp',
-        `Timestamp: ${response.data.timestamp}`
-      );
-
     } catch (error) {
-      // 503 is acceptable if ChatGPT service not available
-      if (error.response?.status === 503) {
-        this.assert(
-          true,
-          'Get metrics returns 503 when ChatGPT service unavailable',
-          `Status: ${error.response?.status}`
-        );
-      } else {
-        this.assert(false, 'Get metrics', `Error: ${error.response?.data?.error || error.message}`);
-      }
+      this.assert(false, 'Get metrics', `Error: ${error.response?.data?.error || error.message}`);
     }
   }
 

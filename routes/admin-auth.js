@@ -20,7 +20,7 @@ function filterAdminUserData(user) {
 
 function createAdminAuthRoutes(adminAuthService, adminUserModel) {
   const router = express.Router();
-  const authenticateToken = createAuthenticateToken(adminAuthService);
+  const authenticateToken = createAuthenticateToken(adminAuthService, { allowAdmin: true });
 
   // Apply security logging to all admin auth routes
   router.use(securityLogger);
