@@ -37,6 +37,7 @@ pids
 
 # Coverage directory used by tools like istanbul
 coverage/
+.c8-tmp/
 
 # OS generated files
 .DS_Store
