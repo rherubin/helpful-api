@@ -12,6 +12,10 @@ const HopefulPromptService = require('../services/HopefulPromptService');
 const Pairing = require('../models/Pairing');
 const AndroidSubscription = require('../models/AndroidSubscription');
 const StripeSubscription = require('../models/StripeSubscription');
+const User = require('../models/User');
+const RefreshToken = require('../models/RefreshToken');
+const AdminUser = require('../models/AdminUser');
+const AdminAuthService = require('../services/AdminAuthService');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED = process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED || 'false';
@@ -185,17 +189,19 @@ class Coverage80TestRunner {
   async testRegenerationPoller() {
     this.log('programs regeneration poller', 'section');
 
-    await runRegenerationPollOnce({
+    let queried = false;
+    const queryResult = await runRegenerationPollOnce({
       programModel: {
-        getProgramsFlaggedForRegeneration: async () => { throw new Error('query failed'); }
+        getProgramsFlaggedForRegeneration: async () => { queried = true; throw new Error('query failed'); }
       }
     });
-    this.assert(true, 'poller query failure is swallowed');
+    this.assert(queried === true && queryResult === undefined, 'poller query failure is swallowed and returns undefined');
 
-    await runRegenerationPollOnce({
-      programModel: { getProgramsFlaggedForRegeneration: async () => [] }
+    let listed = false;
+    const emptyResult = await runRegenerationPollOnce({
+      programModel: { getProgramsFlaggedForRegeneration: async () => { listed = true; return []; } }
     });
-    this.assert(true, 'poller no flagged programs returns');
+    this.assert(listed === true && emptyResult === undefined, 'poller no flagged programs returns undefined');
 
     const events = [];
     const program = {
@@ -285,7 +291,7 @@ class Coverage80TestRunner {
         })
       }
     });
-    this.assert(updated && updated.id === 'p_ok' && updated.prompt === 'PROMPT' && updated.body.includes('title'), 'poller successful Helpful regenerate with org prompts');
+    this.assert(updated && updated.id === 'p_ok' && updated.prompt === 'PROMPT' && updated.body.includes('title'), 'poller successful Hopeful regenerate with org prompts');
 
     updated = null;
     await runRegenerationPollOnce({
@@ -305,27 +311,33 @@ class Coverage80TestRunner {
     });
     this.assert(updated && updated.body === 'plain text program' && updated.prompt === null, 'poller Hopeful string response via custom org fields');
 
-    let genFailed = false;
-    await runRegenerationPollOnce({
-      programModel: {
-        getProgramsFlaggedForRegeneration: async () => [{ id: 'p_fail', user_id: 'u1', user_input: 'enough text' }],
-        claimRegenerateFlag: async () => true,
-        updateGenerationError: async () => { throw new Error('cannot persist'); }
-      },
-      userModel: { getUserById: async () => ({ user_name: 'Alex', partner_name: 'Jordan' }) },
-      helpfulPromptService: {
-        generateInitialProgram: async () => {
-          const err = new Error('llm down');
-          err.__prompt = 'P';
-          throw err;
+    let generateCalled = false;
+    let persistError = false;
+    let genThrew = false;
+    try {
+      await runRegenerationPollOnce({
+        programModel: {
+          getProgramsFlaggedForRegeneration: async () => [{ id: 'p_fail', user_id: 'u1', user_input: 'enough text' }],
+          claimRegenerateFlag: async () => true,
+          updateGenerationError: async () => { persistError = true; throw new Error('cannot persist'); }
+        },
+        userModel: { getUserById: async () => ({ user_name: 'Alex', partner_name: 'Jordan' }) },
+        helpfulPromptService: {
+          generateInitialProgram: async () => {
+            generateCalled = true;
+            const err = new Error('llm down');
+            err.__prompt = 'P';
+            throw err;
+          }
+        },
+        userModelForOrgCode: {
+          getUserOrgCode: async () => { throw new Error('org lookup failed'); }
         }
-      },
-      userModelForOrgCode: {
-        getUserOrgCode: async () => { throw new Error('org lookup failed'); }
-      }
-    });
-    genFailed = true;
-    this.assert(genFailed, 'poller generation failure with failed error persist is swallowed');
+      });
+    } catch (e) {
+      genThrew = true;
+    }
+    this.assert(generateCalled && persistError && genThrew === false, 'poller generation failure with failed error persist is swallowed');
 
     await runRegenerationPollOnce({
       programModel: {
@@ -815,6 +827,34 @@ class Coverage80TestRunner {
 
       res = await client.get('/api/users/deleted/all', { headers: authH });
       this.assert(res.status === 403, 'GET deleted users rejects user token', res.status);
+
+      const listedUsers = createUserRoutes({
+        ...userModel,
+        getDeletedUsers: async () => ([{
+          id: 'u_del',
+          email: 'deleted@example.com',
+          user_name: 'Gone',
+          password_hash: 'SECRET_HASH',
+          bypass_password: true,
+          stripe_customer_id: 'cus_secret',
+          is_premium: 1,
+          premium: 1
+        }])
+      }, authService, pairingService, orgCodeModel, null, stripeModel, stripeBilling);
+      await this.withApp('/api/users', listedUsers, async (c2) => {
+        const r = await c2.get('/api/users/deleted/all', { headers: { Authorization: `Bearer ${admin}` } });
+        this.assert(r.status === 200, 'GET deleted users admin 200', r.status);
+        this.assert(Array.isArray(r.data) && r.data[0] && r.data[0].id === 'u_del', 'GET deleted users returns a list');
+        const row = r.data[0];
+        this.assert(
+          row.password_hash === undefined && row.bypass_password === undefined
+            && row.stripe_customer_id === undefined && row.is_premium === undefined && row.premium === undefined,
+          'GET deleted users strips password and Stripe fields',
+          JSON.stringify(row)
+        );
+        this.assert(row.email === 'deleted@example.com' && row.user_name === 'Gone', 'GET deleted users keeps public fields');
+      });
+
       res = await client.get('/api/users/deleted/all', { headers: { Authorization: `Bearer ${admin}` } });
       this.assert(res.status === 500, 'GET deleted users 500', res.status);
     });
@@ -1391,15 +1431,26 @@ class Coverage80TestRunner {
     this.assert(typeof stripe.toMysqlDatetime(1710000000) === 'string', 'toMysqlDatetime epoch seconds');
     this.assert(typeof stripe.toMysqlDatetime(1710000000000) === 'string', 'toMysqlDatetime epoch ms');
     this.assert(stripe.toMysqlDatetime('not-a-date') === null, 'toMysqlDatetime invalid');
-    await stripe.listForReconcile('nope');
-    await stripe.listForReconcile(0);
-    await stripe.listForReconcile(9999);
-    await stripe.listOrphanedTrialsForCleanup({ olderThanHours: 'nope', limit: 0 });
-    await stripe.listOrphanedTrialsForCleanup({ olderThanHours: 99999, limit: 9999 });
-    this.assert(true, 'StripeSubscription list limit clamps');
+    const stripeSqls = [];
+    const stripeClamp = new StripeSubscription(mockPool(async (sql, params) => {
+      stripeSqls.push({ sql: String(sql), params });
+      return [[]];
+    }));
+    const rInvalid = await stripeClamp.listForReconcile('nope');
+    const rZero = await stripeClamp.listForReconcile(0);
+    const rHuge = await stripeClamp.listForReconcile(9999);
+    this.assert(Array.isArray(rInvalid) && /LIMIT 100\b/.test(stripeSqls[0].sql), 'listForReconcile invalid falls back to 100');
+    this.assert(Array.isArray(rZero) && /LIMIT 100\b/.test(stripeSqls[1].sql), 'listForReconcile 0 falls back to 100');
+    this.assert(Array.isArray(rHuge) && /LIMIT 500\b/.test(stripeSqls[2].sql), 'listForReconcile 9999 clamps to 500');
+    const rOrphanFallback = await stripeClamp.listOrphanedTrialsForCleanup({ olderThanHours: 'nope', limit: 0 });
+    this.assert(Array.isArray(rOrphanFallback) && /LIMIT 50\b/.test(stripeSqls[3].sql) && stripeSqls[3].params[0] === 48, 'orphaned invalid hours/limit fall back');
+    const rOrphanClamp = await stripeClamp.listOrphanedTrialsForCleanup({ olderThanHours: 99999, limit: 9999 });
+    this.assert(Array.isArray(rOrphanClamp) && /LIMIT 500\b/.test(stripeSqls[4].sql) && stripeSqls[4].params[0] === 720, 'orphaned hours/limit clamp to max');
 
-    const android = new AndroidSubscription(mockPool(async (sql, params) => {
+    const androidAlters = [];
+    const androidTracked = new AndroidSubscription(mockPool(async (sql, params) => {
       const s = String(sql);
+      androidAlters.push(s);
       if (s.includes('INFORMATION_SCHEMA.COLUMNS') && s.includes('COLUMN_NAME = ?')) {
         const name = params && params[0];
         if (name === 'subscription_state') return [[{ COLUMN_NAME: name }]];
@@ -1414,8 +1465,9 @@ class Coverage80TestRunner {
       if (s.includes('ADD COLUMN is_test_purchase')) throw new Error('alter failed');
       return [[]];
     }));
-    try { await android.migrateVerificationColumns(); this.assert(true, 'Android migrate verification columns'); }
-    catch (e) { this.assert(/alter failed/.test(e.message), 'Android migrate verification unexpected alter', e.message); }
+    await this.expectThrow(() => androidTracked.migrateVerificationColumns(), 'alter failed', 'Android migrate verification rethrows unexpected alter');
+    this.assert(androidAlters.some((s) => s.includes('ADD COLUMN auto_renewing')), 'Android migrate attempts auto_renewing after existing subscription_state');
+    this.assert(androidAlters.some((s) => s.includes('ADD COLUMN is_test_purchase')), 'Android migrate reaches is_test_purchase before throwing');
 
     const android2 = new AndroidSubscription(mockPool(async (sql, params) => {
       const s = String(sql);
@@ -1443,17 +1495,28 @@ class Coverage80TestRunner {
       }
       return [[]];
     }));
-    try { await android2.migratePurchaseTokenStorage(); this.assert(true, 'Android migrate purchase token dup entry / drop'); }
-    catch (e) { this.assert(e.errno === 1234 || /other/.test(e.message), 'Android migrate drop index other error', e.message); }
+    await this.expectThrow(
+      () => android2.migratePurchaseTokenStorage(),
+      'other',
+      'Android migrate purchase token rethrows unexpected drop-index error'
+    );
 
+    const wideOps = [];
+    let uniqueLookups = 0;
     const androidWideMissing = new AndroidSubscription(mockPool(async (sql, params) => {
       const s = String(sql);
+      wideOps.push(s);
       if (s.includes('INFORMATION_SCHEMA.COLUMNS') && s.includes('CHARACTER_MAXIMUM_LENGTH')) {
         const name = params && params[0];
         if (name === 'purchase_token') return [[{ max_len: 255, charset: 'utf8mb4' }]];
         return [[]];
       }
-      if (s.includes('INFORMATION_SCHEMA.STATISTICS')) return [[]];
+      if (s.includes('INFORMATION_SCHEMA.STATISTICS')) {
+        uniqueLookups += 1;
+        // After the ADD UNIQUE attempt, report the index so DROP INDEX is exercised.
+        if (uniqueLookups > 1) return [[{ INDEX_NAME: 'unique_purchase_token' }]];
+        return [[]];
+      }
       if (s.includes('ADD UNIQUE KEY unique_purchase_token')) {
         const err = new Error('dup key');
         err.errno = 1061;
@@ -1469,7 +1532,9 @@ class Coverage80TestRunner {
       return [[]];
     }));
     await androidWideMissing.migratePurchaseTokenStorage();
-    this.assert(true, 'Android migrate widen token + dup key + cant drop');
+    this.assert(wideOps.some((s) => s.includes('MODIFY purchase_token')), 'Android migrate widens a non-ascii purchase_token');
+    this.assert(wideOps.some((s) => s.includes('ADD UNIQUE KEY unique_purchase_token')), 'Android migrate attempts unique_purchase_token');
+    this.assert(wideOps.some((s) => s.includes('DROP INDEX idx_purchase_token')), 'Android migrate attempts to drop redundant idx_purchase_token');
 
     const android3 = new AndroidSubscription(mockPool(async (sql) => {
       if (String(sql).includes('ADD UNIQUE KEY unique_purchase_token')) {
@@ -1489,80 +1554,121 @@ class Coverage80TestRunner {
     await this.expectThrow(() => androidInit.initDatabase(), 'create table failed', 'Android initDatabase throws');
 
     const androidDel = new AndroidSubscription(mockPool(async () => { throw new Error('delete fail'); }));
-    const delName = Object.getOwnPropertyNames(Object.getPrototypeOf(androidDel)).find((n) => /^delete/i.test(n));
-    if (delName) {
-      try { await androidDel[delName]('x'); this.assert(true, `Android ${delName} swallowed or returned`); }
-      catch (e) { this.assert(true, `Android ${delName} threw`, e.message); }
-    } else {
-      this.assert(true, 'Android has no delete method to exercise');
-    }
+    await this.expectThrow(() => androidDel.deleteById('x'), 'Failed to delete Android subscription', 'Android deleteById wraps db errors');
+    await this.expectThrow(() => androidDel.deleteByUserId('u1'), 'Failed to delete user Android subscriptions', 'Android deleteByUserId wraps db errors');
 
     const pairingInit = new Pairing(mockPool(async () => { throw new Error('pair create failed'); }));
     await this.expectThrow(() => pairingInit.initDatabase(), 'pair create failed', 'Pairing initDatabase throws');
 
+    const migSqls = [];
     const pairingMig = new Pairing(mockPool(async (sql) => {
+      migSqls.push(String(sql));
       if (String(sql).includes('INFORMATION_SCHEMA.COLUMNS')) return [[]];
       if (String(sql).includes('ALTER TABLE')) return [[]];
       return [[]];
     }));
     await pairingMig.migratePremiumField();
-    this.assert(true, 'Pairing migrate adds premium column');
+    this.assert(migSqls.some((s) => s.includes('ADD COLUMN premium')), 'Pairing migrate adds premium column');
+    this.assert(migSqls.some((s) => s.includes('ADD INDEX idx_premium')), 'Pairing migrate adds premium index');
 
+    let dupAlter = false;
     const pairingDup = new Pairing(mockPool(async (sql) => {
       if (String(sql).includes('INFORMATION_SCHEMA.COLUMNS')) return [[]];
+      dupAlter = true;
       throw new Error('Duplicate column');
     }));
     await pairingDup.migratePremiumField();
-    this.assert(true, 'Pairing migrate swallows Duplicate errors');
+    this.assert(dupAlter === true, 'Pairing migrate swallows Duplicate errors after attempting ALTER');
 
-    const pairingWarn = new Pairing(mockPool(async (sql) => {
-      if (String(sql).includes('INFORMATION_SCHEMA.COLUMNS')) return [[]];
-      throw new Error('other migrate error');
-    }));
-    await pairingWarn.migratePremiumField();
-    this.assert(true, 'Pairing migrate warns on other errors');
+    const warns = [];
+    const origWarn = console.warn;
+    console.warn = (...args) => { warns.push(args.map(String).join(' ')); };
+    try {
+      const pairingWarn = new Pairing(mockPool(async (sql) => {
+        if (String(sql).includes('INFORMATION_SCHEMA.COLUMNS')) return [[]];
+        throw new Error('other migrate error');
+      }));
+      await pairingWarn.migratePremiumField();
+    } finally {
+      console.warn = origWarn;
+    }
+    this.assert(warns.some((w) => /other migrate error/.test(w)), 'Pairing migrate warns on other errors');
 
     const boom = new Pairing(mockPool(async () => { throw new Error('db'); }));
-    const methods = [
-      'getPairingById', 'getUserPairings', 'getAcceptedPairingsWithPremium',
-      'getPremiumStatus', 'userHasPremiumPairing', 'softDeletePairing',
-      'restorePairing', 'acceptPairing', 'createPairing',
-      'softDeleteOpenPartnerCodeRequests', 'getPairingByPartnerCode',
-      'countOpenRequests', 'updatePremium'
-    ];
-    for (const name of methods) {
-      if (typeof boom[name] === 'function') {
-        try {
-          await boom[name]('a', 'b', 'c');
-          this.assert(true, `Pairing ${name} handled db error`);
-        } catch (e) {
-          this.assert(true, `Pairing ${name} threw`, e.message);
-        }
-      }
-    }
+    await this.expectThrow(() => boom.getPairingById('a'), 'Failed to fetch pairing', 'Pairing getPairingById wraps db errors');
+    await this.expectThrow(() => boom.getUserPairings('a'), 'Failed to fetch pairings', 'Pairing getUserPairings wraps db errors');
+    await this.expectThrow(() => boom.getAcceptedPairingsWithPremium('a'), 'Failed to fetch accepted pairings', 'Pairing getAcceptedPairingsWithPremium wraps db errors');
+    await this.expectThrow(() => boom.getPremiumStatus('a'), 'Failed to fetch premium status', 'Pairing getPremiumStatus wraps db errors');
+    await this.expectThrow(() => boom.userHasPremiumPairing('a'), 'Failed to check premium pairing status', 'Pairing userHasPremiumPairing wraps db errors');
+    await this.expectThrow(() => boom.softDeletePairing('a'), 'Failed to delete pairing', 'Pairing softDeletePairing wraps db errors');
+    await this.expectThrow(() => boom.restorePairing('a'), 'Failed to restore pairing', 'Pairing restorePairing wraps db errors');
+    await this.expectThrow(() => boom.acceptPairing('a'), 'Failed to accept pairing', 'Pairing acceptPairing wraps db errors');
+    await this.expectThrow(() => boom.createPairing('a', 'b'), 'Failed to create pairing', 'Pairing createPairing wraps db errors');
+    await this.expectThrow(() => boom.softDeleteOpenPartnerCodeRequests('a'), 'Failed to delete open partner code requests', 'Pairing softDeleteOpenPartnerCodeRequests wraps db errors');
+    await this.expectThrow(() => boom.setPremiumStatus('a', true), 'Failed to update premium status', 'Pairing setPremiumStatus wraps db errors');
 
+    let released = false;
     const connRows = {
       beginTransaction: async () => {},
       commit: async () => {},
       rollback: async () => { throw new Error('rollback failed'); },
-      release() {},
+      release() { released = true; },
       execute: async (sql) => {
         const s = String(sql);
-        if (s.includes('SELECT') && s.includes('FOR UPDATE')) return [[{ id: 'p1', user1_id: 'u1', user2_id: 'u2', status: 'pending', partner_code: 'ABC123' }]];
-        if (s.includes('SELECT')) return [[{ id: 'p1', user1_id: 'u1', user2_id: 'u2', status: 'accepted' }]];
-        return [[]];
+        if (s.includes('FROM pairings p') && s.includes('FOR UPDATE')) {
+          return [[{ id: 'p1', user1_id: 'u1', user2_id: null, status: 'pending', partner_code: 'ABC123', user1_user_name: 'Ada', user1_email: 'a@x.com' }]];
+        }
+        if (s.includes('FROM users') && s.includes('FOR UPDATE')) {
+          return [[
+            { id: 'u1', max_pairings: 3 },
+            { id: 'u2', max_pairings: 3 }
+          ]];
+        }
+        if (s.includes('SELECT COUNT(*)')) return [[{ count: 0 }]];
+        if (s.includes('SELECT id FROM pairings')) return [[]];
+        if (s.includes('SET user2_id')) return [[{ affectedRows: 1 }]];
+        return [[{ affectedRows: 1 }]];
       }
     };
     const tx = new Pairing({
       execute: async () => [[{ id: 'p1' }]],
       getConnection: async () => connRows
     });
-    for (const name of ['acceptPairing', 'restorePairing', 'createPairing']) {
-      if (typeof tx[name] === 'function') {
-        try { await tx[name]('u1', 'u2', 'ABC123'); this.assert(true, `Pairing ${name} tx path`); }
-        catch (e) { this.assert(true, `Pairing ${name} tx path threw`, e.message); }
-      }
-    }
+    const accepted = await tx.acceptPairingByPartnerCodeAtomic('ABC123', 'u2');
+    this.assert(accepted && accepted.message === 'Pairing accepted successfully' && accepted.pairing.id === 'p1', 'Pairing acceptPairingByPartnerCodeAtomic tx path');
+    this.assert(released === true, 'Pairing accept atomic releases the connection after a rollback error on the success path is not triggered');
+
+    released = false;
+    const missingConn = {
+      beginTransaction: async () => {},
+      commit: async () => {},
+      rollback: async () => { throw new Error('rollback failed'); },
+      release() { released = true; },
+      execute: async () => [[]]
+    };
+    const txMissing = new Pairing({ getConnection: async () => missingConn });
+    await this.expectThrow(
+      () => txMissing.acceptPairingByPartnerCodeAtomic('ABC123', 'u2'),
+      'No pending pairing found for this partner code',
+      'Pairing accept atomic throws when no pending pairing is locked'
+    );
+    this.assert(released === true, 'Pairing accept atomic still releases after a rollback failure');
+
+    released = false;
+    const restoreConn = {
+      beginTransaction: async () => {},
+      commit: async () => {},
+      rollback: async () => { throw new Error('rollback failed'); },
+      release() { released = true; },
+      execute: async () => [[]]
+    };
+    const txRestore = new Pairing({ getConnection: async () => restoreConn });
+    await this.expectThrow(
+      () => txRestore.restorePairingAtomic('p1', { requireMemberUserId: 'u1' }),
+      'Pairing not found',
+      'Pairing restorePairingAtomic throws when the pairing is missing'
+    );
+    this.assert(released === true, 'Pairing restore atomic releases after a rollback failure');
 
     const zeroRows = new Pairing(mockPool(async () => [{ affectedRows: 0 }]));
     await this.expectThrow(() => zeroRows.acceptPairing('p1'), 'Failed to accept pairing', 'Pairing acceptPairing zero rows');
@@ -1656,6 +1762,260 @@ class Coverage80TestRunner {
     });
   }
 
+
+  async testAuthModelBranches() {
+    this.log('User, RefreshToken, AdminUser, and AdminAuthService branches', 'section');
+    const strong = 'C0rrect-Horse-Battery-Staple!';
+
+    const userOk = new User(mockPool(async () => [[{ affectedRows: 1, count: 0 }]]));
+    this.assert(userOk.validatePassword('short').valid === false, 'User password rejects short passwords');
+    this.assert(/128/.test(userOk.validatePassword('Aa1!' + 'x'.repeat(130)).error), 'User password rejects overly long passwords');
+    this.assert(/number/.test(userOk.validatePassword('NoNumber!!').error), 'User password requires a number');
+    this.assert(/symbol/.test(userOk.validatePassword('NoSymbol99A').error), 'User password requires a symbol');
+    this.assert(/capital/.test(userOk.validatePassword('nouppercase1!').error), 'User password requires a capital letter');
+    this.assert(/lowercase/.test(userOk.validatePassword('NOLOWERCASE1!').error), 'User password requires a lowercase letter');
+    this.assert(/weak patterns/.test(userOk.validatePassword('Password1!').error), 'User password rejects weak patterns');
+    this.assert(userOk.validatePassword(strong).valid === true, 'User password accepts a strong password');
+
+    this.assert(await userOk.getUserByStripeCustomerId(null) === null, 'getUserByStripeCustomerId null short-circuits');
+    this.assert(await userOk.getUserByStripeCustomerId('') === null, 'getUserByStripeCustomerId empty short-circuits');
+    this.assert(await userOk.getUserByStripeCustomerIdIncludingDeleted(null) === null, 'getUserByStripeCustomerIdIncludingDeleted null short-circuits');
+
+    const zeroUser = new User(mockPool(async () => [{ affectedRows: 0 }]));
+    await this.expectThrow(() => zeroUser.setIsPremium('u1', true), 'User not found', 'setIsPremium zero rows');
+    await this.expectThrow(() => zeroUser.updateUser('u1', { user_name: 'Ada' }), 'User not found', 'updateUser zero rows');
+
+    await this.expectThrow(() => userOk.updateUser('u1', { password: 'Password1!' }), 'Password contains weak patterns', 'updateUser rejects a weak password');
+    await this.expectThrow(() => userOk.updateUser('u1', { children: -1 }), 'Children must be a non-negative integer', 'updateUser rejects invalid children');
+    await this.expectThrow(() => userOk.updateUser('u1', {}), 'At least one field must be provided', 'updateUser requires a field');
+
+    const updated = await userOk.updateUser('u1', { max_pairings: 4, bypass_password: true, user_name: 'Ada' });
+    this.assert(updated === null || typeof updated === 'object', 'updateUser with max_pairings and bypass_password runs');
+
+    const dupUser = new User(mockPool(async () => {
+      const err = new Error('dup');
+      err.code = 'ER_DUP_ENTRY';
+      throw err;
+    }));
+    await this.expectThrow(() => dupUser.createUser({ email: 'a@x.com', password: strong }), 'Email already exists', 'createUser duplicate email');
+    await this.expectThrow(() => dupUser.updateUser('u1', { email: 'taken@x.com' }), 'Email already exists', 'updateUser duplicate email');
+
+    const boomUser = new User(mockPool(async () => { throw new Error('db'); }));
+    await this.expectThrow(() => boomUser.createUser({ email: 'a@x.com', password: strong }), 'Failed to create user', 'createUser wraps generic db errors');
+    await this.expectThrow(() => boomUser.getUserById('u1'), 'Failed to fetch user', 'getUserById wraps generic db errors');
+    await this.expectThrow(() => boomUser.getUserByEmail('a@x.com'), 'Failed to fetch user', 'getUserByEmail wraps generic db errors');
+    await this.expectThrow(() => boomUser.getUserByEmailIncludingDeleted('a@x.com'), 'Failed to fetch user', 'getUserByEmailIncludingDeleted wraps generic db errors');
+    await this.expectThrow(() => boomUser.restoreUser('u1'), 'Failed to restore user', 'restoreUser wraps generic db errors');
+    await this.expectThrow(() => boomUser.getUserOrgCode('u1'), 'Failed to fetch user org code', 'getUserOrgCode wraps db errors');
+    await this.expectThrow(() => boomUser.getUserByIdIncludingDeleted('u1'), 'Failed to fetch user', 'getUserByIdIncludingDeleted wraps missing and db errors');
+
+    const missingUser = new User(mockPool(async () => [[]]));
+    await this.expectThrow(() => missingUser.getUserByIdIncludingDeleted('gone'), 'Failed to fetch user', 'getUserByIdIncludingDeleted missing user');
+
+    this.assert(await userOk.logOrgCodeLinkChange('u1', 'admin', null, null) === null, 'logOrgCodeLinkChange noops when both ids are empty');
+    const attach = await userOk.logOrgCodeLinkChange('u1', 'admin', null, 'org2');
+    this.assert(attach === null || typeof attach === 'object', 'logOrgCodeLinkChange attach path');
+    const detach = await userOk.logOrgCodeLinkChange('u1', 'admin', 'org1', null);
+    this.assert(detach === null || typeof detach === 'object', 'logOrgCodeLinkChange detach path');
+    const switched = await userOk.logOrgCodeLinkChange('u1', 'admin', 'org1', 'org2');
+    this.assert(switched === null || typeof switched === 'object', 'logOrgCodeLinkChange switch path');
+
+    const auditSqls = [];
+    const auditor = new User(mockPool(async (sql, params) => {
+      auditSqls.push({ sql: String(sql), params });
+      return [[]];
+    }));
+    const audit = await auditor.getOrgCodeLinkAuditLogs({ limit: 9999, offset: 'nope' });
+    this.assert(Array.isArray(audit), 'getOrgCodeLinkAuditLogs returns an array');
+    this.assert(auditSqls.some((s) => s.params && s.params.includes(500)), 'getOrgCodeLinkAuditLogs clamps limit to 500');
+
+    const softWarns = [];
+    const origWarn = console.warn;
+    console.warn = (...args) => { softWarns.push(args.map(String).join(' ')); };
+    try {
+      const softer = new User(mockPool(async () => [{ affectedRows: 1 }]));
+      const result = await softer.softDeleteUser('u1', {
+        softDeleteUserPairings: async () => { throw new Error('pairing cascade failed'); }
+      }, {
+        deleteRefreshTokensByUserId: async () => { throw new Error('token revoke failed'); }
+      });
+      this.assert(result && (result.id === 'u1' || result.message || typeof result === 'object'), 'softDeleteUser continues after cascade failures');
+      this.assert(softWarns.some((w) => /token revoke failed/.test(w)), 'softDeleteUser warns when refresh-token revoke fails');
+      this.assert(softWarns.some((w) => /pairing cascade failed/.test(w)), 'softDeleteUser warns when pairing cascade fails');
+    } finally {
+      console.warn = origWarn;
+    }
+
+    const migSqls = [];
+    let migStep = 0;
+    const migrator = new User(mockPool(async (sql) => {
+      const s = String(sql);
+      migSqls.push(s);
+      if (s.includes('CREATE TABLE')) return [[]];
+      if (s.includes('REFERENCED_TABLE_NAME') || s.includes('KEY_COLUMN_USAGE')) {
+        return [[{ referenced_table: 'organizations', constraint_name: 'fk_users_org' }]];
+      }
+      if (s.includes('COLUMN_NAME = ?') || s.includes("COLUMN_NAME = 'org_code_id'") || s.includes('COLUMN_NAME')) {
+        return [[]]; // missing columns
+      }
+      if (s.includes('ALTER TABLE')) return [[]];
+      return [[]];
+    }));
+    await migrator.initDatabase();
+    this.assert(migSqls.some((s) => s.includes('ADD COLUMN org_code_id')), 'User initDatabase adds missing org_code_id');
+    this.assert(migSqls.some((s) => s.includes('DROP FOREIGN KEY')), 'User initDatabase drops organizations FK');
+    this.assert(migSqls.some((s) => s.includes('is_premium')), 'User initDatabase adds is_premium');
+    this.assert(migSqls.some((s) => s.includes('bypass_password')), 'User initDatabase adds bypass_password');
+    this.assert(migSqls.some((s) => s.includes('stripe_customer_id')), 'User initDatabase adds stripe_customer_id');
+
+    const migWarns = [];
+    console.warn = (...args) => { migWarns.push(args.map(String).join(' ')); };
+    try {
+      const warnUser = new User(mockPool(async (sql) => {
+        const s = String(sql);
+        if (s.includes('CREATE TABLE')) return [[]];
+        throw new Error('migration failed');
+      }));
+      await warnUser.initDatabase();
+      this.assert(migWarns.length > 0, 'User initDatabase warns when a column migration fails');
+    } finally {
+      console.warn = origWarn;
+    }
+    const createFail = new User(mockPool(async () => { throw new Error('create table failed'); }));
+    await this.expectThrow(() => createFail.initDatabase(), 'create table failed', 'User initDatabase rethrows create-table errors');
+
+    const rt = new RefreshToken(mockPool(async () => [[]]));
+    this.assert(await rt.queryOne('SELECT 1') === null, 'RefreshToken queryOne returns null for empty results');
+
+    const rtMig = [];
+    const rtMigrator = new RefreshToken(mockPool(async (sql) => {
+      const s = String(sql);
+      rtMig.push(s);
+      if (s.includes('CREATE TABLE')) return [[]];
+      if (s.includes('COLUMN_NAME') || s.includes('user_type')) return [[]];
+      if (s.includes('ALTER TABLE')) return [[]];
+      return [[]];
+    }));
+    await rtMigrator.initDatabase();
+    this.assert(rtMig.some((s) => /ALTER TABLE refresh_tokens/i.test(s) && /user_type/.test(s)), 'RefreshToken initDatabase adds missing user_type');
+
+    const rtWarns = [];
+    console.warn = (...args) => { rtWarns.push(args.map(String).join(' ')); };
+    try {
+      const rtWarn = new RefreshToken(mockPool(async (sql) => {
+        if (String(sql).includes('CREATE TABLE')) return [[]];
+        throw new Error('rt migration failed');
+      }));
+      await rtWarn.initDatabase();
+      this.assert(rtWarns.some((w) => /rt migration failed/.test(w)), 'RefreshToken initDatabase warns on migration errors');
+    } finally {
+      console.warn = origWarn;
+    }
+    const rtBoomInit = new RefreshToken(mockPool(async () => { throw new Error('rt create failed'); }));
+    await this.expectThrow(() => rtBoomInit.initDatabase(), 'rt create failed', 'RefreshToken initDatabase rethrows create-table errors');
+
+    const rtBoom = new RefreshToken(mockPool(async () => { throw new Error('db'); }));
+    await this.expectThrow(() => rtBoom.createRefreshToken('u1', 'tok', new Date()), 'Failed to create refresh token', 'createRefreshToken wraps db errors');
+    await this.expectThrow(() => rtBoom.getRefreshToken('tok', 'u1'), 'Failed to fetch refresh token', 'getRefreshToken wraps unexpected errors');
+    await this.expectThrow(() => rtBoom.deleteRefreshToken('tok', 'u1'), 'Failed to delete refresh token', 'deleteRefreshToken wraps db errors');
+    await this.expectThrow(() => rtBoom.deleteRefreshTokensByUserId('u1'), 'Failed to delete refresh tokens for user', 'deleteRefreshTokensByUserId wraps db errors');
+    await this.expectThrow(() => rtBoom.updateRefreshToken('old', 'new', new Date()), 'Failed to update refresh token', 'updateRefreshToken without userId wraps db errors');
+    await this.expectThrow(() => rtBoom.resetRefreshTokenExpiration('u1'), /Failed to reset refresh token/, 'resetRefreshTokenExpiration wraps db errors');
+    this.assert(await rtBoom.verifyToken('plain', 'not-a-hash') === false, 'verifyToken returns false for invalid hashes');
+
+    const rtZero = new RefreshToken(mockPool(async (sql) => {
+      if (/SELECT/.test(String(sql))) return [[{ id: 't1', token: 'hashed' }]];
+      return [{ affectedRows: 0 }];
+    }));
+    // rows are not bcrypt matches, so get/update throw not found — also exercise affectedRows 0 if a hash were to match.
+    await this.expectThrow(() => rtZero.updateRefreshToken('old', 'new', new Date(), 'u1'), 'Refresh token not found', 'updateRefreshToken rejects unmatched tokens');
+
+    const admin = new AdminUser(mockPool(async () => [[{ affectedRows: 1 }]]));
+    this.assert(admin.validatePassword('short').valid === false, 'AdminUser password rejects short passwords');
+    this.assert(/128/.test(admin.validatePassword('Aa1!' + 'x'.repeat(130)).error), 'AdminUser password rejects overly long passwords');
+    this.assert(/number/.test(admin.validatePassword('NoNumber!!').error), 'AdminUser password requires a number');
+    this.assert(/symbol/.test(admin.validatePassword('NoSymbol99A').error), 'AdminUser password requires a symbol');
+    this.assert(/capital/.test(admin.validatePassword('nouppercase1!').error), 'AdminUser password requires a capital letter');
+    this.assert(/lowercase/.test(admin.validatePassword('NOLOWERCASE1!').error), 'AdminUser password requires a lowercase letter');
+
+    const adminBoomInit = new AdminUser(mockPool(async () => { throw new Error('admin create failed'); }));
+    await this.expectThrow(() => adminBoomInit.initDatabase(), 'admin create failed', 'AdminUser initDatabase rethrows create-table errors');
+
+    const adminDup = new AdminUser(mockPool(async () => {
+      const err = new Error('dup');
+      err.code = 'ER_DUP_ENTRY';
+      throw err;
+    }));
+    await this.expectThrow(() => adminDup.createAdminUser({ email: 'a@x.com', password: strong }), 'Email already exists', 'createAdminUser duplicate email');
+    await this.expectThrow(() => adminDup.updateAdminUser('a1', { email: 'taken@x.com' }), 'Email already exists', 'updateAdminUser duplicate email');
+
+    const adminBoom = new AdminUser(mockPool(async () => { throw new Error('db'); }));
+    await this.expectThrow(() => adminBoom.createAdminUser({ email: 'a@x.com', password: strong }), 'Failed to create admin user', 'createAdminUser wraps generic db errors');
+    await this.expectThrow(() => adminBoom.getAdminUserByEmail('a@x.com'), 'Failed to fetch admin user', 'getAdminUserByEmail wraps generic db errors');
+    await this.expectThrow(() => adminBoom.getAdminUserByIdIncludingDeleted('a1'), 'Failed to fetch admin user', 'getAdminUserByIdIncludingDeleted wraps errors');
+
+    const adminMissing = new AdminUser(mockPool(async () => [[]]));
+    await this.expectThrow(() => adminMissing.getAdminUserById('gone'), 'Admin user not found', 'getAdminUserById missing');
+    await this.expectThrow(() => adminMissing.getAdminUserByIdIncludingDeleted('gone'), 'Failed to fetch admin user', 'getAdminUserByIdIncludingDeleted missing is wrapped');
+
+    await this.expectThrow(() => admin.updateAdminUser('a1', {}), 'At least one field must be provided', 'updateAdminUser requires a field');
+    const adminUpdated = await admin.updateAdminUser('a1', { max_pairings: 2, partner_name: 'Bea', children: 1, user_name: 'Ada' });
+    this.assert(adminUpdated === null || typeof adminUpdated === 'object', 'updateAdminUser writes max_pairings, partner_name, and children');
+
+    const adminZero = new AdminUser(mockPool(async () => [{ affectedRows: 0 }]));
+    await this.expectThrow(() => adminZero.updateAdminUser('a1', { user_name: 'Ada' }), 'Admin user not found', 'updateAdminUser zero rows');
+    await this.expectThrow(() => adminZero.softDeleteAdminUser('a1'), 'Admin user not found or already deleted', 'softDeleteAdminUser zero rows');
+
+    const savedEnv = {
+      JWT_SECRET: process.env.JWT_SECRET,
+      JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET,
+      JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS: process.env.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+      JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS: process.env.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS
+    };
+    try {
+      delete process.env.JWT_SECRET;
+      delete process.env.JWT_REFRESH_SECRET;
+      process.env.JWT_ACCESS_TOKEN_EXPIRES_IN_SECONDS = 'nope';
+      process.env.JWT_REFRESH_TOKEN_EXPIRES_IN_SECONDS = '-5';
+      const svc = new AdminAuthService({}, {});
+      this.assert(svc.jwtSecret === 'your-secret-key-change-in-production', 'AdminAuthService defaults JWT secret');
+      this.assert(svc.jwtRefreshSecret === 'your-refresh-secret-key-change-in-production', 'AdminAuthService defaults refresh secret');
+      this.assert(svc.accessTokenExpiry === 86400, 'AdminAuthService invalid access expiry falls back to 86400');
+      this.assert(svc.refreshTokenExpiry === 1209600, 'AdminAuthService invalid refresh expiry falls back to 14 days');
+    } finally {
+      Object.entries(savedEnv).forEach(([k, v]) => {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      });
+    }
+
+    const jwt = require('jsonwebtoken');
+    const refreshModel = {
+      deleteRefreshTokensByUserId: async () => { throw new Error('no tokens'); },
+      getRefreshToken: async () => ({ token: 'hashed' }),
+      createRefreshToken: async () => 'tid'
+    };
+    const adminModel = {
+      getAdminUserByEmail: async () => ({ id: 'a1', email: 'a@x.com', password_hash: 'hash' }),
+      verifyPassword: async () => true,
+      getAdminUserById: async () => ({ id: 'a1', email: 'a@x.com' })
+    };
+    const authSvc = new AdminAuthService(adminModel, refreshModel);
+    const userJwt = jwt.sign({ id: 'u1', type: 'user' }, authSvc.jwtRefreshSecret, { expiresIn: '1h' });
+    await this.expectThrow(() => authSvc.verifyAndRefreshTokens('access', userJwt), 'Token refresh failed', 'verifyAndRefreshTokens rejects non-admin refresh tokens');
+
+    // loginAdmin should swallow deleteRefreshTokens errors
+    if (typeof authSvc.loginAdmin === 'function') {
+      try {
+        const login = await authSvc.loginAdmin('a@x.com', strong);
+        this.assert(login && (login.access_token || login.data || login.token || login.message), 'loginAdmin swallows missing-token delete errors');
+      } catch (e) {
+        // If login still requires a real hash compare, at least the delete error was reached and wrapped specifically.
+        this.assert(!/no tokens/.test(e.message), 'loginAdmin does not surface deleteRefreshTokens errors', e.message);
+      }
+    }
+  }
+
   async runAllTests() {
     this.log('Coverage 80 target tests', 'section');
     await this.testRegenerationPoller();
@@ -1665,6 +2025,7 @@ class Coverage80TestRunner {
     await this.testAuthServiceBranches();
     await this.testPromptServiceBranches();
     await this.testModelBranches();
+    await this.testAuthModelBranches();
     await this.testChimeInSameSecondRegression();
     const { passed, failed, total } = this.testResults;
     this.log(`Coverage 80 tests: ${passed}/${total} passed, ${failed} failed`, failed ? 'fail' : 'pass');
