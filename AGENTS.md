@@ -52,7 +52,7 @@ Prompt product tracks (Helpful vs Hopeful) are implemented in `services/HelpfulP
 Requirements: **Node 24** (see `.nvmrc`; `package.json` `engines.node` is `>=24.0.0`) and a local **MySQL 8** server. CI uses `mysql:8.0`. MariaDB may work but is not what CI or the README use.
 
 ```bash
-npm install
+npm ci                 # required; the committed node_modules tree is incomplete
 cp .env.example .env
 # Set PORT=9000, MYSQL_* (or MYSQL_URL), and JWT_SECRET / JWT_REFRESH_SECRET.
 # For local-only work, placeholder JWT values only warn; Railway and production refuse to start without real secrets.
@@ -84,11 +84,19 @@ TEST_MOCK_LLM=true TEST_MOCK_PUSH=true TEST_MOCK_IAP=true TEST_MOCK_STRIPE=true 
 ### Run the suite (terminal 2)
 
 ```bash
-npm test                 # full orchestrator (tests/run-all-tests.js)
+npm test                 # full orchestrator (tests/run-all-tests.js); expects http://127.0.0.1:9000
 npm run test:quick       # skip load tests
 npm run test:ci          # --skip-server-check (CI still starts the server first)
 npm run test:cleanup     # delete @example.com test rows
 ```
+
+The orchestrator does **not** read `TEST_BASE_URL`. To point `npm test` at a different host or port, pass `--url=`:
+
+```bash
+npm test -- --url=http://127.0.0.1:9011
+```
+
+Some standalone suites *do* honor `TEST_BASE_URL`. Set both if you run a mix. `tests/README.md` currently lists `TEST_BASE_URL` as if it applied to the whole suite; that is only true for those standalone files.
 
 CI (`.github/workflows/ci.yml`) starts MySQL 8, sets `PORT=9000`, `JWT_SECRET` / `JWT_REFRESH_SECRET`, `MYSQL_*` pointing at the service container, and the four `TEST_MOCK_*` flags above, then `npm start` and `npm test`. Use those same flags locally.
 

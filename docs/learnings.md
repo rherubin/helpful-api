@@ -20,6 +20,8 @@ Short, verified notes. If a fact is not true in the current `develop` tree, it d
 
 - `npm test` is the live-server orchestrator in `tests/run-all-tests.js`. It does **not** currently include `tests/authz-idor-regression-test.js` or `tests/subscription-sandbox-reuse-test.js`. Those files exist; run them with `npm run test:authz-idor` and `node tests/subscription-sandbox-reuse-test.js`. (Coverage work in flight may fold them into the orchestrator later.)
 - There is no `npm run test:coverage` / `c8` script on `develop` yet.
+- `npm test` (`tests/run-all-tests.js`) defaults to `http://127.0.0.1:9000` and is overridden with `--url=`, not `TEST_BASE_URL`. Several standalone test files do read `TEST_BASE_URL`. The table in `tests/README.md` does not make that distinction.
+- The committed `node_modules` tree is incomplete (a clone will not start until you run `npm ci`). That is another reason to remove the tracked tree deliberately when you can.
 - Real OpenAI suites (`tests/openai-test.js`, `tests/openai-load-benchmark.js`) are standalone on purpose — they spend tokens.
 - The root README still mentions `test_mock_llm` on `/health/diagnostics`. The code returns only `{"ok":true}`. Trust the code.
 
