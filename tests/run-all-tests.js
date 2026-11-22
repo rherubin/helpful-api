@@ -31,6 +31,7 @@ const AuthzIdorRegressionTestRunner = require('./authz-idor-regression-test');
 const SubscriptionSandboxReuseTestRunner = require('./subscription-sandbox-reuse-test');
 const UrgentGapsTestRunner = require('./urgent-gaps-test');
 const RemainingGapsTestRunner = require('./remaining-gaps-test');
+const BranchCoverageTestRunner = require('./branch-coverage-test');
 const RefreshTokenHashingTestRunner = require('./test-refresh-token-hashing');
 
 /**
@@ -74,6 +75,7 @@ class TestSuiteRunner {
       runSubscriptionSandboxReuse: options.runSubscriptionSandboxReuse !== false, // Default true
       runUrgentGaps: options.runUrgentGaps !== false, // Default true
       runRemainingGaps: options.runRemainingGaps !== false, // Default true
+      runBranchCoverage: options.runBranchCoverage !== false, // Default true
       runRefreshTokenHashing: options.runRefreshTokenHashing !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
@@ -114,6 +116,7 @@ class TestSuiteRunner {
       subscriptionSandboxReuse: null,
       urgentGaps: null,
       remainingGaps: null,
+      branchCoverage: null,
       refreshTokenHashing: null,
       startTime: Date.now(),
       endTime: null
@@ -1312,6 +1315,45 @@ class TestSuiteRunner {
     }
   }
 
+
+  async runBranchCoverageTests() {
+    if (!this.options.runBranchCoverage) {
+      this.log('Skipping branch coverage tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🌿 Running Branch Coverage Tests', 'section');
+
+    try {
+      const runner = new BranchCoverageTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.branchCoverage = {
+        success,
+        skipped: false,
+        details: 'Billing/subscription/auth/pairing route branches, Stripe/IAP models, prompt and program-generation edges',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Branch coverage tests completed successfully', 'success');
+      } else {
+        this.log('Branch coverage tests failed', 'error');
+      }
+
+      return this.results.branchCoverage;
+    } catch (error) {
+      this.log(`Branch coverage tests failed: ${error.message}`, 'error');
+      this.results.branchCoverage = { success: false, error: error.message };
+      return this.results.branchCoverage;
+    }
+  }
+
   async runRefreshTokenHashingTests() {
     if (!this.options.runRefreshTokenHashing) {
       this.log('Skipping refresh-token hashing tests', 'warn');
@@ -1380,6 +1422,7 @@ class TestSuiteRunner {
     this.log(`  Subscription Sandbox-Reuse Tests: ${this.options.runSubscriptionSandboxReuse ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Urgent Coverage-Gap Tests: ${this.options.runUrgentGaps ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Remaining Coverage-Gap Tests: ${this.options.runRemainingGaps ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Branch Coverage Tests: ${this.options.runBranchCoverage ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Refresh Token Hashing Tests: ${this.options.runRefreshTokenHashing ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
@@ -1681,6 +1724,15 @@ class TestSuiteRunner {
     if (this.options.runRemainingGaps) {
       await this.runRemainingGapsTests();
       if (this.results.remainingGaps && !this.results.remainingGaps.success && !this.results.remainingGaps.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Branch coverage: billing, subscription, Stripe, pairing, prompts
+    if (this.options.runBranchCoverage) {
+      await this.runBranchCoverageTests();
+      if (this.results.branchCoverage && !this.results.branchCoverage.success && !this.results.branchCoverage.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -2031,6 +2083,17 @@ class TestSuiteRunner {
       }
     }
 
+    // Branch coverage results
+    if (this.results.branchCoverage) {
+      if (this.results.branchCoverage.skipped) {
+        this.log('🌿 Branch Coverage Tests: SKIPPED', 'warn');
+      } else if (this.results.branchCoverage.success) {
+        this.log(`🌿 Branch Coverage Tests: PASSED (${this.results.branchCoverage.passed}/${this.results.branchCoverage.total})`, 'success');
+      } else {
+        this.log(`🌿 Branch Coverage Tests: FAILED (${this.results.branchCoverage.failed}/${this.results.branchCoverage.total} failures)`, 'error');
+      }
+    }
+
     // Refresh-token hashing results
     if (this.results.refreshTokenHashing) {
       if (this.results.refreshTokenHashing.skipped) {
@@ -2119,6 +2182,7 @@ class TestSuiteRunner {
                && this.suiteSucceeded(this.results.subscriptionSandboxReuse)
                && this.suiteSucceeded(this.results.urgentGaps)
                && this.suiteSucceeded(this.results.remainingGaps)
+               && this.suiteSucceeded(this.results.branchCoverage)
                && this.suiteSucceeded(this.results.refreshTokenHashing)
                && this.suiteSucceeded(this.results.promptSessions),
       results: {
@@ -2152,6 +2216,7 @@ class TestSuiteRunner {
         subscriptionSandboxReuse: this.results.subscriptionSandboxReuse,
         urgentGaps: this.results.urgentGaps,
         remainingGaps: this.results.remainingGaps,
+        branchCoverage: this.results.branchCoverage,
         refreshTokenHashing: this.results.refreshTokenHashing,
         promptSessions: this.results.promptSessions
       },
@@ -2167,7 +2232,7 @@ class TestSuiteRunner {
                    (this.results.stripeBilling?.total || 0) + (this.results.stripeCustomerEmailSync?.total || 0) + (this.results.appleReceiptVerifier?.total || 0) + (this.results.googlePlayReceiptVerifier?.total || 0) +
                    (this.results.helpfulPromptService?.total || 0) +
                    (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0) +
-                   (this.results.pushNotificationService?.total || 0) + (this.results.authzIdor?.total || 0) + (this.results.subscriptionSandboxReuse?.total || 0) + (this.results.urgentGaps?.total || 0) + (this.results.remainingGaps?.total || 0) + (this.results.refreshTokenHashing?.total || 0) + (this.results.promptSessions?.total || 0),
+                   (this.results.pushNotificationService?.total || 0) + (this.results.authzIdor?.total || 0) + (this.results.subscriptionSandboxReuse?.total || 0) + (this.results.urgentGaps?.total || 0) + (this.results.remainingGaps?.total || 0) + (this.results.branchCoverage?.total || 0) + (this.results.refreshTokenHashing?.total || 0) + (this.results.promptSessions?.total || 0),
         totalPassed: (this.results.runtimeEnv?.passed || 0) + (this.results.security?.passed || 0) + (this.results.adminAuthRefresh?.passed || 0) + (this.results.adminPushTest?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) +
                     (this.results.pairingLifecycle?.passed || 0) + (this.results.userSoftDelete?.passed || 0) +
@@ -2179,7 +2244,7 @@ class TestSuiteRunner {
                     (this.results.stripeBilling?.passed || 0) + (this.results.stripeCustomerEmailSync?.passed || 0) + (this.results.appleReceiptVerifier?.passed || 0) + (this.results.googlePlayReceiptVerifier?.passed || 0) +
                     (this.results.helpfulPromptService?.passed || 0) +
                     (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0) +
-                    (this.results.pushNotificationService?.passed || 0) + (this.results.authzIdor?.passed || 0) + (this.results.subscriptionSandboxReuse?.passed || 0) + (this.results.urgentGaps?.passed || 0) + (this.results.remainingGaps?.passed || 0) + (this.results.refreshTokenHashing?.passed || 0) + (this.results.promptSessions?.passed || 0),
+                    (this.results.pushNotificationService?.passed || 0) + (this.results.authzIdor?.passed || 0) + (this.results.subscriptionSandboxReuse?.passed || 0) + (this.results.urgentGaps?.passed || 0) + (this.results.remainingGaps?.passed || 0) + (this.results.branchCoverage?.passed || 0) + (this.results.refreshTokenHashing?.passed || 0) + (this.results.promptSessions?.passed || 0),
         totalFailed: (this.results.runtimeEnv?.failed || 0) + (this.results.security?.failed || 0) + (this.results.adminAuthRefresh?.failed || 0) + (this.results.adminPushTest?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) +
                     (this.results.pairingLifecycle?.failed || 0) + (this.results.userSoftDelete?.failed || 0) +
@@ -2191,7 +2256,7 @@ class TestSuiteRunner {
                     (this.results.stripeBilling?.failed || 0) + (this.results.stripeCustomerEmailSync?.failed || 0) + (this.results.appleReceiptVerifier?.failed || 0) + (this.results.googlePlayReceiptVerifier?.failed || 0) +
                     (this.results.helpfulPromptService?.failed || 0) +
                     (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0) +
-                    (this.results.pushNotificationService?.failed || 0) + (this.results.authzIdor?.failed || 0) + (this.results.subscriptionSandboxReuse?.failed || 0) + (this.results.urgentGaps?.failed || 0) + (this.results.remainingGaps?.failed || 0) + (this.results.refreshTokenHashing?.failed || 0) + (this.results.promptSessions?.failed || 0)
+                    (this.results.pushNotificationService?.failed || 0) + (this.results.authzIdor?.failed || 0) + (this.results.subscriptionSandboxReuse?.failed || 0) + (this.results.urgentGaps?.failed || 0) + (this.results.remainingGaps?.failed || 0) + (this.results.branchCoverage?.failed || 0) + (this.results.refreshTokenHashing?.failed || 0) + (this.results.promptSessions?.failed || 0)
       }
     };
   }
@@ -2235,6 +2300,7 @@ function parseArgs() {
     if (arg === '--no-subscription-sandbox-reuse') options.runSubscriptionSandboxReuse = false;
     if (arg === '--no-urgent-gaps') options.runUrgentGaps = false;
     if (arg === '--no-remaining-gaps') options.runRemainingGaps = false;
+    if (arg === '--no-branch-coverage') options.runBranchCoverage = false;
     if (arg === '--no-refresh-token-hashing') options.runRefreshTokenHashing = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];

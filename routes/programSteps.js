@@ -67,12 +67,14 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
       const currentUserMessages = userMessages.filter(msg => msg.sender_id === currentUserId);
       const hasUserMessageInStep = currentUserMessages.length > 0;
+      // Use the current user's latest user message, not messages[last].
+      // created_at is second-precision, so a system message written in the
+      // same second can sort after the "Hopeful" post and hide the trigger.
+      const latestCurrentUserMessage = currentUserMessages[currentUserMessages.length - 1] || null;
 
-      const isChimeInTrigger = latestMessage &&
-        latestMessage.message_type === 'user_message' &&
-        latestMessage.sender_id === currentUserId &&
-        typeof latestMessage.content === 'string' &&
-        (latestMessage.content.toLowerCase().includes('hopeful') || latestMessage.content.toLowerCase().includes('helpful'));
+      const isChimeInTrigger = latestCurrentUserMessage &&
+        typeof latestCurrentUserMessage.content === 'string' &&
+        (latestCurrentUserMessage.content.toLowerCase().includes('hopeful') || latestCurrentUserMessage.content.toLowerCase().includes('helpful'));
 
       if (isChimeInTrigger && hasUserMessageInStep) {
         console.log(`[THERAPY_TRIGGER] Chime-in trigger detected for step ${stepId}, user ${currentUserId}`);

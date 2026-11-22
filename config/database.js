@@ -123,6 +123,7 @@ module.exports = {
   closePool,
   createPool,
   sslRejectUnauthorized,
+  mysqlSslOptions,
   mysqlAuthPlugins,
 };
 
