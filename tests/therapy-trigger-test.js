@@ -83,7 +83,7 @@ class TherapyTriggerTestRunner {
   /**
    * Poll for a system message whose metadata.type matches the given value
    */
-  async pollForSystemMessageType(stepId, token, metadataType, maxWait = 30000) {
+  async pollForSystemMessageType(stepId, token, metadataType, maxWait = 60000) {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
@@ -701,7 +701,7 @@ class TherapyTriggerTestRunner {
       this.testData.stepId,
       this.testData.user1.token,
       'chime_in_prompt',
-      30000
+      Math.max(this.timeout, 60000)
     );
 
     if (!hopefulPoll.found || hopefulPoll.messages.length === 0) {

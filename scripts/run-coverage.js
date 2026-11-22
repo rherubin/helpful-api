@@ -38,6 +38,7 @@ const envBase = {
   TEST_MOCK_PUSH: process.env.TEST_MOCK_PUSH || 'true',
   TEST_MOCK_IAP: process.env.TEST_MOCK_IAP || 'true',
   TEST_MOCK_STRIPE: process.env.TEST_MOCK_STRIPE || 'true',
+  PROGRAM_GENERATION_FOLLOWUP_DELAY_MS: process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS || '50',
   TEST_BASE_URL: baseUrl
 };
 

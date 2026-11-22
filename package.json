@@ -33,6 +33,8 @@
     "test:urgent-gaps": "node tests/urgent-gaps-test.js",
     "test:subscription-sandbox-reuse": "node tests/subscription-sandbox-reuse-test.js",
     "test:remaining-gaps": "node tests/remaining-gaps-test.js",
+    "test:branch-coverage": "node tests/branch-coverage-test.js",
+    "test:resource-coverage": "node tests/resource-coverage-test.js",
     "test:refresh-token-hashing": "node tests/test-refresh-token-hashing.js"
   },
   "keywords": [
