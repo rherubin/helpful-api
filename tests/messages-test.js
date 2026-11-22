@@ -18,15 +18,18 @@ require('dotenv').config();
 const axios = require('axios');
 const { sleep, pollForProgramSteps } = require('./test-helpers');
 
-const BASE_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
+function resolveBaseURL(options = {}) {
+  const arg = process.argv.find((a) => a.startsWith('--url='));
+  return options.baseURL || (arg && arg.slice(6)) || process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
+}
 const MOCK_OPENAI = process.env.TEST_MOCK_OPENAI === 'true';
 
 // Check for --keep-data flag to preserve test data for inspection
 const KEEP_DATA = process.argv.includes('--keep-data');
 
 class MessagesTestRunner {
-  constructor() {
-    this.baseURL = BASE_URL;
+  constructor(options = {}) {
+    this.baseURL = resolveBaseURL(options);
     this.timeout = 60000; // 60 seconds for OpenAI API calls
     this.keepData = KEEP_DATA;
     this.testResults = {
@@ -825,9 +828,9 @@ class MessagesTestRunner {
 }
 
 // Check if server is running
-async function checkServer() {
+async function checkServer(baseURL) {
   try {
-    await axios.get(`${BASE_URL}/health`, { timeout: 3000 });
+    await axios.get(`${baseURL}/health`, { timeout: 3000 });
     return true;
   } catch (error) {
     return false;
@@ -837,11 +840,12 @@ async function checkServer() {
 // Main
 if (require.main === module) {
   (async () => {
+    const baseURL = resolveBaseURL();
     console.log('Checking if server is running...');
-    const running = await checkServer();
+    const running = await checkServer(baseURL);
 
     if (!running) {
-      console.error('❌ Server not running at', BASE_URL);
+      console.error('❌ Server not running at', baseURL);
       console.error('Start the server with: npm start');
       process.exit(1);
     }
@@ -855,7 +859,7 @@ if (require.main === module) {
       console.log('⚠️  Or inspect data in database with the logged IDs above\n');
     }
 
-    const runner = new MessagesTestRunner();
+    const runner = new MessagesTestRunner({ baseURL });
     const success = await runner.runAllTests();
     process.exit(success ? 0 : 1);
   })();

@@ -17,12 +17,15 @@ require('dotenv').config();
 const axios = require('axios');
 const { generateTestEmail, sleep, pollForProgramSteps } = require('./test-helpers');
 
-const BASE_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
+function resolveBaseURL(options = {}) {
+  const arg = process.argv.find((a) => a.startsWith('--url='));
+  return options.baseURL || (arg && arg.slice(6)) || process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
+}
 const MOCK_OPENAI = process.env.TEST_MOCK_OPENAI === 'true';
 
 class TherapyTriggerTestRunner {
-  constructor() {
-    this.baseURL = BASE_URL;
+  constructor(options = {}) {
+    this.baseURL = resolveBaseURL(options);
     this.timeout = MOCK_OPENAI ? 15000 : 60000; // Longer timeout for real OpenAI calls
     this.testResults = {
       passed: 0,
@@ -943,9 +946,9 @@ class TherapyTriggerTestRunner {
 }
 
 // Check if server is running
-async function checkServer() {
+async function checkServer(baseURL) {
   try {
-    await axios.get(`${BASE_URL}/health`, { timeout: 3000 });
+    await axios.get(`${baseURL}/health`, { timeout: 3000 });
     return true;
   } catch (error) {
     return false;
@@ -955,18 +958,19 @@ async function checkServer() {
 // Main
 if (require.main === module) {
   (async () => {
+    const baseURL = resolveBaseURL();
     console.log('Checking if server is running...');
-    const running = await checkServer();
+    const running = await checkServer(baseURL);
     
     if (!running) {
-      console.error('❌ Server not running at', BASE_URL);
+      console.error('❌ Server not running at', baseURL);
       console.error('Start the server with: npm start');
       process.exit(1);
     }
     
     console.log('✅ Server is running\n');
     
-    const runner = new TherapyTriggerTestRunner();
+    const runner = new TherapyTriggerTestRunner({ baseURL });
     const success = await runner.runAllTests();
     process.exit(success ? 0 : 1);
   })();

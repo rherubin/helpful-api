@@ -228,7 +228,7 @@ class TestSuiteRunner {
     this.log('🔐 Running Authentication Tests', 'section');
     
     try {
-      const authRunner = new AuthTestRunner();
+      const authRunner = new AuthTestRunner({ baseURL: this.options.baseURL });
       const success = await authRunner.runAllTests();
       
       this.results.auth = { 
@@ -523,7 +523,7 @@ class TestSuiteRunner {
     this.log('📝 Running Program Steps Test Suite', 'section');
 
     try {
-      const programStepsRunner = new ProgramStepsTestRunner();
+      const programStepsRunner = new ProgramStepsTestRunner({ baseURL: this.options.baseURL });
       const success = await programStepsRunner.runAllTests();
 
       this.results.programSteps = {
@@ -558,7 +558,7 @@ class TestSuiteRunner {
     this.log('💬 Running Messages Test Suite', 'section');
 
     try {
-      const messagesRunner = new MessagesTestRunner();
+      const messagesRunner = new MessagesTestRunner({ baseURL: this.options.baseURL });
       const success = await messagesRunner.runAllTests();
 
       this.results.messages = {
@@ -593,7 +593,7 @@ class TestSuiteRunner {
     this.log('💕 Running Therapy Trigger Test Suite', 'section');
 
     try {
-      const therapyTriggerRunner = new TherapyTriggerTestRunner();
+      const therapyTriggerRunner = new TherapyTriggerTestRunner({ baseURL: this.options.baseURL });
       const success = await therapyTriggerRunner.runAllTests();
 
       this.results.therapyTrigger = {
