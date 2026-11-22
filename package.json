@@ -31,7 +31,9 @@
     "purge:prompt-sessions:confirm": "node scripts/purge-prompt-sessions.js --confirm",
     "test:coverage": "node scripts/run-coverage.js",
     "test:urgent-gaps": "node tests/urgent-gaps-test.js",
-    "test:subscription-sandbox-reuse": "node tests/subscription-sandbox-reuse-test.js"
+    "test:subscription-sandbox-reuse": "node tests/subscription-sandbox-reuse-test.js",
+    "test:remaining-gaps": "node tests/remaining-gaps-test.js",
+    "test:refresh-token-hashing": "node tests/test-refresh-token-hashing.js"
   },
   "keywords": [
     "api",
