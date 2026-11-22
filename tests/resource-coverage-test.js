@@ -152,6 +152,11 @@ class ResourceCoverageTestRunner {
     await this.assertResolves(async () => admin.softDeleteAdminUser('a1'), 'AdminUser softDeleteAdminUser');
     await this.assertResolves(async () => admin.updateAdminUser('a1', { email: 'b@x.com' }), 'AdminUser updateAdminUser');
     await this.assertResolves(async () => admin.createAdminUser({ email: 'n@x.com', password: 'C0rrect-Horse-Battery-Staple!' }), 'AdminUser createAdminUser', (r) => r && (r.id || r.email || r.message));
+    await this.expectThrow(
+      () => admin.createAdminUser({ email: 'weak@x.com', password: 'Password1!' }),
+      'Password contains weak patterns',
+      'AdminUser createAdminUser rejects a weak password'
+    );
     await this.assertResolves(async () => admin.initDatabase(), 'AdminUser initDatabase');
     if (typeof admin.verifyPassword === 'function') {
       await this.assertResolves(async () => admin.verifyPassword(rows[0], 'x'), 'AdminUser verifyPassword');

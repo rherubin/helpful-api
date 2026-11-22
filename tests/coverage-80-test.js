@@ -1563,6 +1563,31 @@ class Coverage80TestRunner {
         catch (e) { this.assert(true, `Pairing ${name} tx path threw`, e.message); }
       }
     }
+
+    const zeroRows = new Pairing(mockPool(async () => [{ affectedRows: 0 }]));
+    await this.expectThrow(() => zeroRows.acceptPairing('p1'), 'Failed to accept pairing', 'Pairing acceptPairing zero rows');
+    await this.expectThrow(() => zeroRows.rejectPairing('p1'), 'Failed to reject pairing', 'Pairing rejectPairing zero rows');
+    await this.expectThrow(() => zeroRows.softDeletePairing('p1'), 'Pairing not found or already deleted', 'Pairing softDeletePairing zero rows');
+    await this.expectThrow(() => zeroRows.restorePairing('p1'), 'Pairing not found or not deleted', 'Pairing restorePairing zero rows');
+    await this.expectThrow(() => zeroRows.setPremiumStatus('p1', true), 'Pairing not found', 'Pairing setPremiumStatus zero rows');
+
+    const missing = new Pairing(mockPool(async () => [[]]));
+    await this.expectThrow(() => missing.getPairingById('p-missing'), 'Pairing not found', 'Pairing getPairingById missing');
+    await this.expectThrow(() => missing.getPremiumStatus('p-missing'), 'Pairing not found', 'Pairing getPremiumStatus missing');
+
+    const dup = new Pairing(mockPool(async () => {
+      const err = new Error('dup');
+      err.code = 'ER_DUP_ENTRY';
+      throw err;
+    }));
+    await this.expectThrow(() => dup.createPairing('u1', 'u2'), 'Pairing already exists', 'Pairing createPairing duplicate');
+
+    const takenCode = new Pairing(mockPool(async () => [[{ id: 'existing' }]]));
+    await this.expectThrow(
+      () => takenCode.createPairingWithPartnerCode('u1'),
+      'Failed to generate unique partner code',
+      'Pairing createPairingWithPartnerCode exhausts unique attempts'
+    );
   }
 
 
