@@ -644,14 +644,16 @@ class ProgramsTestRunner {
     try {
       const response = await axios.get(`${this.baseURL}/api/programs/metrics`, {
         headers: { Authorization: `Bearer ${token}` },
-        timeout: this.timeout
+        timeout: this.timeout,
+        validateStatus: () => true
       });
 
       this.assert(
-        response.status === 200,
-        'Get metrics returns 200',
+        response.status === 403,
+        'Get metrics rejects a regular user token with 403',
         `Status: ${response.status}`
       );
+      return;
 
       this.assert(
         response.data.metrics !== undefined,

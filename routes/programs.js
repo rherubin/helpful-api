@@ -4,6 +4,7 @@ const { createAuthenticateToken } = require('../middleware/auth');
 function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptService, programStepModel = null, userModel = null, pairingModel = null, authService = null, userModelForOrgCode = null, pushNotificationService = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
+  const authenticateAdminToken = createAuthenticateToken(authService, { allowAdmin: true });
   const GENERATION_FOLLOWUP_ENABLED = process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED !== 'false';
   const GENERATION_FOLLOWUP_DELAY_MS = Number(process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS || 60000);
   const DEFAULT_STEPS_REQUIRED_FOR_UNLOCK = Number(process.env.DEFAULT_STEPS_REQUIRED_FOR_UNLOCK ?? 0);
@@ -583,7 +584,10 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
 
   // Get prompt-service metrics for both services (for monitoring).
   // Declared before the /:id route so that "metrics" is not interpreted as a program id.
-  router.get('/metrics', authenticateToken, async (req, res) => {
+  router.get('/metrics', authenticateAdminToken, async (req, res) => {
+    if (!req.user || req.user.type !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
     try {
       if (!hopefulPromptService && !helpfulPromptService) {
         return res.status(503).json({

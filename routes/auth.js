@@ -1,4 +1,5 @@
 const express = require('express');
+const { isProductionEnv } = require('../config/runtimeEnv');
 const { createAuthenticateToken } = require('../middleware/auth');
 const { 
   loginLimiter, 
@@ -12,8 +13,16 @@ const {
 // Helper function to filter sensitive fields from user objects
 function filterUserData(user) {
   if (!user) return null;
-  // Remove password_hash and premium (premium should be set explicitly as boolean)
-  const { password_hash, premium, ...filteredUser } = user;
+  // Strip secrets and internal billing/premium columns. `premium` is set
+  // explicitly by the caller as a computed boolean.
+  const {
+    password_hash,
+    premium,
+    is_premium,
+    bypass_password,
+    stripe_customer_id,
+    ...filteredUser
+  } = user;
   return filteredUser;
 }
 
@@ -118,8 +127,12 @@ function createAuthRoutes(authService, userModel, pairingService, orgCodeModel) 
     }
   });
 
-  // Debug endpoint to check token info (without validation)
+  // Debug endpoint to check token info (without validation).
+  // Disabled in production — it decodes an unverified JWT and returns claims.
   router.post('/token-info', async (req, res) => {
+    if (isProductionEnv()) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     try {
       const { access_token } = req.body;
       

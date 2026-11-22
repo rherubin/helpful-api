@@ -3,7 +3,7 @@ const { createAuthenticateToken } = require('../middleware/auth');
 
 function createOrgCodeRoutes(orgCodeModel, userModel, authService, adminAuthService) {
   const router = express.Router();
-  const authenticateToken = createAuthenticateToken(authService);
+  const authenticateToken = createAuthenticateToken(authService, { allowAdmin: true });
   // App clients may list org directory metadata, but must never receive the
   // redeemable `org_code` secret (PUT /users/:id with that string sets is_premium).
   // Prompt fields stay admin-only as well.
