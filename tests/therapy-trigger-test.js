@@ -782,8 +782,7 @@ class TherapyTriggerTestRunner {
 
     const pollResult = await this.pollForSteps(welcomeProgramId, this.testData.user1.token);
     if (!pollResult.found || pollResult.steps.length === 0) {
-      this.log('Program steps not generated, skipping first message welcome test', 'warn');
-      this.assert(true, 'First message welcome test skipped', 'Program steps not available (OpenAI API issue)');
+      this.log('Program steps not generated, skipping first message welcome test (OpenAI API issue)', 'warn');
       return;
     }
 

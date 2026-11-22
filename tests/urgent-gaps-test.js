@@ -272,7 +272,6 @@ class UrgentGapsTestRunner {
       'User profile is the expected account',
       `id=${userProfile.data?.profile?.id}`
     );
-
   }
 
   postWebhook(event, { signature = 't=mock,v1=mock' } = {}) {

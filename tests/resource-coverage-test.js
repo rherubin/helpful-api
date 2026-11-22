@@ -77,7 +77,7 @@ class ResourceCoverageTestRunner {
     const steps = new ProgramStep(okPool([{ id: 's1', day: 1, metadata: '{"a":1}' }]));
     if (typeof steps.parseMetadata === 'function') {
       this.assert(steps.parseMetadata('{"a":1}').a === 1, 'ProgramStep parseMetadata json');
-      this.assert(steps.parseMetadata({ a: 1 }).a === 1 || typeof steps.parseMetadata({ a: 1 }) === 'object', 'ProgramStep parseMetadata object');
+      this.assert(steps.parseMetadata({ a: 1 }).a === 1, 'ProgramStep parseMetadata object');
       this.assert(steps.parseMetadata('not-json') === 'not-json', 'ProgramStep parseMetadata invalid returns original string');
     }
     await this.assertResolves(() => steps.deleteProgramSteps('p1'), 'ProgramStep deleteProgramSteps success');
@@ -121,7 +121,8 @@ class ResourceCoverageTestRunner {
     await this.assertResolves(() => msg.getMessageById('m1'), 'Message getMessageById', (r) => r && r.id === 'm1');
     await this.assertResolves(() => msg.updateMessage('m1', 'updated', { a: 1 }), 'Message updateMessage');
     await this.assertResolves(() => msg.deleteMessage('m1'), 'Message deleteMessage');
-    await this.assertResolves(() => msg.getMessageCount('c1'), 'Message getMessageCount', (r) => typeof r === 'number' || r == null || Array.isArray(r) || typeof r === 'object');
+    const counter = new Message(okPool([{ count: 3 }]));
+    await this.assertResolves(() => counter.getMessageCount('c1'), 'Message getMessageCount', (r) => r === 3);
     await this.assertResolves(() => msg.checkMessageAccess('u1', 'm1'), 'Message checkMessageAccess');
     await this.assertResolves(() => msg.addUserMessage('s1', 'u1', 'hi'), 'Message addUserMessage');
     await this.assertResolves(() => msg.addSystemMessage('s1', 'sys', { type: 'x' }), 'Message addSystemMessage');

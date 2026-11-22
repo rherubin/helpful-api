@@ -488,7 +488,7 @@ class TestSuiteRunner {
     this.log('📋 Running Programs Test Suite', 'section');
 
     try {
-      const programsRunner = new ProgramsTestRunner();
+      const programsRunner = new ProgramsTestRunner({ baseURL: this.options.baseURL });
       const success = await programsRunner.runAllTests();
 
       this.results.programs = {
@@ -1395,7 +1395,6 @@ class TestSuiteRunner {
   }
 
   async runRefreshTokenHashingTests() {
-
     if (!this.options.runRefreshTokenHashing) {
       this.log('Skipping refresh-token hashing tests', 'warn');
       return { skipped: true };

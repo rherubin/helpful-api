@@ -645,12 +645,6 @@ async function runRegenerationPollOnce({
     }
   }
 
-  async function hasProgramSteps(programId) {
-    if (!programStepModel) return false;
-    const steps = await programStepModel.getProgramSteps(programId);
-    return Array.isArray(steps) && steps.length > 0;
-  }
-
   let flaggedPrograms;
   try {
     flaggedPrograms = await programModel.getProgramsFlaggedForRegeneration();
@@ -763,9 +757,6 @@ async function runRegenerationPollOnce({
     }
   }
 
-  // Keep the unused helper so its behavior stays identical to the previous
-  // in-poller definition (tests may invoke it via this reference in the future).
-  void hasProgramSteps;
 }
 
 function startRegenerationPoller(programModel, programStepModel, hopefulPromptService, helpfulPromptService, userModel, pairingModel, userModelForOrgCode) {
