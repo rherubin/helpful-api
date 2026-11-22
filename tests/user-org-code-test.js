@@ -1106,6 +1106,7 @@ class UserOrgCodeTestRunner {
     }
 
     let hitRateLimit = false;
+    let rateLimitStatus = null;
     let requestCount = 0;
 
     // The test process doesn't always have visibility into the server's
@@ -1123,6 +1124,7 @@ class UserOrgCodeTestRunner {
       } catch (error) {
         if (error.response?.status === 429) {
           hitRateLimit = true;
+          rateLimitStatus = error.response.status;
           this.log(`Rate limit hit after ${requestCount} requests`, 'info');
           break;
         }
@@ -1141,9 +1143,9 @@ class UserOrgCodeTestRunner {
     }
 
     this.assert(
-      true,
+      rateLimitStatus === 429,
       `Rate limiter - 429 received after ${requestCount} requests`,
-      'Rate limit triggered correctly'
+      `Status: ${rateLimitStatus}`
     );
 
     if (this.keepData && rlUser) {

@@ -546,9 +546,9 @@ class OpenAITestRunner {
       this.assert(false, 'Empty input handling', 'Should have thrown error');
     } catch (error) {
       this.assert(
-        true,
+        error.message === 'Failed to generate reflection program',
         'Empty input handling',
-        'Correctly rejected empty input'
+        `Error: ${error.message}`
       );
     }
 
@@ -558,9 +558,9 @@ class OpenAITestRunner {
       this.assert(false, 'Null input handling', 'Should have thrown error');
     } catch (error) {
       this.assert(
-        true,
-        'Null input handling', 
-        'Correctly rejected null input'
+        error.message === 'Failed to generate reflection program',
+        'Null input handling',
+        `Error: ${error.message}`
       );
     }
   }

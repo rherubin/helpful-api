@@ -324,7 +324,7 @@ class TherapyTriggerTestRunner {
 
     // User 1 posts a message
     try {
-      await axios.post(
+      const post1 = await axios.post(
         `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
         { content: 'I feel like we need to spend more quality time together. Sometimes I feel disconnected.' },
         {
@@ -335,9 +335,14 @@ class TherapyTriggerTestRunner {
       this.log('User 1 posted message to step', 'info');
 
       this.assert(
-        true,
+        post1.status === 201,
         'User 1 can post message to shared program step',
-        'Message posted successfully'
+        `Status: ${post1.status}`
+      );
+      this.assert(
+        post1.data?.message === 'Message added successfully',
+        'User 1 post returns a success message',
+        `message=${post1.data?.message}`
       );
     } catch (error) {
       this.assert(false, 'User 1 post message', `Error: ${error.response?.data?.error || error.message}`);
@@ -374,7 +379,7 @@ class TherapyTriggerTestRunner {
 
     // User 2 posts a message
     try {
-      await axios.post(
+      const post2 = await axios.post(
         `${this.baseURL}/api/programSteps/${this.testData.stepId}/messages`,
         { content: 'I agree, I have also been feeling that we should prioritize our time together more.' },
         {
@@ -385,9 +390,14 @@ class TherapyTriggerTestRunner {
       this.log('User 2 posted message to step', 'info');
 
       this.assert(
-        true,
+        post2.status === 201,
         'User 2 can post message to shared program step',
-        'Message posted successfully'
+        `Status: ${post2.status}`
+      );
+      this.assert(
+        post2.data?.message === 'Message added successfully',
+        'User 2 post returns a success message',
+        `message=${post2.data?.message}`
       );
     } catch (error) {
       this.assert(false, 'User 2 post message', `Error: ${error.response?.data?.error || error.message}`);
@@ -409,9 +419,9 @@ class TherapyTriggerTestRunner {
         : (therapyMessage.metadata || {});
 
       this.assert(
-        true,
+        therapyPoll.found === true && therapyMessage.message_type === 'system',
         'System message generated after both users post',
-        `Message type: ${therapyMessage.message_type}`
+        `found=${therapyPoll.found}, type=${therapyMessage.message_type}`
       );
 
       this.assert(
