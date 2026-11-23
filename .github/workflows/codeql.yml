@@ -6,15 +6,27 @@ name: CodeQL
 on:
   pull_request:
     branches: [develop, main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.cursor/**'
+      - '.claude/**'
+      - '.github/dependabot.yml'
   push:
     branches: [develop, main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.cursor/**'
+      - '.claude/**'
+      - '.github/dependabot.yml'
   schedule:
     - cron: "43 10 * * 1" # Mondays 10:43 UTC
   workflow_dispatch:
 
 concurrency:
   group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
