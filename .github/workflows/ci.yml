@@ -3,17 +3,40 @@ name: CI
 on:
   pull_request:
     branches: [main, develop]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.cursor/**'
+      - '.claude/**'
+      - '.github/dependabot.yml'
   push:
     branches: [main, develop]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.cursor/**'
+      - '.claude/**'
+      - '.github/dependabot.yml'
+  # Manual run from the Actions tab (Run workflow) on any branch.
+  workflow_dispatch:
 
+# Docs-only changes (see paths-ignore) skip CI; the secret scan in
+# security-checks.yml still runs on them.
+#
+# A newer commit on the same pull request cancels the older run. Pushes to
+# develop/main and manual runs are not cancelled once started, but GitHub
+# keeps only one pending run per group: while one runs, the newest pending
+# push is tested and an intermediate one can be skipped. That saves minutes,
+# and the newest commit contains the skipped one's changes.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     name: API test suite
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     services:
       mysql:

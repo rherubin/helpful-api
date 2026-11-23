@@ -83,7 +83,16 @@ before they run; update the version and the checksums together.
 ## Known gaps
 
 - Dependabot alerts are a repository setting and are enabled in GitHub under
-  **Settings > Advanced Security**, not by a workflow.
+  **Settings > Advanced Security**, not by a workflow. Dependabot version
+  updates are configured in `.github/dependabot.yml`: weekly (Monday 09:00
+  America/New_York), one grouped PR per ecosystem (npm, GitHub Actions) into
+  `develop`. Each of those PRs runs CI.
+- The secret scan has no `paths-ignore`, so it runs on docs-only changes too.
+  Every push gets its own scan: push, scheduled and manual runs each have
+  their own concurrency group, so none is cancelled or skipped by a later
+  run. This matters because a push scan covers only the commits that push
+  added. On a pull request, a newer commit cancels the older scan, and the
+  newer one covers the whole PR.
 - `npm audit` only knows advisories in the GitHub advisory database.
 - Not covered: infrastructure and runtime configuration (Railway, DNS,
   environment variables).

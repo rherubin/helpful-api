@@ -98,7 +98,7 @@ npm test -- --url=http://127.0.0.1:9011
 
 Some standalone suites *do* honor `TEST_BASE_URL`. Set both if you run a mix. `tests/README.md` currently lists `TEST_BASE_URL` as if it applied to the whole suite; that is only true for those standalone files.
 
-CI (`.github/workflows/ci.yml`) starts MySQL 8, sets `PORT=9000`, `JWT_SECRET` / `JWT_REFRESH_SECRET`, `MYSQL_*` pointing at the service container, and the four `TEST_MOCK_*` flags above, then `npm start` and `npm test`. Use those same flags locally.
+CI (`.github/workflows/ci.yml`) starts MySQL 8, sets `PORT=9000`, `JWT_SECRET` / `JWT_REFRESH_SECRET`, `MYSQL_*` pointing at the service container, and the four `TEST_MOCK_*` flags above, then `npm start` and `npm test`. Use those same flags locally. CI runs on PRs and pushes to `main` and `develop`, and by hand (`gh workflow run ci.yml --ref <branch>`); docs-only changes skip CI and CodeQL but not the secret scan. Dependabot (`.github/dependabot.yml`) opens at most one grouped update PR per ecosystem (npm, GitHub Actions) each Monday, into `develop`.
 
 There is **no** `test:coverage` script and no `c8` dependency on `develop` as of this writing. Open coverage work may add that later; do not assume the command exists until it is in `package.json`.
 

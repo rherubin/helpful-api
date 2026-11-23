@@ -32,7 +32,7 @@ Short, verified notes. If a fact is not true in the current `develop` tree, it d
 - Login lockout is an **in-memory** map in `middleware/security.js` (5 failures in 15 minutes → 5 minute lock). Multiple Railway replicas do not share it; a shared store (for example Redis) is required for a real lockout.
 - Open registration for app users is still allowed; tightening it is a product decision.
 - `node_modules` is listed in `.gitignore` but a historical tree is still tracked (thousands of files). Removing it is a repo-hygiene change with a large diff; do it deliberately.
-- Dependabot security updates are disabled. Secret scanning and push protection are **enabled** on this public repository (confirmed via the GitHub API, 22 November 2026). They are not a substitute for keeping secrets out of git.
+- Dependabot security updates are disabled. Dependabot version updates are configured in `.github/dependabot.yml` (weekly, grouped, into `develop`). Secret scanning and push protection are **enabled** on this public repository (confirmed via the GitHub API, 22 November 2026). They are not a substitute for keeping secrets out of git.
 - Firebase Admin / FCM remains optional; client Firebase keys live in the mobile apps and should be restricted in Google Cloud (mobile follow-up).
 
 ## Operations

@@ -6,15 +6,31 @@ name: CodeQL
 on:
   pull_request:
     branches: [develop, main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.cursor/**'
+      - '.claude/**'
+      - '.github/dependabot.yml'
   push:
     branches: [develop, main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.cursor/**'
+      - '.claude/**'
+      - '.github/dependabot.yml'
   schedule:
     - cron: "43 10 * * 1" # Mondays 10:43 UTC
   workflow_dispatch:
 
+# A newer commit on the same pull request cancels the older analysis. Push,
+# scheduled and manual runs are not cancelled once started, but GitHub keeps
+# only one pending run per group, so the newest pending push is analyzed and
+# an intermediate one can be skipped.
 concurrency:
   group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
