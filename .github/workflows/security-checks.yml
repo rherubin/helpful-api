@@ -1,0 +1,113 @@
+name: Security checks
+
+# Tool-neutral security scanning that replaces the retired Cursor Security
+# Reviewer check. See docs/runbooks/security-checks.md.
+#
+#   secrets      gitleaks over the commits a PR or push adds, plus a scan of
+#                the files as checked out. Old history never blocks a PR.
+#   dependencies npm audit over production dependencies; fails on high or
+#                critical advisories.
+#
+# Pull requests and pushes also run on `develop` and `main`. A weekly
+# schedule and a manual trigger rescan the working tree and the dependency
+# advisories, because new advisories appear for code that has not changed.
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+  schedule:
+    - cron: "17 10 * * 1" # Mondays 10:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: security-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_SHA256_AMD64: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+          GITLEAKS_SHA256_ARM64: "e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080"
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64)
+              arch=x64
+              sha="${GITLEAKS_SHA256_AMD64}"
+              ;;
+            aarch64)
+              arch=arm64
+              sha="${GITLEAKS_SHA256_ARM64}"
+              ;;
+            *)
+              echo "Unsupported architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+          tarball="${RUNNER_TEMP}/gitleaks.tar.gz"
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${arch}.tar.gz" -o "$tarball"
+          echo "${sha}  ${tarball}" | sha256sum -c -
+          install_dir="${RUNNER_TEMP}/gitleaks-bin"
+          mkdir -p "$install_dir"
+          tar -xzf "$tarball" -C "$install_dir" gitleaks
+          echo "$install_dir" >> "$GITHUB_PATH"
+          "$install_dir/gitleaks" version
+
+      - name: Scan the commits this pull request adds
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/gitleaks-scan.sh range "$BASE_SHA" "$HEAD_SHA"
+
+      - name: Scan the commits this push adds
+        if: github.event_name == 'push'
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: .github/scripts/gitleaks-scan.sh range "$BASE_SHA" "$HEAD_SHA"
+
+      # Runs on every trigger, including the weekly schedule and manual runs.
+      - name: Scan the working tree
+        run: .github/scripts/gitleaks-scan.sh tree
+
+  dependencies:
+    name: Dependency audit (npm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      # Reads package-lock.json and asks the npm registry about it, so no
+      # install is needed. Dev-only packages are left out of the gate because
+      # they never ship in the deployed API.
+      - name: Audit production dependencies (fails on high or critical)
+        run: npm audit --package-lock-only --omit=dev --audit-level=high
+
+      - name: Report every advisory, dev dependencies included (informational)
+        continue-on-error: true
+        run: npm audit --package-lock-only
