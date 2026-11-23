@@ -218,13 +218,12 @@ class AuthzIdorRegressionTestRunner {
         // Client thinks production-like; still may succeed if server has TEST_MOCK_* .
         // Assert only the hard deny contract when server returns 403.
         if (res.status === 403) {
-          this.assert(true, 'Admin register denied without opt-in → 403');
+          this.assert(res.status === 403, 'Admin register denied without opt-in → 403');
         } else if (res.status === 201) {
           this.log(
             'Server still allows admin register (likely TEST_MOCK_* on API process) — skipped hard deny assert',
             'warn'
           );
-          this.assert(true, 'Admin register reachable on current server config');
         } else {
           this.assert(
             false,
@@ -257,10 +256,10 @@ class AuthzIdorRegressionTestRunner {
       if (!allowOpen) {
         this.assert(bad.status === 403, 'Wrong admin registration secret → 403');
       } else {
-        this.assert(true, 'Secret mismatch check skipped under open test harness');
+        this.log('Secret mismatch check skipped under open test harness', 'warn');
       }
     } else {
-      this.assert(true, 'ADMIN_REGISTRATION_SECRET unset — secret mismatch check skipped');
+      this.log('ADMIN_REGISTRATION_SECRET unset — secret mismatch check skipped', 'warn');
     }
   }
 

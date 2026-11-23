@@ -476,8 +476,8 @@ class AppleReceiptVerifierTestRunner {
       APPLE_IAP_ENVIRONMENT: undefined
     }, () => {
       try {
-        this.verifySandboxReceipt(chain);
-        this.assert(true, 'Receipt for any listed bundle id is accepted');
+        const result = this.verifySandboxReceipt(chain);
+        this.assert(result && result.environment === 'Sandbox', 'Receipt for any listed bundle id is accepted', `environment=${result && result.environment}`);
       } catch (error) {
         this.assert(false, 'Receipt for any listed bundle id is accepted', error.message);
       }

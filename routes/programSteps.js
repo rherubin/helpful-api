@@ -48,7 +48,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
   }
 
   // Helper function to check if we should trigger background therapy response
-  async function checkAndTriggerTherapyResponse(stepId, currentUserId, push = null) {
+  async function checkAndTriggerTherapyResponse(stepId, currentUserId, push = null, postedContent = null) {
     console.log(`[THERAPY_TRIGGER] Checking therapy response for step ${stepId}, user ${currentUserId}`);
 
     try {
@@ -67,12 +67,19 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
 
       const currentUserMessages = userMessages.filter(msg => msg.sender_id === currentUserId);
       const hasUserMessageInStep = currentUserMessages.length > 0;
+      // Use the current user's latest user message, not messages[last].
+      // created_at is second-precision, so a system message written in the
+      // same second can sort after the "Hopeful" post and hide the trigger.
+      const latestCurrentUserMessage = currentUserMessages[currentUserMessages.length - 1] || null;
 
-      const isChimeInTrigger = latestMessage &&
-        latestMessage.message_type === 'user_message' &&
-        latestMessage.sender_id === currentUserId &&
-        typeof latestMessage.content === 'string' &&
-        (latestMessage.content.toLowerCase().includes('hopeful') || latestMessage.content.toLowerCase().includes('helpful'));
+      // Prefer the message that was just posted. Two writes in the same
+      // DATETIME second can sort in either order, so looking only at
+      // "latest" by created_at can miss a "Hopeful"/"Helpful" trigger.
+      const triggerText = (typeof postedContent === 'string' && postedContent.trim())
+        ? postedContent
+        : (latestCurrentUserMessage && latestCurrentUserMessage.content);
+      const isChimeInTrigger = typeof triggerText === 'string' &&
+        (triggerText.toLowerCase().includes('hopeful') || triggerText.toLowerCase().includes('helpful'));
 
       if (isChimeInTrigger && hasUserMessageInStep) {
         console.log(`[THERAPY_TRIGGER] Chime-in trigger detected for step ${stepId}, user ${currentUserId}`);
@@ -455,7 +462,7 @@ function createProgramStepRoutes(programStepModel, messageModel, programModel, p
       // background trigger so the response is never delayed by LLM calls.
       if (systemMessages.length === 0) {
         setImmediate(() => {
-          checkAndTriggerTherapyResponse(id, userId, pushNotificationService || null);
+          checkAndTriggerTherapyResponse(id, userId, pushNotificationService || null, content.trim());
         });
       }
 

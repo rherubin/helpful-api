@@ -26,7 +26,11 @@ const axios = require('axios');
 const assert = require('assert');
 const { generateTestEmail, validateTestEmailDomain, TEST_EMAIL_DOMAIN } = require('./test-helpers');
 
-const BASE_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
+function resolveBaseURL(options = {}) {
+  const arg = process.argv.find((a) => a.startsWith('--url='));
+  return options.baseURL || (arg && arg.slice(6)) || process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
+}
+let BASE_URL = resolveBaseURL();
 
 // Test configuration
 const testConfig = {
@@ -570,6 +574,11 @@ async function showCleanupInstructions() {
 }
 
 class AuthTestRunner {
+  constructor(options = {}) {
+    BASE_URL = resolveBaseURL(options);
+    testConfig.baseURL = BASE_URL;
+  }
+
   async runAllTests() {
     const result = await runTests();
     return result && result.success;

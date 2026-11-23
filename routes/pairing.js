@@ -4,6 +4,7 @@ const { createAuthenticateToken } = require('../middleware/auth');
 function createPairingRoutes(pairingService, authService, pushNotificationService = null, userModel = null, pairingModel = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
+  const authenticateAdminToken = createAuthenticateToken(authService, { allowAdmin: true });
 
   // Request a pairing (generates partner code)
   router.post('/request', authenticateToken, async (req, res) => {
@@ -222,7 +223,7 @@ function createPairingRoutes(pairingService, authService, pushNotificationServic
   });
 
   // Get deleted pairings (admin-only — regular user JWTs never carry type=admin)
-  router.get('/deleted/all', authenticateToken, async (req, res) => {
+  router.get('/deleted/all', authenticateAdminToken, async (req, res) => {
     try {
       if (req.user?.type !== 'admin') {
         return res.status(403).json({ error: 'Admin access required' });

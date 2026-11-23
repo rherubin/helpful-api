@@ -28,6 +28,7 @@ function createUserRoutes(
 ) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
+  const authenticateAdminToken = createAuthenticateToken(authService, { allowAdmin: true });
 
   // Keep Stripe-granted premium when org entitlement is removed or incomplete.
   // Mirrors StripeBillingService.syncPremiumForUser (org OR Stripe), inverted:
@@ -129,6 +130,20 @@ function createUserRoutes(
       }
     }
   });
+
+  // Get deleted users (admin-only — regular user JWTs never carry type=admin)
+  router.get('/deleted/all', authenticateAdminToken, async (req, res) => {
+    try {
+      if (req.user?.type !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+      const deletedUsers = await userModel.getDeletedUsers();
+      res.json(deletedUsers.map(filterUserData));
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch deleted users' });
+    }
+  });
+
 
   // Get user by ID (self only — mirrors PUT/DELETE ownership gate)
   router.get('/:id', authenticateToken, async (req, res) => {
@@ -414,19 +429,6 @@ function createUserRoutes(
         console.error('Error updating user:', error.message);
         return res.status(500).json({ error: 'Failed to update user' });
       }
-    }
-  });
-
-  // Get deleted users (admin-only — regular user JWTs never carry type=admin)
-  router.get('/deleted/all', authenticateToken, async (req, res) => {
-    try {
-      if (req.user?.type !== 'admin') {
-        return res.status(403).json({ error: 'Admin access required' });
-      }
-      const deletedUsers = await userModel.getDeletedUsers();
-      res.json(deletedUsers.map(filterUserData));
-    } catch (error) {
-      res.status(500).json({ error: 'Failed to fetch deleted users' });
     }
   });
 

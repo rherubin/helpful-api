@@ -27,6 +27,13 @@ const AdminAuthRefreshTestRunner = require('./admin-auth-refresh-test');
 const AdminPushTestRunner = require('./admin-push-test-test');
 const PromptSessionsTestRunner = require('./prompt-sessions-test');
 const RuntimeEnvTestRunner = require('./runtime-env-test');
+const AuthzIdorRegressionTestRunner = require('./authz-idor-regression-test');
+const SubscriptionSandboxReuseTestRunner = require('./subscription-sandbox-reuse-test');
+const UrgentGapsTestRunner = require('./urgent-gaps-test');
+const RemainingGapsTestRunner = require('./remaining-gaps-test');
+const BranchCoverageTestRunner = require('./branch-coverage-test');
+const Coverage80TestRunner = require('./coverage-80-test');
+const RefreshTokenHashingTestRunner = require('./test-refresh-token-hashing');
 
 /**
  * Comprehensive test suite runner for CI/CD pipeline
@@ -65,6 +72,13 @@ class TestSuiteRunner {
       runAdminAuthRefresh: options.runAdminAuthRefresh !== false, // Default true
       runAdminPushTest: options.runAdminPushTest !== false, // Default true
       runPromptSessions: options.runPromptSessions !== false, // Default true
+      runAuthzIdor: options.runAuthzIdor !== false, // Default true
+      runSubscriptionSandboxReuse: options.runSubscriptionSandboxReuse !== false, // Default true
+      runUrgentGaps: options.runUrgentGaps !== false, // Default true
+      runRemainingGaps: options.runRemainingGaps !== false, // Default true
+      runBranchCoverage: options.runBranchCoverage !== false, // Default true
+      runCoverage80: options.runCoverage80 !== false, // Default true
+      runRefreshTokenHashing: options.runRefreshTokenHashing !== false, // Default true
       baseURL: options.baseURL || 'http://127.0.0.1:9000',
       timeout: options.timeout || 30000,
       skipServerCheck: options.skipServerCheck || false
@@ -100,6 +114,13 @@ class TestSuiteRunner {
       adminAuthRefresh: null,
       adminPushTest: null,
       promptSessions: null,
+      authzIdor: null,
+      subscriptionSandboxReuse: null,
+      urgentGaps: null,
+      remainingGaps: null,
+      branchCoverage: null,
+      coverage80: null,
+      refreshTokenHashing: null,
       startTime: Date.now(),
       endTime: null
     };
@@ -207,7 +228,7 @@ class TestSuiteRunner {
     this.log('🔐 Running Authentication Tests', 'section');
     
     try {
-      const authRunner = new AuthTestRunner();
+      const authRunner = new AuthTestRunner({ baseURL: this.options.baseURL });
       const success = await authRunner.runAllTests();
       
       this.results.auth = { 
@@ -467,7 +488,7 @@ class TestSuiteRunner {
     this.log('📋 Running Programs Test Suite', 'section');
 
     try {
-      const programsRunner = new ProgramsTestRunner();
+      const programsRunner = new ProgramsTestRunner({ baseURL: this.options.baseURL });
       const success = await programsRunner.runAllTests();
 
       this.results.programs = {
@@ -502,7 +523,7 @@ class TestSuiteRunner {
     this.log('📝 Running Program Steps Test Suite', 'section');
 
     try {
-      const programStepsRunner = new ProgramStepsTestRunner();
+      const programStepsRunner = new ProgramStepsTestRunner({ baseURL: this.options.baseURL });
       const success = await programStepsRunner.runAllTests();
 
       this.results.programSteps = {
@@ -537,7 +558,7 @@ class TestSuiteRunner {
     this.log('💬 Running Messages Test Suite', 'section');
 
     try {
-      const messagesRunner = new MessagesTestRunner();
+      const messagesRunner = new MessagesTestRunner({ baseURL: this.options.baseURL });
       const success = await messagesRunner.runAllTests();
 
       this.results.messages = {
@@ -572,7 +593,7 @@ class TestSuiteRunner {
     this.log('💕 Running Therapy Trigger Test Suite', 'section');
 
     try {
-      const therapyTriggerRunner = new TherapyTriggerTestRunner();
+      const therapyTriggerRunner = new TherapyTriggerTestRunner({ baseURL: this.options.baseURL });
       const success = await therapyTriggerRunner.runAllTests();
 
       this.results.therapyTrigger = {
@@ -1146,6 +1167,268 @@ class TestSuiteRunner {
     }
   }
 
+
+  async runAuthzIdorTests() {
+    if (!this.options.runAuthzIdor) {
+      this.log('Skipping authz / IDOR regression tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🛡️ Running Authz / IDOR Regression Tests', 'section');
+
+    try {
+      const runner = new AuthzIdorRegressionTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.run();
+
+      this.results.authzIdor = {
+        success,
+        skipped: false,
+        details: 'GET /api/pairing/:id, GET /api/users/:id, GET /api/messages-stats IDOR; admin register gate',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Authz / IDOR regression tests completed successfully', 'success');
+      } else {
+        this.log('Authz / IDOR regression tests failed', 'error');
+      }
+
+      return this.results.authzIdor;
+    } catch (error) {
+      this.log(`Authz / IDOR regression tests failed: ${error.message}`, 'error');
+      this.results.authzIdor = { success: false, error: error.message };
+      return this.results.authzIdor;
+    }
+  }
+
+  async runSubscriptionSandboxReuseTests() {
+    if (!this.options.runSubscriptionSandboxReuse) {
+      this.log('Skipping subscription sandbox-reuse tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('♻️ Running Subscription Sandbox-Reuse Unit Tests', 'section');
+
+    try {
+      const runner = new SubscriptionSandboxReuseTestRunner();
+      const success = await runner.run();
+
+      this.results.subscriptionSandboxReuse = {
+        success,
+        skipped: false,
+        details: 'Recycled Apple Sandbox original_transaction_id reuse; TEST_MOCK_IAP inert in production',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Subscription sandbox-reuse tests completed successfully', 'success');
+      } else {
+        this.log('Subscription sandbox-reuse tests failed', 'error');
+      }
+
+      return this.results.subscriptionSandboxReuse;
+    } catch (error) {
+      this.log(`Subscription sandbox-reuse tests failed: ${error.message}`, 'error');
+      this.results.subscriptionSandboxReuse = { success: false, error: error.message };
+      return this.results.subscriptionSandboxReuse;
+    }
+  }
+
+  async runUrgentGapsTests() {
+    if (!this.options.runUrgentGaps) {
+      this.log('Skipping urgent coverage-gap tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🚨 Running Urgent Coverage-Gap Tests', 'section');
+
+    try {
+      const runner = new UrgentGapsTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.urgentGaps = {
+        success,
+        skipped: false,
+        details: 'Login lockout, admin JWT on user routes, logout, token-info, Stripe invoice webhooks',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Urgent coverage-gap tests completed successfully', 'success');
+      } else {
+        this.log('Urgent coverage-gap tests failed', 'error');
+      }
+
+      return this.results.urgentGaps;
+    } catch (error) {
+      this.log(`Urgent coverage-gap tests failed: ${error.message}`, 'error');
+      this.results.urgentGaps = { success: false, error: error.message };
+      return this.results.urgentGaps;
+    }
+  }
+
+
+  async runRemainingGapsTests() {
+    if (!this.options.runRemainingGaps) {
+      this.log('Skipping remaining coverage-gap tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🧱 Running Remaining Coverage-Gap Tests', 'section');
+
+    try {
+      const runner = new RemainingGapsTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.remainingGaps = {
+        success,
+        skipped: false,
+        details: 'Admin auth/org-code CRUD, production admin-register gate, program edges, invoice.payment_failed HTTP',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Remaining coverage-gap tests completed successfully', 'success');
+      } else {
+        this.log('Remaining coverage-gap tests failed', 'error');
+      }
+
+      return this.results.remainingGaps;
+    } catch (error) {
+      this.log(`Remaining coverage-gap tests failed: ${error.message}`, 'error');
+      this.results.remainingGaps = { success: false, error: error.message };
+      return this.results.remainingGaps;
+    }
+  }
+
+
+  async runBranchCoverageTests() {
+    if (!this.options.runBranchCoverage) {
+      this.log('Skipping branch coverage tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🌿 Running Branch Coverage Tests', 'section');
+
+    try {
+      const runner = new BranchCoverageTestRunner({
+        baseURL: this.options.baseURL,
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.branchCoverage = {
+        success,
+        skipped: false,
+        details: 'Billing/subscription/auth/pairing route branches, Stripe/IAP models, prompt and program-generation edges',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Branch coverage tests completed successfully', 'success');
+      } else {
+        this.log('Branch coverage tests failed', 'error');
+      }
+
+      return this.results.branchCoverage;
+    } catch (error) {
+      this.log(`Branch coverage tests failed: ${error.message}`, 'error');
+      this.results.branchCoverage = { success: false, error: error.message };
+      return this.results.branchCoverage;
+    }
+  }
+
+  async runCoverage80Tests() {
+    if (!this.options.runCoverage80) {
+      this.log('Skipping coverage-80 tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🎯 Running Coverage 80 Target Tests', 'section');
+
+    try {
+      const runner = new Coverage80TestRunner({
+        timeout: this.options.timeout
+      });
+      const success = await runner.runAllTests();
+
+      this.results.coverage80 = {
+        success,
+        skipped: false,
+        details: 'Programs poller and HTTP errors, users, prompt sessions, AuthService, Helpful/Hopeful, pairing/IAP/Stripe model branches',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Coverage 80 tests completed successfully', 'success');
+      } else {
+        this.log('Coverage 80 tests failed', 'error');
+      }
+
+      return this.results.coverage80;
+    } catch (error) {
+      this.log(`Coverage 80 tests failed: ${error.message}`, 'error');
+      this.results.coverage80 = { success: false, error: error.message };
+      return this.results.coverage80;
+    }
+  }
+
+  async runRefreshTokenHashingTests() {
+    if (!this.options.runRefreshTokenHashing) {
+      this.log('Skipping refresh-token hashing tests', 'warn');
+      return { skipped: true };
+    }
+
+    this.log('🔐 Running Refresh Token Hashing Unit Tests', 'section');
+
+    try {
+      const runner = new RefreshTokenHashingTestRunner();
+      const success = await runner.run();
+
+      this.results.refreshTokenHashing = {
+        success,
+        skipped: false,
+        details: 'SHA-256 pre-hash + bcrypt storage, legacy hash fallback, 72-byte bcrypt uniqueness',
+        passed: runner.testResults.passed,
+        failed: runner.testResults.failed,
+        total: runner.testResults.total
+      };
+
+      if (success) {
+        this.log('Refresh token hashing tests completed successfully', 'success');
+      } else {
+        this.log('Refresh token hashing tests failed', 'error');
+      }
+
+      return this.results.refreshTokenHashing;
+    } catch (error) {
+      this.log(`Refresh token hashing tests failed: ${error.message}`, 'error');
+      this.results.refreshTokenHashing = { success: false, error: error.message };
+      return this.results.refreshTokenHashing;
+    }
+  }
+
   // Run all test suites
   async runAllTests() {
     this.log('🎯 Starting Comprehensive Test Suite', 'section');
@@ -1175,6 +1458,13 @@ class TestSuiteRunner {
     this.log(`  HopefulPromptService Unit Tests: ${this.options.runHopefulPromptService ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  Program Org Context Tests: ${this.options.runProgramOrgContext ? 'Enabled' : 'Disabled'}`, 'info');
     this.log(`  PushNotificationService Unit Tests: ${this.options.runPushNotificationService ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Authz / IDOR Regression Tests: ${this.options.runAuthzIdor ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Subscription Sandbox-Reuse Tests: ${this.options.runSubscriptionSandboxReuse ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Urgent Coverage-Gap Tests: ${this.options.runUrgentGaps ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Remaining Coverage-Gap Tests: ${this.options.runRemainingGaps ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Branch Coverage Tests: ${this.options.runBranchCoverage ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Coverage 80 Tests: ${this.options.runCoverage80 ? 'Enabled' : 'Disabled'}`, 'info');
+    this.log(`  Refresh Token Hashing Tests: ${this.options.runRefreshTokenHashing ? 'Enabled' : 'Disabled'}`, 'info');
     console.log('');
 
     // Check server health
@@ -1439,6 +1729,69 @@ class TestSuiteRunner {
     if (this.options.runAdminPushTest) {
       await this.runAdminPushTestTests();
       if (this.results.adminPushTest && !this.results.adminPushTest.success && !this.results.adminPushTest.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Authz / IDOR regressions (pairing, users, messages-stats, admin register)
+    if (this.options.runAuthzIdor) {
+      await this.runAuthzIdorTests();
+      if (this.results.authzIdor && !this.results.authzIdor.success && !this.results.authzIdor.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Recycled Apple Sandbox receipt unit tests (no server)
+    if (this.options.runSubscriptionSandboxReuse) {
+      await this.runSubscriptionSandboxReuseTests();
+      if (this.results.subscriptionSandboxReuse && !this.results.subscriptionSandboxReuse.success && !this.results.subscriptionSandboxReuse.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Urgent coverage gaps: lockout, admin JWT, logout, invoice webhooks
+    if (this.options.runUrgentGaps) {
+      await this.runUrgentGapsTests();
+      if (this.results.urgentGaps && !this.results.urgentGaps.success && !this.results.urgentGaps.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Remaining coverage gaps: admin auth/org-codes, programs, invoice past_due HTTP
+    if (this.options.runRemainingGaps) {
+      await this.runRemainingGapsTests();
+      if (this.results.remainingGaps && !this.results.remainingGaps.success && !this.results.remainingGaps.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Branch coverage: billing, subscription, Stripe, pairing, prompts
+    if (this.options.runBranchCoverage) {
+      await this.runBranchCoverageTests();
+      if (this.results.branchCoverage && !this.results.branchCoverage.success && !this.results.branchCoverage.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Finish 80% coverage target: remaining routes/services/models
+    if (this.options.runCoverage80) {
+      await this.runCoverage80Tests();
+      if (this.results.coverage80 && !this.results.coverage80.success && !this.results.coverage80.skipped) {
+        overallSuccess = false;
+      }
+      console.log('');
+    }
+
+    // Refresh-token hashing unit tests (no server)
+    if (this.options.runRefreshTokenHashing) {
+      await this.runRefreshTokenHashingTests();
+      if (this.results.refreshTokenHashing && !this.results.refreshTokenHashing.success && !this.results.refreshTokenHashing.skipped) {
         overallSuccess = false;
       }
       console.log('');
@@ -1736,6 +2089,80 @@ class TestSuiteRunner {
       }
     }
 
+    // Authz / IDOR regression results
+    if (this.results.authzIdor) {
+      if (this.results.authzIdor.skipped) {
+        this.log('🛡️ Authz / IDOR Regression Tests: SKIPPED', 'warn');
+      } else if (this.results.authzIdor.success) {
+        this.log(`🛡️ Authz / IDOR Regression Tests: PASSED (${this.results.authzIdor.passed}/${this.results.authzIdor.total})`, 'success');
+      } else {
+        this.log(`🛡️ Authz / IDOR Regression Tests: FAILED (${this.results.authzIdor.failed}/${this.results.authzIdor.total} failures)`, 'error');
+      }
+    }
+
+    // Subscription sandbox-reuse results
+    if (this.results.subscriptionSandboxReuse) {
+      if (this.results.subscriptionSandboxReuse.skipped) {
+        this.log('♻️ Subscription Sandbox-Reuse Tests: SKIPPED', 'warn');
+      } else if (this.results.subscriptionSandboxReuse.success) {
+        this.log(`♻️ Subscription Sandbox-Reuse Tests: PASSED (${this.results.subscriptionSandboxReuse.passed}/${this.results.subscriptionSandboxReuse.total})`, 'success');
+      } else {
+        this.log(`♻️ Subscription Sandbox-Reuse Tests: FAILED (${this.results.subscriptionSandboxReuse.failed}/${this.results.subscriptionSandboxReuse.total} failures)`, 'error');
+      }
+    }
+
+    // Urgent coverage-gap results
+    if (this.results.urgentGaps) {
+      if (this.results.urgentGaps.skipped) {
+        this.log('🚨 Urgent Coverage-Gap Tests: SKIPPED', 'warn');
+      } else if (this.results.urgentGaps.success) {
+        this.log(`🚨 Urgent Coverage-Gap Tests: PASSED (${this.results.urgentGaps.passed}/${this.results.urgentGaps.total})`, 'success');
+      } else {
+        this.log(`🚨 Urgent Coverage-Gap Tests: FAILED (${this.results.urgentGaps.failed}/${this.results.urgentGaps.total} failures)`, 'error');
+      }
+    }
+
+    // Remaining coverage-gap results
+    if (this.results.remainingGaps) {
+      if (this.results.remainingGaps.skipped) {
+        this.log('🧱 Remaining Coverage-Gap Tests: SKIPPED', 'warn');
+      } else if (this.results.remainingGaps.success) {
+        this.log(`🧱 Remaining Coverage-Gap Tests: PASSED (${this.results.remainingGaps.passed}/${this.results.remainingGaps.total})`, 'success');
+      } else {
+        this.log(`🧱 Remaining Coverage-Gap Tests: FAILED (${this.results.remainingGaps.failed}/${this.results.remainingGaps.total} failures)`, 'error');
+      }
+    }
+
+    // Branch coverage results
+    if (this.results.branchCoverage) {
+      if (this.results.branchCoverage.skipped) {
+        this.log('🌿 Branch Coverage Tests: SKIPPED', 'warn');
+      } else if (this.results.branchCoverage.success) {
+        this.log(`🌿 Branch Coverage Tests: PASSED (${this.results.branchCoverage.passed}/${this.results.branchCoverage.total})`, 'success');
+      } else {
+        this.log(`🌿 Branch Coverage Tests: FAILED (${this.results.branchCoverage.failed}/${this.results.branchCoverage.total} failures)`, 'error');
+      }
+
+      if (this.results.coverage80?.skipped) {
+        this.log('🎯 Coverage 80 Tests: SKIPPED', 'warn');
+      } else if (this.results.coverage80?.success) {
+        this.log(`🎯 Coverage 80 Tests: PASSED (${this.results.coverage80.passed}/${this.results.coverage80.total})`, 'success');
+      } else {
+        this.log(`🎯 Coverage 80 Tests: FAILED (${this.results.coverage80?.failed}/${this.results.coverage80?.total} failures)`, 'error');
+      }
+    }
+
+    // Refresh-token hashing results
+    if (this.results.refreshTokenHashing) {
+      if (this.results.refreshTokenHashing.skipped) {
+        this.log('🔐 Refresh Token Hashing Tests: SKIPPED', 'warn');
+      } else if (this.results.refreshTokenHashing.success) {
+        this.log(`🔐 Refresh Token Hashing Tests: PASSED (${this.results.refreshTokenHashing.passed}/${this.results.refreshTokenHashing.total})`, 'success');
+      } else {
+        this.log(`🔐 Refresh Token Hashing Tests: FAILED (${this.results.refreshTokenHashing.failed}/${this.results.refreshTokenHashing.total} failures)`, 'error');
+      }
+    }
+
     // Prompt sessions test results
     if (this.results.promptSessions) {
       if (this.results.promptSessions.skipped) {
@@ -1771,29 +2198,52 @@ class TestSuiteRunner {
   }
 
   // Generate JSON report for CI systems
+
+  suiteSucceeded(result) {
+    // Disabled or not-run suites are not failures. A run suite must succeed.
+    return result == null || result.skipped === true || result.success === true;
+  }
+
   generateJSONReport() {
     return {
       timestamp: new Date().toISOString(),
       duration: this.results.endTime - this.results.startTime,
-      success: (this.results.runtimeEnv == null || this.results.runtimeEnv.success) &&
-               this.results.security?.success && this.results.load?.success &&
-               this.results.auth?.success && this.results.userCreation?.success &&
-               this.results.pairingsEndpoint?.success && this.results.userProfile?.success &&
-               this.results.refreshTokenReset?.success &&
-               this.results.programs?.success &&
-               this.results.programSteps?.success && this.results.messages?.success &&
-               this.results.therapyTrigger?.success &&
-               this.results.wwwAuthenticate?.success && this.results.subscription?.success &&
-               this.results.userOrgCode?.success && this.results.deviceTokens?.success &&
-               (this.results.appleReceiptVerifier == null
-                 || this.results.appleReceiptVerifier.skipped
-                 || this.results.appleReceiptVerifier.success) &&
-               (this.results.googlePlayReceiptVerifier == null
-                 || this.results.googlePlayReceiptVerifier.skipped
-                 || this.results.googlePlayReceiptVerifier.success) &&
-               this.results.helpfulPromptService?.success &&
-               this.results.hopefulPromptService?.success && this.results.programOrgContext?.success &&
-               this.results.pushNotificationService?.success && this.results.promptSessions?.success,
+      success: this.suiteSucceeded(this.results.runtimeEnv)
+               && this.suiteSucceeded(this.results.security)
+               && this.suiteSucceeded(this.results.load)
+               && this.suiteSucceeded(this.results.auth)
+               && this.suiteSucceeded(this.results.userCreation)
+               && this.suiteSucceeded(this.results.pairingsEndpoint)
+               && this.suiteSucceeded(this.results.pairingLifecycle)
+               && this.suiteSucceeded(this.results.userSoftDelete)
+               && this.suiteSucceeded(this.results.userProfile)
+               && this.suiteSucceeded(this.results.refreshTokenReset)
+               && this.suiteSucceeded(this.results.programs)
+               && this.suiteSucceeded(this.results.programSteps)
+               && this.suiteSucceeded(this.results.messages)
+               && this.suiteSucceeded(this.results.therapyTrigger)
+               && this.suiteSucceeded(this.results.wwwAuthenticate)
+               && this.suiteSucceeded(this.results.subscription)
+               && this.suiteSucceeded(this.results.userOrgCode)
+               && this.suiteSucceeded(this.results.deviceTokens)
+               && this.suiteSucceeded(this.results.stripeBilling)
+               && this.suiteSucceeded(this.results.stripeCustomerEmailSync)
+               && this.suiteSucceeded(this.results.appleReceiptVerifier)
+               && this.suiteSucceeded(this.results.googlePlayReceiptVerifier)
+               && this.suiteSucceeded(this.results.helpfulPromptService)
+               && this.suiteSucceeded(this.results.hopefulPromptService)
+               && this.suiteSucceeded(this.results.programOrgContext)
+               && this.suiteSucceeded(this.results.pushNotificationService)
+               && this.suiteSucceeded(this.results.adminAuthRefresh)
+               && this.suiteSucceeded(this.results.adminPushTest)
+               && this.suiteSucceeded(this.results.authzIdor)
+               && this.suiteSucceeded(this.results.subscriptionSandboxReuse)
+               && this.suiteSucceeded(this.results.urgentGaps)
+               && this.suiteSucceeded(this.results.remainingGaps)
+               && this.suiteSucceeded(this.results.branchCoverage)
+               && this.suiteSucceeded(this.results.coverage80)
+               && this.suiteSucceeded(this.results.refreshTokenHashing)
+               && this.suiteSucceeded(this.results.promptSessions),
       results: {
         runtimeEnv: this.results.runtimeEnv,
         security: this.results.security,
@@ -1801,6 +2251,8 @@ class TestSuiteRunner {
         auth: this.results.auth,
         userCreation: this.results.userCreation,
         pairingsEndpoint: this.results.pairingsEndpoint,
+        pairingLifecycle: this.results.pairingLifecycle,
+        userSoftDelete: this.results.userSoftDelete,
         userProfile: this.results.userProfile,
         refreshTokenReset: this.results.refreshTokenReset,
         programs: this.results.programs,
@@ -1821,10 +2273,17 @@ class TestSuiteRunner {
         pushNotificationService: this.results.pushNotificationService,
         adminAuthRefresh: this.results.adminAuthRefresh,
         adminPushTest: this.results.adminPushTest,
+        authzIdor: this.results.authzIdor,
+        subscriptionSandboxReuse: this.results.subscriptionSandboxReuse,
+        urgentGaps: this.results.urgentGaps,
+        remainingGaps: this.results.remainingGaps,
+        branchCoverage: this.results.branchCoverage,
+        coverage80: this.results.coverage80,
+        refreshTokenHashing: this.results.refreshTokenHashing,
         promptSessions: this.results.promptSessions
       },
       summary: {
-        totalTests: (this.results.security?.total || 0) +
+        totalTests: (this.results.runtimeEnv?.total || 0) + (this.results.security?.total || 0) + (this.results.adminAuthRefresh?.total || 0) + (this.results.adminPushTest?.total || 0) +
                    (this.results.userCreation?.total || 0) + (this.results.pairingsEndpoint?.total || 0) +
                    (this.results.pairingLifecycle?.total || 0) + (this.results.userSoftDelete?.total || 0) +
                    (this.results.userProfile?.total || 0) +
@@ -1835,8 +2294,8 @@ class TestSuiteRunner {
                    (this.results.stripeBilling?.total || 0) + (this.results.stripeCustomerEmailSync?.total || 0) + (this.results.appleReceiptVerifier?.total || 0) + (this.results.googlePlayReceiptVerifier?.total || 0) +
                    (this.results.helpfulPromptService?.total || 0) +
                    (this.results.hopefulPromptService?.total || 0) + (this.results.programOrgContext?.total || 0) +
-                   (this.results.pushNotificationService?.total || 0) + (this.results.promptSessions?.total || 0),
-        totalPassed: (this.results.security?.passed || 0) +
+                   (this.results.pushNotificationService?.total || 0) + (this.results.authzIdor?.total || 0) + (this.results.subscriptionSandboxReuse?.total || 0) + (this.results.urgentGaps?.total || 0) + (this.results.remainingGaps?.total || 0) + (this.results.branchCoverage?.total || 0) + (this.results.refreshTokenHashing?.total || 0) + (this.results.promptSessions?.total || 0),
+        totalPassed: (this.results.runtimeEnv?.passed || 0) + (this.results.security?.passed || 0) + (this.results.adminAuthRefresh?.passed || 0) + (this.results.adminPushTest?.passed || 0) +
                     (this.results.userCreation?.passed || 0) + (this.results.pairingsEndpoint?.passed || 0) +
                     (this.results.pairingLifecycle?.passed || 0) + (this.results.userSoftDelete?.passed || 0) +
                     (this.results.userProfile?.passed || 0) +
@@ -1847,8 +2306,8 @@ class TestSuiteRunner {
                     (this.results.stripeBilling?.passed || 0) + (this.results.stripeCustomerEmailSync?.passed || 0) + (this.results.appleReceiptVerifier?.passed || 0) + (this.results.googlePlayReceiptVerifier?.passed || 0) +
                     (this.results.helpfulPromptService?.passed || 0) +
                     (this.results.hopefulPromptService?.passed || 0) + (this.results.programOrgContext?.passed || 0) +
-                    (this.results.pushNotificationService?.passed || 0) + (this.results.promptSessions?.passed || 0),
-        totalFailed: (this.results.security?.failed || 0) +
+                    (this.results.pushNotificationService?.passed || 0) + (this.results.authzIdor?.passed || 0) + (this.results.subscriptionSandboxReuse?.passed || 0) + (this.results.urgentGaps?.passed || 0) + (this.results.remainingGaps?.passed || 0) + (this.results.branchCoverage?.passed || 0) + (this.results.refreshTokenHashing?.passed || 0) + (this.results.promptSessions?.passed || 0),
+        totalFailed: (this.results.runtimeEnv?.failed || 0) + (this.results.security?.failed || 0) + (this.results.adminAuthRefresh?.failed || 0) + (this.results.adminPushTest?.failed || 0) +
                     (this.results.userCreation?.failed || 0) + (this.results.pairingsEndpoint?.failed || 0) +
                     (this.results.pairingLifecycle?.failed || 0) + (this.results.userSoftDelete?.failed || 0) +
                     (this.results.userProfile?.failed || 0) +
@@ -1859,7 +2318,7 @@ class TestSuiteRunner {
                     (this.results.stripeBilling?.failed || 0) + (this.results.stripeCustomerEmailSync?.failed || 0) + (this.results.appleReceiptVerifier?.failed || 0) + (this.results.googlePlayReceiptVerifier?.failed || 0) +
                     (this.results.helpfulPromptService?.failed || 0) +
                     (this.results.hopefulPromptService?.failed || 0) + (this.results.programOrgContext?.failed || 0) +
-                    (this.results.pushNotificationService?.failed || 0) + (this.results.promptSessions?.failed || 0)
+                    (this.results.pushNotificationService?.failed || 0) + (this.results.authzIdor?.failed || 0) + (this.results.subscriptionSandboxReuse?.failed || 0) + (this.results.urgentGaps?.failed || 0) + (this.results.remainingGaps?.failed || 0) + (this.results.branchCoverage?.failed || 0) + (this.results.refreshTokenHashing?.failed || 0) + (this.results.promptSessions?.failed || 0)
       }
     };
   }
@@ -1899,6 +2358,13 @@ function parseArgs() {
     if (arg === '--no-admin-auth-refresh') options.runAdminAuthRefresh = false;
     if (arg === '--no-admin-push-test') options.runAdminPushTest = false;
     if (arg === '--no-prompt-sessions') options.runPromptSessions = false;
+    if (arg === '--no-authz-idor') options.runAuthzIdor = false;
+    if (arg === '--no-subscription-sandbox-reuse') options.runSubscriptionSandboxReuse = false;
+    if (arg === '--no-urgent-gaps') options.runUrgentGaps = false;
+    if (arg === '--no-remaining-gaps') options.runRemainingGaps = false;
+    if (arg === '--no-branch-coverage') options.runBranchCoverage = false;
+    if (arg === '--no-coverage-80') options.runCoverage80 = false;
+    if (arg === '--no-refresh-token-hashing') options.runRefreshTokenHashing = false;
     if (arg === '--skip-server-check') options.skipServerCheck = true;
     if (arg.startsWith('--url=')) options.baseURL = arg.split('=')[1];
     if (arg.startsWith('--timeout=')) options.timeout = parseInt(arg.split('=')[1]);

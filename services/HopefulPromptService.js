@@ -105,7 +105,7 @@ class HopefulPromptService extends BasePromptService {
 
   async generateInitialProgram({ userName, userInput, customPrompts }, retryCount = 0, parseRetryCount = 0) {
     const MAX_RETRIES = 2;
-    const BASE_DELAY = 1000;
+    const BASE_DELAY = this.getRetryBaseDelayMs();
     const MAX_PARSE_RETRIES = 1;
 
     // Hoisted so the outer catch can attach the prompt to thrown errors,
@@ -220,7 +220,7 @@ Guidelines:
         });
 
         if (parseRetryCount < MAX_PARSE_RETRIES) {
-          const retryDelay = 500;
+          const retryDelay = this.getParseRetryDelayMs();
           await new Promise(resolve => setTimeout(resolve, retryDelay));
           return this.generateInitialProgram(
             { userName, userInput, customPrompts },
@@ -271,7 +271,7 @@ Guidelines:
 
   async generateSingleUserChimeInPrompt({ userName, conversationStarter, userMessages, customPrompts }, retryCount = 0) {
     const MAX_RETRIES = 2;
-    const BASE_DELAY = 1000;
+    const BASE_DELAY = this.getRetryBaseDelayMs();
 
     try {
       const sanitizedUserName = this.sanitizePromptInput(userName);
@@ -359,7 +359,7 @@ Your goal, as their couples therapist, is to ask one follow-up question that ena
 
   async generateFirstChimeInPrompt({ user1Name, user2Name, user1Messages, user2FirstMessage, customPrompts }, retryCount = 0) {
     const MAX_RETRIES = 2;
-    const BASE_DELAY = 1000;
+    const BASE_DELAY = this.getRetryBaseDelayMs();
 
     try {
       const sanitizedUser1Name = this.sanitizePromptInput(user1Name);

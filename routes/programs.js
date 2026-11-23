@@ -1,12 +1,16 @@
 const express = require('express');
 const { createAuthenticateToken } = require('../middleware/auth');
+const {
+  hasProgramSteps: hasProgramStepsImpl,
+  hasCompleteProgramSteps: hasCompleteProgramStepsImpl,
+  generateAndPersistProgramContent: generateAndPersistProgramContentImpl,
+  runGenerationWithFollowUp: runGenerationWithFollowUpImpl
+} = require('../services/programGeneration');
 
 function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptService, programStepModel = null, userModel = null, pairingModel = null, authService = null, userModelForOrgCode = null, pushNotificationService = null) {
   const router = express.Router();
   const authenticateToken = createAuthenticateToken(authService);
   const authenticateAdminToken = createAuthenticateToken(authService, { allowAdmin: true });
-  const GENERATION_FOLLOWUP_ENABLED = process.env.PROGRAM_GENERATION_FOLLOWUP_ENABLED !== 'false';
-  const GENERATION_FOLLOWUP_DELAY_MS = Number(process.env.PROGRAM_GENERATION_FOLLOWUP_DELAY_MS || 60000);
   const DEFAULT_STEPS_REQUIRED_FOR_UNLOCK = Number(process.env.DEFAULT_STEPS_REQUIRED_FOR_UNLOCK ?? 0);
 
   // Pick the right prompt service for a user's generation request.
@@ -21,150 +25,28 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
            (helpfulPromptService && helpfulPromptService.isConfigured());
   }
 
-  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
   async function hasProgramSteps(programId) {
-    if (!programStepModel) return false;
-    const steps = await programStepModel.getProgramSteps(programId);
-    return Array.isArray(steps) && steps.length > 0;
+    return hasProgramStepsImpl(programStepModel, programId);
   }
 
-  // True only when the program has a full validated day set (7 or 14 unique
-  // contiguous days). "Any rows exist" is not enough: a mid-insert failure can
-  // leave a partial set, and treating that as success skips follow-up forever.
   async function hasCompleteProgramSteps(programId) {
-    if (!programStepModel) return false;
-    const steps = await programStepModel.getProgramSteps(programId);
-    if (!Array.isArray(steps) || steps.length === 0) return false;
-    const days = new Set(steps.map((s) => Number(s.day)));
-    const n = days.size;
-    if (n !== 7 && n !== 14) return false;
-    for (let d = 1; d <= n; d++) {
-      if (!days.has(d)) return false;
-    }
-    return true;
+    return hasCompleteProgramStepsImpl(programStepModel, programId);
   }
 
-  async function generateAndPersistProgramContent({ programId, generateResponse, successLogPrefix, forceRegenerate = false }) {
-    // If a complete step set already exists and this is not a forced regeneration,
-    // treat as already-completed work.
-    if (!forceRegenerate && await hasCompleteProgramSteps(programId)) {
-      console.log(`${successLogPrefix} Program steps already exist, skipping generation for:`, programId);
-      return;
-    }
-
-    // Clear incomplete leftovers before calling the LLM. Safe: a partial day
-    // set is not usable, and leaving it would make follow-up treat the program
-    // as done. Do NOT delete a complete set before LLM success (force path
-    // swaps only after a valid payload is in hand via replaceProgramSteps).
-    if (programStepModel && await hasProgramSteps(programId) && !(await hasCompleteProgramSteps(programId))) {
-      console.log(`${successLogPrefix} Clearing incomplete steps for program:`, programId);
-      await programStepModel.deleteProgramSteps(programId);
-    }
-
-    const generationStart = Date.now();
-    const therapyResponse = await generateResponse();
-    const secondsToLoad = parseFloat(((Date.now() - generationStart) / 1000).toFixed(4));
-    const therapyResponseString = typeof therapyResponse === 'object'
-      ? JSON.stringify(therapyResponse)
-      : therapyResponse;
-
-    // Prompt services attach the final prompt (system + user) as a
-    // non-enumerable `__prompt` property on the parsed response — capture
-    // it so we can audit exactly what was sent to the LLM from the DB.
-    const generationPrompt = (therapyResponse && typeof therapyResponse === 'object')
-      ? (therapyResponse.__prompt || null)
-      : null;
-
-    // Persist raw response for backward compatibility and diagnostics.
-    // For forced regeneration, only swap steps AFTER a successful LLM response
-    // so a failed regenerate cannot CASCADE-delete messages on existing steps.
-    await programModel.updateTherapyResponse(programId, therapyResponseString, secondsToLoad, generationPrompt);
-
-    if (programStepModel) {
-      if (forceRegenerate) {
-        // Swap in a transaction only after a valid payload — avoids CASCADE
-        // deleting messages if generate fails mid-replace.
-        console.log(`${successLogPrefix} Force-regenerating: replacing steps for program:`, programId);
-        await programStepModel.replaceProgramSteps(programId, therapyResponseString);
-      } else if (!(await hasCompleteProgramSteps(programId))) {
-        await programStepModel.createProgramSteps(programId, therapyResponseString);
-      }
-      if (!(await hasCompleteProgramSteps(programId))) {
-        throw new Error('Program step persist incomplete: expected 7 or 14 contiguous days');
-      }
-      console.log(`${successLogPrefix} Program steps created for program:`, programId);
-    }
-
-    console.log(`${successLogPrefix} ChatGPT response generated and saved for program:`, programId);
+  async function generateAndPersistProgramContent(opts) {
+    return generateAndPersistProgramContentImpl({
+      programModel,
+      programStepModel,
+      ...opts
+    });
   }
 
-  async function runGenerationWithFollowUp({ programId, generateResponse, logPrefix, forceRegenerate = false }) {
-    const attemptLogs = [];
-    // Track the prompt from the most recent failing attempt so we can log it
-    // alongside the generation_error even when all attempts fail.
-    let lastAttemptPrompt = null;
-
-    try {
-      await generateAndPersistProgramContent({
-        programId,
-        generateResponse,
-        successLogPrefix: logPrefix,
-        forceRegenerate
-      });
-      return;
-    } catch (firstError) {
-      attemptLogs.push(`attempt_1: ${firstError.message}`);
-      if (firstError && firstError.__prompt) {
-        lastAttemptPrompt = firstError.__prompt;
-      }
-      console.error(`${logPrefix} Initial generation attempt failed for program ${programId}:`, firstError.message);
-    }
-
-    if (GENERATION_FOLLOWUP_ENABLED) {
-      try {
-        console.log(`${logPrefix} Scheduling follow-up generation attempt in ${GENERATION_FOLLOWUP_DELAY_MS}ms for program:`, programId);
-        await sleep(GENERATION_FOLLOWUP_DELAY_MS);
-
-        // Only skip follow-up when a complete day set is present. A partial
-        // set must retry — otherwise the program is stuck with no
-        // generation_error and POST .../therapy_response returns 409.
-        if (!forceRegenerate && await hasCompleteProgramSteps(programId)) {
-          console.log(`${logPrefix} Follow-up skipped; program already has complete steps:`, programId);
-          return;
-        }
-
-        await generateAndPersistProgramContent({
-          programId,
-          generateResponse,
-          successLogPrefix: `${logPrefix} [follow-up]`,
-          forceRegenerate
-        });
-        return;
-      } catch (followUpError) {
-        attemptLogs.push(`attempt_2: ${followUpError.message}`);
-        if (followUpError && followUpError.__prompt) {
-          lastAttemptPrompt = followUpError.__prompt;
-        }
-        console.error(`${logPrefix} Follow-up generation attempt failed for program ${programId}:`, followUpError.message);
-      }
-    }
-
-    // A concurrent generator (create + manual therapy_response, or follow-up
-    // racing a retry) may have already persisted a complete set. Do not stamp
-    // a false generation_error over a successful program. Partial leftovers
-    // must still record the error so therapy_response is not stuck at 409.
-    if (!forceRegenerate && await hasCompleteProgramSteps(programId)) {
-      console.log(`${logPrefix} Skipping generation_error persist; program already has complete steps:`, programId);
-      return;
-    }
-
-    const combinedError = `Program generation failed after ${GENERATION_FOLLOWUP_ENABLED ? '2 attempts' : '1 attempt'} (${attemptLogs.join(' | ')})`;
-    try {
-      await programModel.updateGenerationError(programId, combinedError, lastAttemptPrompt);
-    } catch (saveError) {
-      console.error(`${logPrefix} Failed to save generation error for program ${programId}:`, saveError.message);
-    }
+  async function runGenerationWithFollowUp(opts) {
+    return runGenerationWithFollowUpImpl({
+      programModel,
+      programStepModel,
+      ...opts
+    });
   }
 
   // Fetch org context and custom prompts for a user.
@@ -718,11 +600,16 @@ function createProgramRoutes(programModel, hopefulPromptService, helpfulPromptSe
 // Background poller that watches for programs with regenerate_therapy_response = TRUE
 // and re-runs initial-program generation for each one, then clears the flag.
 // Picks Hopeful or Helpful per-user based on the user's org_code / custom org fields.
-function startRegenerationPoller(programModel, programStepModel, hopefulPromptService, helpfulPromptService, userModel, pairingModel, userModelForOrgCode) {
-  const POLL_INTERVAL_MS = Number(process.env.REGENERATION_POLL_INTERVAL_MS || 30000);
-
-  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
+// Exported so tests can drive one poll without starting the infinite loop.
+async function runRegenerationPollOnce({
+  programModel,
+  programStepModel,
+  hopefulPromptService,
+  helpfulPromptService,
+  userModel,
+  pairingModel,
+  userModelForOrgCode
+} = {}) {
   function pickPromptService(customPrompts) {
     return customPrompts ? hopefulPromptService : helpfulPromptService;
   }
@@ -758,131 +645,138 @@ function startRegenerationPoller(programModel, programStepModel, hopefulPromptSe
     }
   }
 
-  async function hasProgramSteps(programId) {
-    if (!programStepModel) return false;
-    const steps = await programStepModel.getProgramSteps(programId);
-    return Array.isArray(steps) && steps.length > 0;
+  let flaggedPrograms;
+  try {
+    flaggedPrograms = await programModel.getProgramsFlaggedForRegeneration();
+  } catch (err) {
+    console.error('[regen_poller] Failed to query flagged programs:', err.message);
+    return;
   }
 
-  async function pollOnce() {
-    let flaggedPrograms;
+  if (!flaggedPrograms.length) return;
+
+  console.log(`[regen_poller] Found ${flaggedPrograms.length} program(s) flagged for regeneration.`);
+
+  for (const program of flaggedPrograms) {
+    // Claim the flag first (CAS) so a crash mid-generation cannot loop forever
+    // and multi-instance pollers cannot both regenerate the same program.
+    // Existing steps/messages are preserved until a successful LLM response
+    // is ready to swap in — deleting first CASCADE-wiped messages on failure.
+    let claimed = false;
     try {
-      flaggedPrograms = await programModel.getProgramsFlaggedForRegeneration();
+      claimed = await programModel.claimRegenerateFlag(program.id);
     } catch (err) {
-      console.error('[regen_poller] Failed to query flagged programs:', err.message);
-      return;
+      console.error(`[regen_poller] Could not claim flag for program ${program.id}:`, err.message);
+      continue;
+    }
+    if (!claimed) {
+      console.log(`[regen_poller] Skipping program ${program.id}: regenerate flag already claimed.`);
+      continue;
     }
 
-    if (!flaggedPrograms.length) return;
+    console.log(`[regen_poller] Starting regeneration for program:`, program.id);
 
-    console.log(`[regen_poller] Found ${flaggedPrograms.length} program(s) flagged for regeneration.`);
-
-    for (const program of flaggedPrograms) {
-      // Claim the flag first (CAS) so a crash mid-generation cannot loop forever
-      // and multi-instance pollers cannot both regenerate the same program.
-      // Existing steps/messages are preserved until a successful LLM response
-      // is ready to swap in — deleting first CASCADE-wiped messages on failure.
-      let claimed = false;
+    // Resolve user name (and partner name when available — required by
+    // HelpfulPromptService.generateInitialProgram for couples users).
+    let userName = null;
+    let partnerName = null;
+    if (userModel) {
       try {
-        claimed = await programModel.claimRegenerateFlag(program.id);
-      } catch (err) {
-        console.error(`[regen_poller] Could not claim flag for program ${program.id}:`, err.message);
-        continue;
-      }
-      if (!claimed) {
-        console.log(`[regen_poller] Skipping program ${program.id}: regenerate flag already claimed.`);
-        continue;
-      }
+        const user = await userModel.getUserById(program.user_id);
+        userName = user.user_name || null;
+        partnerName = user.partner_name || null;
 
-      console.log(`[regen_poller] Starting regeneration for program:`, program.id);
-
-      // Resolve user name (and partner name when available — required by
-      // HelpfulPromptService.generateInitialProgram for couples users).
-      let userName = null;
-      let partnerName = null;
-      if (userModel) {
-        try {
-          const user = await userModel.getUserById(program.user_id);
-          userName = user.user_name || null;
-          partnerName = user.partner_name || null;
-
-          if (program.pairing_id && pairingModel && !partnerName) {
-            try {
-              const pairing = await pairingModel.getPairingById(program.pairing_id);
-              const partnerId = pairing.user1_id === program.user_id ? pairing.user2_id : pairing.user1_id;
-              if (partnerId) {
-                const partner = await userModel.getUserById(partnerId);
-                partnerName = partner.user_name || partnerName;
-              }
-            } catch (pairingError) {
-              console.log(`[regen_poller] Could not fetch partner name from pairing for program ${program.id}:`, pairingError.message);
+        if (program.pairing_id && pairingModel && !partnerName) {
+          try {
+            const pairing = await pairingModel.getPairingById(program.pairing_id);
+            const partnerId = pairing.user1_id === program.user_id ? pairing.user2_id : pairing.user1_id;
+            if (partnerId) {
+              const partner = await userModel.getUserById(partnerId);
+              partnerName = partner.user_name || partnerName;
             }
+          } catch (pairingError) {
+            console.log(`[regen_poller] Could not fetch partner name from pairing for program ${program.id}:`, pairingError.message);
           }
-        } catch (err) {
-          console.error(`[regen_poller] Could not fetch user name for program ${program.id}:`, err.message);
         }
+      } catch (err) {
+        console.error(`[regen_poller] Could not fetch user name for program ${program.id}:`, err.message);
       }
+    }
 
-      if (!userName) {
-        console.error(`[regen_poller] Skipping program ${program.id}: user_name not set.`);
-        await programModel.updateGenerationError(program.id, 'Regeneration skipped: user_name not set on account.');
+    if (!userName) {
+      console.error(`[regen_poller] Skipping program ${program.id}: user_name not set.`);
+      await programModel.updateGenerationError(program.id, 'Regeneration skipped: user_name not set on account.');
+      continue;
+    }
+
+    // Run generation (no follow-up for poller-triggered regenerations).
+    try {
+      const customPrompts = await getCustomPromptsForUser(program.user_id);
+      const service = pickPromptService(customPrompts);
+
+      // Helpful requires partnerName; Hopeful does not.
+      if (service === helpfulPromptService && !partnerName) {
+        console.error(`[regen_poller] Skipping program ${program.id}: partner_name required for couples generation but not set.`);
+        await programModel.updateGenerationError(program.id, 'Regeneration skipped: partner_name required for couples generation but not set.');
         continue;
       }
 
-      // Run generation (no follow-up for poller-triggered regenerations).
-      try {
-        const customPrompts = await getCustomPromptsForUser(program.user_id);
-        const service = pickPromptService(customPrompts);
+      const generationStart = Date.now();
+      const therapyResponse = await service.generateInitialProgram({
+        userName,
+        partnerName,
+        userInput: program.user_input,
+        customPrompts
+      });
+      const secondsToLoad = parseFloat(((Date.now() - generationStart) / 1000).toFixed(4));
+      const therapyResponseString = typeof therapyResponse === 'object'
+        ? JSON.stringify(therapyResponse)
+        : therapyResponse;
 
-        // Helpful requires partnerName; Hopeful does not.
-        if (service === helpfulPromptService && !partnerName) {
-          console.error(`[regen_poller] Skipping program ${program.id}: partner_name required for couples generation but not set.`);
-          await programModel.updateGenerationError(program.id, 'Regeneration skipped: partner_name required for couples generation but not set.');
-          continue;
-        }
+      const generationPrompt = (therapyResponse && typeof therapyResponse === 'object')
+        ? (therapyResponse.__prompt || null)
+        : null;
 
-        const generationStart = Date.now();
-        const therapyResponse = await service.generateInitialProgram({
-          userName,
-          partnerName,
-          userInput: program.user_input,
-          customPrompts
-        });
-        const secondsToLoad = parseFloat(((Date.now() - generationStart) / 1000).toFixed(4));
-        const therapyResponseString = typeof therapyResponse === 'object'
-          ? JSON.stringify(therapyResponse)
-          : therapyResponse;
-
-        const generationPrompt = (therapyResponse && typeof therapyResponse === 'object')
-          ? (therapyResponse.__prompt || null)
-          : null;
-
-        // Swap steps in a transaction (validate payload → DELETE+INSERT) so a
-        // failed/malformed regenerate cannot CASCADE-wipe messages without a
-        // successful replacement.
-        let newSteps = [];
-        if (programStepModel) {
-          newSteps = await programStepModel.replaceProgramSteps(program.id, therapyResponseString);
-        }
-
-        await programModel.updateTherapyResponse(program.id, therapyResponseString, secondsToLoad, generationPrompt);
-
-        console.log(`[regen_poller] Regeneration complete for program:`, program.id, `(${newSteps.length} steps)`);
-      } catch (err) {
-        console.error(`[regen_poller] Regeneration failed for program ${program.id}:`, err.message);
-        try {
-          const failurePrompt = (err && err.__prompt) ? err.__prompt : null;
-          await programModel.updateGenerationError(program.id, `Regeneration failed: ${err.message}`, failurePrompt);
-        } catch { /* non-fatal */ }
+      // Swap steps in a transaction (validate payload → DELETE+INSERT) so a
+      // failed/malformed regenerate cannot CASCADE-wipe messages without a
+      // successful replacement.
+      let newSteps = [];
+      if (programStepModel) {
+        newSteps = await programStepModel.replaceProgramSteps(program.id, therapyResponseString);
       }
+
+      await programModel.updateTherapyResponse(program.id, therapyResponseString, secondsToLoad, generationPrompt);
+
+      console.log(`[regen_poller] Regeneration complete for program:`, program.id, `(${newSteps.length} steps)`);
+    } catch (err) {
+      console.error(`[regen_poller] Regeneration failed for program ${program.id}:`, err.message);
+      try {
+        const failurePrompt = (err && err.__prompt) ? err.__prompt : null;
+        await programModel.updateGenerationError(program.id, `Regeneration failed: ${err.message}`, failurePrompt);
+      } catch { /* non-fatal */ }
     }
   }
+
+}
+
+function startRegenerationPoller(programModel, programStepModel, hopefulPromptService, helpfulPromptService, userModel, pairingModel, userModelForOrgCode) {
+  const POLL_INTERVAL_MS = Number(process.env.REGENERATION_POLL_INTERVAL_MS || 30000);
+
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   async function loop() {
     while (true) {
       await sleep(POLL_INTERVAL_MS);
       try {
-        await pollOnce();
+        await runRegenerationPollOnce({
+          programModel,
+          programStepModel,
+          hopefulPromptService,
+          helpfulPromptService,
+          userModel,
+          pairingModel,
+          userModelForOrgCode
+        });
       } catch (err) {
         console.error('[regen_poller] Unexpected error in poll loop:', err.message);
       }
@@ -893,4 +787,4 @@ function startRegenerationPoller(programModel, programStepModel, hopefulPromptSe
   loop();
 }
 
-module.exports = { createProgramRoutes, startRegenerationPoller };
+module.exports = { createProgramRoutes, startRegenerationPoller, runRegenerationPollOnce };

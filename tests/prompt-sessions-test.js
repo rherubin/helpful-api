@@ -25,7 +25,8 @@ const PromptSessionModel = require('../models/PromptSession');
  */
 class PromptSessionsTestRunner {
   constructor(options = {}) {
-    this.baseURL = options.baseURL || process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
+    const arg = process.argv.find((a) => a.startsWith('--url='));
+    this.baseURL = options.baseURL || (arg && arg.slice(6)) || process.env.TEST_BASE_URL || 'http://127.0.0.1:9000';
     this.timeout = options.timeout || 15000;
     this.testResults = { passed: 0, failed: 0, total: 0 };
     this.testData = {};
@@ -1282,8 +1283,8 @@ class PromptSessionsTestRunner {
 
     // And against the real DB: running it again on a migrated schema is a no-op.
     try {
-      await new PromptSessionModel(getPool()).ensureSharedDeviceColumn();
-      this.assert(true, 'Migration: re-running on a migrated DB is a no-op');
+      const migrated = await new PromptSessionModel(getPool()).ensureSharedDeviceColumn();
+      this.assert(migrated === undefined, 'Migration: re-running on a migrated DB is a no-op and returns nothing');
     } catch (error) {
       this.assert(false, 'Migration: re-running on a migrated DB is a no-op', error.message);
     }

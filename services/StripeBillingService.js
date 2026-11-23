@@ -17,6 +17,25 @@ function createMockStripe() {
   const customers = new Map();
   const sessionsById = new Map();
   const setupIntentsById = new Map();
+  const subscriptionsById = new Map();
+
+  function seedSubscription(sub) {
+    if (!sub || typeof sub !== 'object' || !sub.id) return;
+    const existing = subscriptionsById.get(sub.id) || {};
+    subscriptionsById.set(sub.id, { ...existing, ...sub });
+  }
+
+  function seedSubscriptionsFromWebhookEvent(event) {
+    const obj = event && event.data && event.data.object;
+    if (!obj) return;
+    // Subscription events, or webhook fixtures that include a subscription id.
+    if (obj.id && String(obj.id).startsWith('sub_') && obj.status) {
+      seedSubscription(obj);
+    }
+    if (obj.subscription && typeof obj.subscription === 'object') {
+      seedSubscription(obj.subscription);
+    }
+  }
   // Include a process-unique prefix so restarts do not collide with leftover
   // users.unique_stripe_customer_id rows from earlier mock runs (cus_mock_1…).
   const runId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -165,7 +184,8 @@ function createMockStripe() {
       }
     },
     subscriptions: {
-      _store: new Map(),
+      _store: subscriptionsById,
+      seed: seedSubscription,
       create: async (params = {}) => {
         subSeq += 1;
         const id = `sub_mock_${runId}_${subSeq}`;
@@ -199,6 +219,7 @@ function createMockStripe() {
               }
             : null
         };
+        subscriptionsById.set(id, sub);
         return sub;
       },
       list: async ({ customer, status, limit = 10 } = {}) => {
@@ -208,18 +229,23 @@ function createMockStripe() {
         void limit;
         return { data: [] };
       },
-      retrieve: async (id) => ({
-        id,
-        status: 'trialing',
-        items: {
-          data: [{ price: { id: process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly' } }]
-        },
-        trial_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
-        current_period_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
-        cancel_at_period_end: false,
-        metadata: {},
-        customer: `cus_mock_${runId}_fallback`
-      }),
+      retrieve: async (id) => {
+        if (subscriptionsById.has(id)) {
+          return { ...subscriptionsById.get(id) };
+        }
+        return {
+          id,
+          status: 'trialing',
+          items: {
+            data: [{ price: { id: process.env.STRIPE_PRICE_YEARLY || 'price_mock_yearly' } }]
+          },
+          trial_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
+          current_period_end: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
+          cancel_at_period_end: false,
+          metadata: {},
+          customer: `cus_mock_${runId}_fallback`
+        };
+      },
       cancel: async (id) => ({
         id,
         status: 'canceled',
@@ -251,7 +277,9 @@ function createMockStripe() {
           throw new Error('Missing stripe webhook signature or secret');
         }
         const body = Buffer.isBuffer(payload) ? payload.toString('utf8') : String(payload);
-        return JSON.parse(body);
+        const event = JSON.parse(body);
+        seedSubscriptionsFromWebhookEvent(event);
+        return event;
       }
     }
   };
