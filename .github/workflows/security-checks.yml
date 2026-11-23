@@ -20,11 +20,13 @@ on:
     - cron: "17 10 * * 1" # Mondays 10:17 UTC
   workflow_dispatch:
 
-# Only a newer commit on the same pull request cancels an older scan. Push
-# runs are never cancelled: each push scans only the commits it adds, so a
-# cancelled push run would leave those commits unscanned.
+# Pull requests share one group per PR, so a newer commit cancels the older
+# scan (the newer scan covers the whole PR range). Every other run (push,
+# schedule, manual) gets its own group via run_id. A push scan covers only
+# that push's before..sha range, and GitHub keeps just one pending run per
+# group, so a shared push group could silently drop a middle push's scan.
 concurrency:
-  group: security-checks-${{ github.ref }}
+  group: security-checks-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

@@ -88,8 +88,11 @@ before they run; update the version and the checksums together.
   America/New_York), one grouped PR per ecosystem (npm, GitHub Actions) into
   `develop`. Each of those PRs runs CI.
 - The secret scan has no `paths-ignore`, so it runs on docs-only changes too.
-  Its push runs are never cancelled by a newer push, because each push run
-  scans only the commits that push added.
+  Every push gets its own scan: push, scheduled and manual runs each have
+  their own concurrency group, so none is cancelled or skipped by a later
+  run. This matters because a push scan covers only the commits that push
+  added. On a pull request, a newer commit cancels the older scan, and the
+  newer one covers the whole PR.
 - `npm audit` only knows advisories in the GitHub advisory database.
 - Not covered: infrastructure and runtime configuration (Railway, DNS,
   environment variables).
