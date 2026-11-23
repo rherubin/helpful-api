@@ -64,11 +64,13 @@ jobs:
 
       - name: Wait for API to become healthy
         run: |
-          for i in $(seq 1 30); do
+          n=1
+          while [ "$n" -le 30 ]; do
             if curl -sf http://127.0.0.1:9000/health > /dev/null; then
               echo "Server is up"
               exit 0
             fi
+            n=$((n + 1))
             sleep 1
           done
           echo "Server did not become healthy in time"
