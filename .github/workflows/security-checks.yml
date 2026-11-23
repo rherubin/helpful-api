@@ -15,7 +15,7 @@ on:
   pull_request:
     branches: [develop, main]
   push:
-    branches: [develop, main, ci/security-checks] # TEMP-VERIFY
+    branches: [develop, main]
   schedule:
     - cron: "17 10 * * 1" # Mondays 10:17 UTC
   workflow_dispatch:
