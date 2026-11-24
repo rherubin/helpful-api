@@ -1,0 +1,37 @@
+# Dependabot version updates. Alerts are a separate repository setting.
+#
+# Weekly, grouped so each ecosystem opens at most one pull request a week into
+# develop. Every Dependabot PR runs CI like any other PR, which uses Actions
+# minutes; that is why this is weekly and grouped.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 2
+    groups:
+      npm:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"

@@ -1,0 +1,7 @@
+# CodeQL configuration. Uses GitHub's default query suite.
+name: Helpful API CodeQL config
+paths-ignore:
+  # Third-party code that is also tracked in git; scanned by the dependency audit instead.
+  - node_modules
+  # Generated daily reports, not application code.
+  - find-bugs-reports

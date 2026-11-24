@@ -1,0 +1,65 @@
+name: CodeQL
+
+# GitHub code scanning for the API's JavaScript. Free on this repository
+# because it is public. Results appear on the repository's Security tab.
+# See docs/runbooks/security-checks.md.
+on:
+  pull_request:
+    branches: [develop, main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.cursor/**'
+      - '.claude/**'
+      - '.github/dependabot.yml'
+  push:
+    branches: [develop, main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.cursor/**'
+      - '.claude/**'
+      - '.github/dependabot.yml'
+  schedule:
+    - cron: "43 10 * * 1" # Mondays 10:43 UTC
+  workflow_dispatch:
+
+# A newer commit on the same pull request cancels the older analysis. Push,
+# scheduled and manual runs are not cancelled once started, but GitHub keeps
+# only one pending run per group, so the newest pending push is analyzed and
+# an intermediate one can be skipped.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    # Pull requests from forks get a read-only token that cannot upload
+    # results, so skip them rather than fail.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          category: "/language:javascript-typescript"

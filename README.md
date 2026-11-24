@@ -1,5 +1,7 @@
 # Helpful API
 
+For contributors and AI tools, start with [AGENTS.md](./AGENTS.md). Operational how-tos, decisions, and learnings are under [docs/](./docs/README.md).
+
 Express REST API (MySQL) for **Sit Together** and the Helpful mobile apps: accounts, JWT auth, partner pairing, AI Sit Sessions, 14-day programs, org-code / Stripe / IAP premium, FCM push, and admin tooling.
 
 **Clients**

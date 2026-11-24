@@ -1,0 +1,19 @@
+# gitleaks configuration. Starts from gitleaks' built-in rules and adds only
+# allowlists for findings that were checked and are not live secrets.
+# Do not add an allowlist to silence a real finding: rotate the secret and
+# remove it instead. See docs/runbooks/security-checks.md.
+title = "helpful-api gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Postman-style API client export with JWTs that expired in January 2026 (Helpful.paw). Verified expired; the file should be scrubbed or removed from this public repo."
+targetRules = ["jwt"]
+paths = ['''^Helpful\.paw$''']
+
+[[allowlists]]
+description = "Prose in a test file header that happens to look like a key assignment."
+targetRules = ["generic-api-key"]
+paths = ['''^tests/push-notification-service-test\.js$''']
+regexes = ['''sendToTokens: empty/invalid input handling''']
